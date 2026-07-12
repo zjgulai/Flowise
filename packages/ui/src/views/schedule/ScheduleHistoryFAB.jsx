@@ -39,7 +39,7 @@ const ScheduleHistoryFAB = ({ chatflowid, onOpenChange }) => {
 
     return (
         <>
-            <Tooltip title='Schedule History'>
+            <Tooltip title='计划历史'>
                 <Badge
                     color='warning'
                     variant='dot'

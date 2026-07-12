@@ -142,7 +142,7 @@ function ShowUserRow(props) {
                     {props.row.roleCount}
                     <PermissionIconButton
                         permissionId={'users:manage'}
-                        aria-label='expand row'
+                        aria-label='展开行'
                         size='small'
                         color='inherit'
                         onClick={() => handleViewUserRoles(props.row.userId, props.row.organizationId)}
@@ -160,7 +160,7 @@ function ShowUserRow(props) {
                     {props.row.status.toUpperCase() === 'INVITED' && (
                         <PermissionIconButton
                             permissionId={'workspace:add-user,users:manage'}
-                            title='Edit'
+                            title='编辑'
                             color='primary'
                             onClick={() => props.onEditClick(props.row)}
                         >
@@ -174,7 +174,7 @@ function ShowUserRow(props) {
                         ) : (
                             <PermissionIconButton
                                 permissionId={'workspace:unlink-user,users:manage'}
-                                title='Delete'
+                                title='删除'
                                 color='error'
                                 onClick={() => props.onDeleteClick(props.row.user)}
                             >
@@ -201,8 +201,8 @@ function ShowUserRow(props) {
                                 }}
                             >
                                 <TableRow>
-                                    <StyledTableCell sx={{ width: '50%' }}>Role</StyledTableCell>
-                                    <StyledTableCell sx={{ width: '50%' }}>Workspace</StyledTableCell>
+                                    <StyledTableCell sx={{ width: '50%' }}>角色</StyledTableCell>
+                                    <StyledTableCell sx={{ width: '50%' }}>工作空间</StyledTableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -273,7 +273,7 @@ const Users = () => {
         const dialogProp = {
             type: 'ADD',
             cancelButtonName: 'Cancel',
-            confirmButtonName: 'Send Invite',
+            confirmButtonName: '发送邀请',
             data: null
         }
         setInviteDialogProps(dialogProp)
@@ -292,7 +292,7 @@ const Users = () => {
         const dialogProp = {
             type: 'EDIT',
             cancelButtonName: 'Cancel',
-            confirmButtonName: 'Update Invite',
+            confirmButtonName: '更新邀请',
             data: user
         }
         setInviteDialogProps(dialogProp)
@@ -400,7 +400,7 @@ const Users = () => {
                     <ErrorBoundary error={error} />
                 ) : (
                     <Stack flexDirection='column' sx={{ gap: 3 }}>
-                        <ViewHeader onSearchChange={onSearchChange} search={true} searchPlaceholder='Search Users' title='User Management'>
+                        <ViewHeader onSearchChange={onSearchChange} search={true} searchPlaceholder='Search Users' title='用户管理'>
                             <StyledPermissionButton
                                 permissionId={'workspace:add-user,users:manage'}
                                 variant='contained'
@@ -409,7 +409,7 @@ const Users = () => {
                                 startIcon={<IconPlus />}
                                 id='btn_createUser'
                             >
-                                Invite User
+                                邀请用户
                             </StyledPermissionButton>
                         </ViewHeader>
                         {!isLoading && users.length === 0 ? (
@@ -421,7 +421,7 @@ const Users = () => {
                                         alt='users_emptySVG'
                                     />
                                 </Box>
-                                <div>No Users Yet</div>
+                                <div>暂无用户</div>
                             </Stack>
                         ) : (
                             <>
@@ -445,7 +445,7 @@ const Users = () => {
                                                         <StyledTableCell>&nbsp;</StyledTableCell>
                                                         <StyledTableCell>Email/Name</StyledTableCell>
                                                         <StyledTableCell>Assigned Roles</StyledTableCell>
-                                                        <StyledTableCell>Status</StyledTableCell>
+                                                        <StyledTableCell>状态</StyledTableCell>
                                                         <StyledTableCell>Last Login</StyledTableCell>
                                                         <StyledTableCell> </StyledTableCell>
                                                     </TableRow>

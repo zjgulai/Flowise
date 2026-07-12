@@ -180,7 +180,7 @@ const DocumentStoreDetails = () => {
 
     const listLoaders = () => {
         const dialogProp = {
-            title: 'Select Document Loader'
+            title: '选择文档加载器'
         }
         setDocumentLoaderListDialogProps(dialogProp)
         setShowDocumentLoaderListDialog(true)
@@ -487,7 +487,7 @@ const DocumentStoreDetails = () => {
                                     onClick={onConfirm}
                                     size='small'
                                     color='primary'
-                                    title='Refresh Document Store'
+                                    title='刷新文档库'
                                 >
                                     <IconRefresh />
                                 </PermissionIconButton>
@@ -564,7 +564,7 @@ const DocumentStoreDetails = () => {
                                         disabled={documentStore?.totalChunks <= 0 || documentStore?.status !== 'UPSERTED'}
                                         onClick={() => onStoreRefresh(documentStore.id)}
                                         disableRipple
-                                        title='Re-process all loaders and upsert all chunks'
+                                        title='重新处理所有加载器并更新所有片段'
                                     >
                                         <RefreshIcon />
                                         Refresh
@@ -654,13 +654,13 @@ const DocumentStoreDetails = () => {
                                     >
                                         <TableRow>
                                             <StyledTableCell>&nbsp;</StyledTableCell>
-                                            <StyledTableCell>Loader</StyledTableCell>
-                                            <StyledTableCell>Splitter</StyledTableCell>
-                                            <StyledTableCell>Source(s)</StyledTableCell>
-                                            <StyledTableCell>Chunks</StyledTableCell>
+                                            <StyledTableCell>加载器</StyledTableCell>
+                                            <StyledTableCell>分割器</StyledTableCell>
+                                            <StyledTableCell>来源</StyledTableCell>
+                                            <StyledTableCell>片段</StyledTableCell>
                                             <StyledTableCell>Chars</StyledTableCell>
                                             <Available permission={'documentStores:preview-process,documentStores:delete-loader'}>
-                                                <StyledTableCell>Actions</StyledTableCell>
+                                                <StyledTableCell>操作</StyledTableCell>
                                             </Available>
                                         </TableRow>
                                     </TableHead>
@@ -755,7 +755,7 @@ const DocumentStoreDetails = () => {
                                     color='warning'
                                     style={{ color: 'darkred', fontWeight: 500, fontStyle: 'italic', fontSize: 12 }}
                                 >
-                                    Some files are pending processing. Please Refresh to get the latest status.
+                                    部分文件正在处理中，请刷新以获取最新状态。
                                 </Typography>
                             </div>
                         )}

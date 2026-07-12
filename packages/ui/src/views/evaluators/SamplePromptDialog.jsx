@@ -130,7 +130,7 @@ const SamplePromptDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                     {selectedPromptName && (
                         <Box sx={{ pb: 2 }}>
                             <div style={{ display: 'flex', flexDirection: 'row' }}>
-                                <Typography variant='overline'>Prompt</Typography>
+                                <Typography variant='overline'>提示词</Typography>
                             </div>
                             <OutlinedInput
                                 size='small'

@@ -27,11 +27,11 @@ import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackba
 
 const statuses = [
     {
-        label: 'Active',
+        label: '活跃',
         name: 'active'
     },
     {
-        label: 'Inactive',
+        label: '未激活',
         name: 'inactive'
     }
 ]
@@ -157,7 +157,7 @@ const EditUserDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =>
                 </Box>
                 <Box sx={{ p: 1 }}>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
-                        <Typography>Name</Typography>
+                        <Typography>名称</Typography>
 
                         <div style={{ flexGrow: 1 }}></div>
                     </div>

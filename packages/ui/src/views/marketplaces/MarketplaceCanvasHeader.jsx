@@ -19,7 +19,7 @@ const MarketplaceCanvasHeader = ({ flowName, flowData, onChatflowCopy }) => {
     return (
         <>
             <Box>
-                <ButtonBase title='Back' sx={{ borderRadius: '50%' }}>
+                <ButtonBase title='返回' sx={{ borderRadius: '50%' }}>
                     <Avatar
                         variant='rounded'
                         sx={{
@@ -58,7 +58,7 @@ const MarketplaceCanvasHeader = ({ flowName, flowData, onChatflowCopy }) => {
                     <StyledButton
                         color='secondary'
                         variant='contained'
-                        title='Use Chatflow'
+                        title='使用对话流程'
                         onClick={() => onChatflowCopy(flowData)}
                         startIcon={<IconCopy />}
                     >

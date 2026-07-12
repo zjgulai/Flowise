@@ -278,7 +278,7 @@ function ShowRoleRow(props) {
                         </Typography>
                         <PermissionIconButton
                             permissionId={'roles:manage'}
-                            title='View'
+                            title='查看'
                             color='primary'
                             onClick={() => setOpenViewPermissionsDrawer(!openViewPermissionsDrawer)}
                         >
@@ -291,7 +291,7 @@ function ShowRoleRow(props) {
                     {props.role.userCount > 0 && (
                         <PermissionIconButton
                             permissionId={'roles:manage'}
-                            aria-label='expand row'
+                            aria-label='展开行'
                             size='small'
                             color='inherit'
                             onClick={() => handleViewAssignedUsers(props.role.id)}
@@ -303,7 +303,7 @@ function ShowRoleRow(props) {
                 <StyledTableCell>
                     <PermissionIconButton
                         permissionId={'roles:manage'}
-                        title='Edit'
+                        title='编辑'
                         color='primary'
                         onClick={() => props.onEditClick(props.role)}
                     >
@@ -425,7 +425,7 @@ const Roles = () => {
         const dialogProp = {
             type: 'ADD',
             cancelButtonName: 'Cancel',
-            confirmButtonName: 'Invite',
+            confirmButtonName: '邀请',
             data: {}
         }
         setDialogProps(dialogProp)
@@ -436,7 +436,7 @@ const Roles = () => {
         const dialogProp = {
             type: 'EDIT',
             cancelButtonName: 'Cancel',
-            confirmButtonName: 'Invite',
+            confirmButtonName: '邀请',
             data: {
                 ...role
             }
@@ -449,7 +449,7 @@ const Roles = () => {
         const dialogProp = {
             type: 'VIEW',
             cancelButtonName: 'Cancel',
-            confirmButtonName: 'Invite',
+            confirmButtonName: '邀请',
             data: {
                 ...role
             }
@@ -538,7 +538,7 @@ const Roles = () => {
                     <ErrorBoundary error={error} />
                 ) : (
                     <Stack flexDirection='column' sx={{ gap: 3 }}>
-                        <ViewHeader onSearchChange={onSearchChange} search={true} searchPlaceholder='Search Roles' title='Roles'>
+                        <ViewHeader onSearchChange={onSearchChange} search={true} searchPlaceholder='Search Roles' title='角色'>
                             <StyledPermissionButton
                                 permissionId={'roles:manage'}
                                 variant='contained'
@@ -559,7 +559,7 @@ const Roles = () => {
                                         alt='roles_emptySVG'
                                     />
                                 </Box>
-                                <div>No Roles Yet</div>
+                                <div>暂无角色</div>
                             </Stack>
                         ) : (
                             <>
@@ -580,9 +580,9 @@ const Roles = () => {
                                                     }}
                                                 >
                                                     <TableRow>
-                                                        <StyledTableCell>Name</StyledTableCell>
-                                                        <StyledTableCell>Description</StyledTableCell>
-                                                        <StyledTableCell>Permissions</StyledTableCell>
+                                                        <StyledTableCell>名称</StyledTableCell>
+                                                        <StyledTableCell>描述</StyledTableCell>
+                                                        <StyledTableCell>权限</StyledTableCell>
                                                         <StyledTableCell>Assigned Users</StyledTableCell>
                                                         <StyledTableCell> </StyledTableCell>
                                                     </TableRow>

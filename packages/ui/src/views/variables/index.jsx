@@ -223,8 +223,8 @@ const Variables = () => {
                             onSearchChange={onSearchChange}
                             search={true}
                             searchPlaceholder='Search Variables'
-                            title='Variables'
-                            description='Create and manage global variables'
+                            title='变量'
+                            description='创建和管理全局变量'
                         >
                             <Button variant='outlined' sx={{ borderRadius: 2, height: '100%' }} onClick={() => setShowHowToDialog(true)}>
                                 How To Use
@@ -249,7 +249,7 @@ const Variables = () => {
                                         alt='VariablesEmptySVG'
                                     />
                                 </Box>
-                                <div>No Variables Yet</div>
+                                <div>暂无变量</div>
                             </Stack>
                         ) : (
                             <>
@@ -267,11 +267,11 @@ const Variables = () => {
                                             }}
                                         >
                                             <TableRow>
-                                                <StyledTableCell>Name</StyledTableCell>
-                                                <StyledTableCell>Value</StyledTableCell>
-                                                <StyledTableCell>Type</StyledTableCell>
-                                                <StyledTableCell>Last Updated</StyledTableCell>
-                                                <StyledTableCell>Created</StyledTableCell>
+                                                <StyledTableCell>名称</StyledTableCell>
+                                                <StyledTableCell>值</StyledTableCell>
+                                                <StyledTableCell>类型</StyledTableCell>
+                                                <StyledTableCell>末页 已更新</StyledTableCell>
+                                                <StyledTableCell>已创建</StyledTableCell>
                                                 <Available permissionId={'variables:update'}>
                                                     <StyledTableCell> </StyledTableCell>
                                                 </Available>
@@ -389,7 +389,7 @@ const Variables = () => {
                                                             </StyledTableCell>
                                                             <Available permission={'variables:create,variables:update'}>
                                                                 <StyledTableCell>
-                                                                    <IconButton title='Edit' color='primary' onClick={() => edit(variable)}>
+                                                                    <IconButton title='编辑' color='primary' onClick={() => edit(variable)}>
                                                                         <IconEdit />
                                                                     </IconButton>
                                                                 </StyledTableCell>
@@ -397,7 +397,7 @@ const Variables = () => {
                                                             <Available permission={'variables:delete'}>
                                                                 <StyledTableCell>
                                                                     <IconButton
-                                                                        title='Delete'
+                                                                        title='删除'
                                                                         color='error'
                                                                         onClick={() => deleteVariable(variable)}
                                                                     >

@@ -257,7 +257,7 @@ const CreateEvaluationDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             try {
                 const nodes = getNodesByCategoryApi.data
                 llmNodes.push({
-                    label: 'No Grading',
+                    label: '暂无评分',
                     name: 'no_grading',
                     credential: {}
                 })
@@ -499,7 +499,7 @@ const CreateEvaluationDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                                     type='string'
                                     size='small'
                                     fullWidth
-                                    placeholder='Evaluation'
+                                    placeholder='评估'
                                     value={evaluationName}
                                     name='evaluationName'
                                     onChange={(e) => setEvaluationName(e.target.value)}
@@ -535,12 +535,12 @@ const CreateEvaluationDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                                         <span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <Typography variant='overline'>
-                                        <Checkbox defaultChecked size='small' label='All' value='Chatflow' onChange={onChangeFlowType} />{' '}
+                                        <Checkbox defaultChecked size='small' label='全部' value='Chatflow' onChange={onChangeFlowType} />{' '}
                                         Chatflows
                                         <Checkbox
                                             defaultChecked
                                             size='small'
-                                            label='All'
+                                            label='全部'
                                             value='Agentflow v2'
                                             onChange={onChangeFlowType}
                                         />{' '}
@@ -548,7 +548,7 @@ const CreateEvaluationDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                                         <Checkbox
                                             defaultChecked
                                             size='small'
-                                            label='All'
+                                            label='全部'
                                             value='Custom Assistant'
                                             onChange={onChangeFlowType}
                                         />{' '}
@@ -611,7 +611,7 @@ const CreateEvaluationDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                                         type='string'
                                         size='small'
                                         fullWidth
-                                        placeholder='Model Name'
+                                        placeholder='模型名称'
                                         value={selectedModel}
                                         name='selectedModel'
                                         onChange={(e) => setSelectedModel(e.target.value)}
@@ -627,7 +627,7 @@ const CreateEvaluationDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                                         sx={{ flexGrow: 1, marginBottom: 3 }}
                                         data={credentialId ? { credential: credentialId } : {}}
                                         inputParam={{
-                                            label: 'Connect Credential',
+                                            label: '连接凭据',
                                             name: 'credential',
                                             type: 'credential',
                                             credentialNames: [
@@ -658,14 +658,14 @@ const CreateEvaluationDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             </DialogContent>
             <DialogActions style={{ justifyContent: 'space-between', marginBottom: 10 }}>
                 {activeStep > 0 && (
-                    <IconButton sx={{ ml: 2 }} color='secondary' title='Previous Step' onClick={() => goPrev(activeStep)}>
+                    <IconButton sx={{ ml: 2 }} color='secondary' title='上一步' onClick={() => goPrev(activeStep)}>
                         <IconArrowLeft />
                     </IconButton>
                 )}
                 <div style={{ flex: 1 }}></div>
                 {activeStep === 1 && selectedSimpleEvaluators.length === 0 && (
                     <Button
-                        title='Skip Evaluators'
+                        title='跳过评估器'
                         color='primary'
                         sx={{ mr: 2, borderRadius: 25 }}
                         variant='outlined'

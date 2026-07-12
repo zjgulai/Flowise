@@ -491,13 +491,13 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                     <Box sx={{ p: 2 }}>
                                         <CheckboxInput
                                             key={JSON.stringify(nodeCheckboxExpanded)}
-                                            label='Show API'
+                                            label='显示 API'
                                             value={nodeCheckboxExpanded[data.vectorNode.data.id]}
                                             onChange={() => onCheckBoxChanged(data.vectorNode.data.id)}
                                         />
                                         {nodeCheckboxExpanded[data.vectorNode.data.id] && (
                                             <div>
-                                                <Tabs value={tabValue} onChange={(event, val) => setTabValue(val)} aria-label='tabs'>
+                                                <Tabs value={tabValue} onChange={(event, val) => setTabValue(val)} aria-label='标签页'>
                                                     {['Python', 'JavaScript', 'cURL'].map((codeLang, index) => (
                                                         <Tab
                                                             icon={
@@ -638,7 +638,7 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                                 fullWidth
                                                 variant='contained'
                                                 color='teal'
-                                                title='Upsert'
+                                                title='更新'
                                                 onClick={() => onUpsertClicked(data.vectorNode)}
                                             >
                                                 Upsert

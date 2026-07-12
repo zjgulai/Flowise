@@ -22,7 +22,7 @@ const VectorStorePopUp = ({ chatflowid }) => {
         setOpen((prevopen) => !prevopen)
         const props = {
             open: true,
-            title: 'Upsert Vector Store',
+            title: '更新向量存储',
             chatflowid
         }
         setExpandDialogProps(props)
@@ -46,7 +46,7 @@ const VectorStorePopUp = ({ chatflowid }) => {
                 size='small'
                 color='teal'
                 aria-label='upsert'
-                title='Upsert Vector Database'
+                title='更新向量数据库'
                 onClick={handleToggle}
             >
                 {open ? <IconX /> : <IconDatabaseImport />}

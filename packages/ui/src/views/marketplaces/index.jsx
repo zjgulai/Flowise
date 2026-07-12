@@ -122,7 +122,7 @@ const Marketplace = () => {
             data: {
                 id: template.id,
                 name: template.name,
-                title: 'Share Custom Template',
+                title: '分享自定义模板',
                 itemType: 'custom_template'
             }
         }
@@ -321,7 +321,7 @@ const Marketplace = () => {
 
     const onUseTemplate = (selectedTool) => {
         const dialogProp = {
-            title: 'Add New Tool',
+            title: '添加新工具',
             type: 'IMPORT',
             cancelButtonName: 'Cancel',
             confirmButtonName: 'Add',
@@ -494,7 +494,7 @@ const Marketplace = () => {
                                             multiple
                                             value={badgeFilter}
                                             onChange={handleBadgeFilterChange}
-                                            input={<OutlinedInput label='Tag' />}
+                                            input={<OutlinedInput label='标签' />}
                                             renderValue={(selected) => selected.join(', ')}
                                             MenuProps={MenuProps}
                                             sx={getSelectStyles(theme.palette.grey[900] + 25, theme?.customization?.isDarkMode)}
@@ -530,7 +530,7 @@ const Marketplace = () => {
                                             multiple
                                             value={typeFilter}
                                             onChange={handleTypeFilterChange}
-                                            input={<OutlinedInput label='Type' />}
+                                            input={<OutlinedInput label='类型' />}
                                             renderValue={(selected) => selected.join(', ')}
                                             MenuProps={MenuProps}
                                             sx={getSelectStyles(theme.palette.grey[900] + 25, theme?.customization?.isDarkMode)}
@@ -587,8 +587,8 @@ const Marketplace = () => {
                             }
                             onSearchChange={onSearchChange}
                             search={true}
-                            searchPlaceholder='Search Name/Description/Node'
-                            title='Marketplace'
+                            searchPlaceholder='搜索名称/描述/节点'
+                            title='模板市场'
                             description='Explore and use pre-built templates'
                         >
                             <ToggleButtonGroup
@@ -606,7 +606,7 @@ const Marketplace = () => {
                                     }}
                                     variant='contained'
                                     value='card'
-                                    title='Card View'
+                                    title='卡片视图'
                                 >
                                     <IconLayoutGrid />
                                 </ToggleButton>
@@ -618,7 +618,7 @@ const Marketplace = () => {
                                     }}
                                     variant='contained'
                                     value='list'
-                                    title='List View'
+                                    title='列表视图'
                                 >
                                     <IconList />
                                 </ToggleButton>
@@ -626,9 +626,9 @@ const Marketplace = () => {
                         </ViewHeader>
                         {hasPermission('templates:marketplace') && hasPermission('templates:custom') && (
                             <Stack direction='row' justifyContent='space-between' sx={{ mb: 2 }}>
-                                <Tabs value={activeTabValue} onChange={handleTabChange} textColor='primary' aria-label='tabs'>
+                                <Tabs value={activeTabValue} onChange={handleTabChange} textColor='primary' aria-label='标签页'>
                                     <PermissionTab permissionId='templates:marketplace' value={0} label='Community Templates' />
-                                    <PermissionTab permissionId='templates:custom' value={1} label='My Templates' />
+                                    <PermissionTab permissionId='templates:custom' value={1} label='我的模板' />
                                 </Tabs>
                                 <Autocomplete
                                     id='useCases'
@@ -650,7 +650,7 @@ const Marketplace = () => {
                                             </li>
                                         )
                                     }}
-                                    renderInput={(params) => <TextField {...params} label='Usecases' />}
+                                    renderInput={(params) => <TextField {...params} label='用例' />}
                                     sx={{
                                         width: 300
                                     }}

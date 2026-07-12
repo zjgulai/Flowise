@@ -159,7 +159,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
                 type: 'actions',
                 width: 80,
                 getActions: (params) => [
-                    <GridActionsCellItem key={'Delete'} icon={<DeleteIcon />} label='Delete' onClick={deleteItem(params.id)} />
+                    <GridActionsCellItem key={'Delete'} icon={<DeleteIcon />} label='删除' onClick={deleteItem(params.id)} />
                 ]
             }
         ],
@@ -462,7 +462,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
                     <Box>
                         <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
                             <Typography variant='overline'>
-                                Tool Name
+                                工具 名称
                                 <span style={{ color: 'red' }}>&nbsp;*</span>
                             </Typography>
                             <TooltipWithParser title={'Tool name must be small capital letter with underscore. Ex: my_tool'} />
@@ -472,7 +472,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
                             type='string'
                             fullWidth
                             disabled={dialogProps.type === 'TEMPLATE'}
-                            placeholder='My New Tool'
+                            placeholder='我的新工具'
                             value={toolName}
                             name='toolName'
                             onChange={(e) => setToolName(e.target.value)}
@@ -481,7 +481,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
                     <Box>
                         <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
                             <Typography variant='overline'>
-                                Tool description
+                                工具 description
                                 <span style={{ color: 'red' }}>&nbsp;*</span>
                             </Typography>
                             <TooltipWithParser
@@ -503,7 +503,7 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
                     </Box>
                     <Box>
                         <Stack sx={{ position: 'relative' }} direction='row'>
-                            <Typography variant='overline'>Tool Icon Source</Typography>
+                            <Typography variant='overline'>工具图标来源</Typography>
                         </Stack>
                         <OutlinedInput
                             id='toolIcon'
@@ -538,8 +538,8 @@ const ToolDialog = ({ show, dialogProps, onUseTemplate, onCancel, onConfirm, set
                     <Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                             <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                                <Typography variant='overline'>Javascript Function</Typography>
-                                <TooltipWithParser title='Function to execute when tool is being used. You can use properties specified in Input Schema as variables. For example, if the property is <code>userid</code>, you can use as <code>$userid</code>. Return value must be a string. You can also override the code from API by following this <a target="_blank" href="https://docs.flowiseai.com/tools/custom-tool#override-function-from-api">guide</a>' />
+                                <Typography variant='overline'>Javascript 函数</Typography>
+                                <TooltipWithParser title='工具被使用时执行的函数。您可以将输入架构中指定的属性用作变量。例如，属性为 <code>userid</code> 时，可以使用 <code>$userid</code>。返回值必须是字符串。您也可以按照<a target="_blank" href="https://docs.flowiseai.com/tools/custom-tool#override-function-from-api">指南</a>通过 API 覆盖代码。' />
                             </Stack>
                             <Stack direction='row'>
                                 <Button

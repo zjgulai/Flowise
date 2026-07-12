@@ -116,7 +116,7 @@ const Documents = () => {
 
     const addNew = () => {
         const dialogProp = {
-            title: 'Add New Document Store',
+            title: '添加新文档库',
             type: 'ADD',
             cancelButtonName: 'Cancel',
             confirmButtonName: 'Add'
@@ -161,7 +161,7 @@ const Documents = () => {
     const renameDocumentStore = () => {
         if (!selectedDocumentStore) return
         const dialogProp = {
-            title: 'Rename Document Store',
+            title: '重命名文档库',
             type: 'EDIT',
             cancelButtonName: 'Cancel',
             confirmButtonName: 'Save',
@@ -193,7 +193,7 @@ const Documents = () => {
         }
 
         setDeleteDocStoreDialogProps({
-            title: 'Delete',
+            title: '删除',
             description,
             vectorStoreConfig: documentStoreToDelete.vectorStoreConfig,
             recordManagerConfig: documentStoreToDelete.recordManagerConfig,
@@ -328,8 +328,8 @@ const Documents = () => {
                     <ViewHeader
                         onSearchChange={onSearchChange}
                         search={hasDocStores}
-                        searchPlaceholder='Search Name'
-                        title='Document Store'
+                        searchPlaceholder='搜索名称'
+                        title='文档库'
                         description='Store and upsert documents for LLM retrieval (RAG)'
                     >
                         {hasDocStores && (
@@ -348,7 +348,7 @@ const Documents = () => {
                                     }}
                                     variant='contained'
                                     value='card'
-                                    title='Card View'
+                                    title='卡片视图'
                                 >
                                     <IconLayoutGrid />
                                 </ToggleButton>
@@ -360,7 +360,7 @@ const Documents = () => {
                                     }}
                                     variant='contained'
                                     value='list'
-                                    title='List View'
+                                    title='列表视图'
                                 >
                                     <IconList />
                                 </ToggleButton>
@@ -386,7 +386,7 @@ const Documents = () => {
                                     alt='doc_store_empty'
                                 />
                             </Box>
-                            <div>No Document Stores Created Yet</div>
+                            <div>暂无文档库</div>
                         </Stack>
                     ) : (
                         <React.Fragment>
@@ -472,7 +472,7 @@ const Documents = () => {
                         <ListItemIcon>
                             <IconEdit size={16} />
                         </ListItemIcon>
-                        <ListItemText>Rename</ListItemText>
+                        <ListItemText>重命名</ListItemText>
                     </MenuItem>
                 )}
                 {canDeleteDocumentStore && (
@@ -480,7 +480,7 @@ const Documents = () => {
                         <ListItemIcon>
                             <IconTrash size={16} />
                         </ListItemIcon>
-                        <ListItemText>Delete</ListItemText>
+                        <ListItemText>删除</ListItemText>
                     </MenuItem>
                 )}
             </Menu>

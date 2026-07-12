@@ -514,7 +514,7 @@ const EvalEvaluationRows = () => {
                             <Button
                                 variant='outlined'
                                 value={showCharts}
-                                title='Show Charts'
+                                title='显示图表'
                                 onClick={handleShowChartsChange}
                                 startIcon={showCharts ? <IconEyeOff /> : <IconEye />}
                             >
@@ -525,7 +525,7 @@ const EvalEvaluationRows = () => {
                                     variant='outlined'
                                     value={showCustomEvals}
                                     disabled={!customEvalsDefined}
-                                    title='Show Custom Evaluator'
+                                    title='显示自定义评估器'
                                     onClick={handleCustomEvalsChange}
                                     startIcon={showCustomEvals ? <IconEyeOff /> : <IconEye />}
                                 >
@@ -535,7 +535,7 @@ const EvalEvaluationRows = () => {
                             <Button
                                 variant='outlined'
                                 value={showCostMetrics}
-                                title='Show Cost Metrics'
+                                title='显示成本指标'
                                 onClick={handleDisplayCostChange}
                                 startIcon={showCostMetrics ? <IconEyeOff /> : <IconEye />}
                             >
@@ -544,7 +544,7 @@ const EvalEvaluationRows = () => {
                             <Button
                                 variant='outlined'
                                 value={showTokenMetrics}
-                                title='Show Metrics'
+                                title='显示指标'
                                 onClick={handleShowTokenChange}
                                 startIcon={showTokenMetrics ? <IconEyeOff /> : <IconEye />}
                             >
@@ -553,7 +553,7 @@ const EvalEvaluationRows = () => {
                             <Button
                                 variant='outlined'
                                 value={showCustomEvals}
-                                title='Show Latency Metrics'
+                                title='显示延迟指标'
                                 onClick={handleLatencyMetricsChange}
                                 startIcon={showLatencyMetrics ? <IconEyeOff /> : <IconEye />}
                             >
@@ -665,7 +665,7 @@ const EvalEvaluationRows = () => {
                                 >
                                     <TableRow>
                                         <TableCell rowSpan='2'>&nbsp;</TableCell>
-                                        <TableCell rowSpan='2'>Input</TableCell>
+                                        <TableCell rowSpan='2'>输入</TableCell>
                                         <TableCell rowSpan='2'>Expected Output</TableCell>
                                         {evaluation.chatflowId?.map((chatflowId, index) => (
                                             <React.Fragment key={index}>
@@ -704,7 +704,7 @@ const EvalEvaluationRows = () => {
                                                 >
                                                     Actual Output
                                                 </TableCell>
-                                                {customEvalsDefined && showCustomEvals && <TableCell>Evaluator</TableCell>}
+                                                {customEvalsDefined && showCustomEvals && <TableCell>评估器</TableCell>}
                                                 {evaluation?.evaluationType === 'llm' && <TableCell>LLM Evaluation</TableCell>}
                                             </React.Fragment>
                                         ))}

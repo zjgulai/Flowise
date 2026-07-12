@@ -109,7 +109,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                                         height: 25,
                                         width: 25
                                     }}
-                                    title='Expand'
+                                    title='展开'
                                     color='primary'
                                     onClick={() =>
                                         onExpandDialogClicked(data.inputs[inputParam.name] ?? inputParam.default ?? '', inputParam)
@@ -252,7 +252,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                                     </div>
                                     {inputParam.refresh && (
                                         <IconButton
-                                            title='Refresh'
+                                            title='刷新'
                                             color='primary'
                                             size='small'
                                             onClick={() => setReloadTimestamp(Date.now().toString())}

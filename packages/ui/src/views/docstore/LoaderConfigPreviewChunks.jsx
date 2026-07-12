@@ -338,7 +338,7 @@ const LoaderConfigPreviewChunks = () => {
                 label: splitter.label,
                 name: splitter.name
             }))
-            options.unshift({ label: 'None', name: 'none' })
+            options.unshift({ label: '无', name: 'none' })
             setTextSplitterOptions(options)
 
             // If this is a document store edit config, set the existing input values
@@ -397,7 +397,7 @@ const LoaderConfigPreviewChunks = () => {
                                 }}
                             >
                                 <Box sx={{ display: 'flex', alignItems: 'center', flexDirection: 'row' }}>
-                                    <StyledFab size='small' color='secondary' aria-label='back' title='Back' onClick={() => navigate(-1)}>
+                                    <StyledFab size='small' color='secondary' aria-label='back' title='返回' onClick={() => navigate(-1)}>
                                         <IconArrowLeft />
                                     </StyledFab>
                                     <Typography sx={{ ml: 2, mr: 2 }} variant='h3'>
@@ -518,7 +518,7 @@ const LoaderConfigPreviewChunks = () => {
                                                     </div>
                                                 </Box>
                                                 <Box sx={{ p: 2 }}>
-                                                    <Typography>Splitter</Typography>
+                                                    <Typography>分割器</Typography>
                                                     <Dropdown
                                                         key={JSON.stringify(selectedTextSplitter)}
                                                         name='textSplitter'
@@ -601,7 +601,7 @@ const LoaderConfigPreviewChunks = () => {
                                                     <StyledFab
                                                         color='secondary'
                                                         aria-label='preview'
-                                                        title='Preview'
+                                                        title='预览'
                                                         variant='extended'
                                                         onClick={onPreviewChunks}
                                                     >
@@ -631,7 +631,7 @@ const LoaderConfigPreviewChunks = () => {
                                                     <StyledFab
                                                         color='secondary'
                                                         aria-label='preview'
-                                                        title='Preview'
+                                                        title='预览'
                                                         variant='extended'
                                                         onClick={onPreviewChunks}
                                                     >

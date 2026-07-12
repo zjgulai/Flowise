@@ -184,7 +184,7 @@ const Evaluators = () => {
                             isEditButton={false}
                             onSearchChange={onSearchChange}
                             search={true}
-                            title='Evaluators'
+                            title='评估器'
                             description=''
                         >
                             <StyledPermissionButton
@@ -206,7 +206,7 @@ const Evaluators = () => {
                                         alt='empty_evaluatorSVG'
                                     />
                                 </Box>
-                                <div>No Evaluators Yet</div>
+                                <div>暂无评估器</div>
                             </Stack>
                         ) : (
                             <>
@@ -224,9 +224,9 @@ const Evaluators = () => {
                                             }}
                                         >
                                             <TableRow>
-                                                <TableCell>Type</TableCell>
-                                                <TableCell>Name</TableCell>
-                                                <TableCell>Details</TableCell>
+                                                <TableCell>类型</TableCell>
+                                                <TableCell>名称</TableCell>
+                                                <TableCell>详情</TableCell>
                                                 <TableCell>Last Updated</TableCell>
                                                 <TableCell> </TableCell>
                                             </TableRow>
@@ -286,25 +286,21 @@ const Evaluators = () => {
                                                                         <Stack flexDirection='row' sx={{ alignItems: 'center' }}>
                                                                             <Chip
                                                                                 icon={<IconNumber123 />}
-                                                                                label='Numeric'
+                                                                                label='数值'
                                                                                 variant='outlined'
                                                                             />
                                                                         </Stack>
                                                                     )}
                                                                     {ds?.type === 'text' && (
                                                                         <Stack flexDirection='row' sx={{ alignItems: 'center' }}>
-                                                                            <Chip
-                                                                                icon={<IconAbc />}
-                                                                                label='Text Based'
-                                                                                variant='outlined'
-                                                                            />
+                                                                            <Chip icon={<IconAbc />} label='基于文本' variant='outlined' />
                                                                         </Stack>
                                                                     )}
                                                                     {ds?.type === 'json' && (
                                                                         <Stack flexDirection='row' sx={{ alignItems: 'center' }}>
                                                                             <Chip
                                                                                 icon={<IconJson />}
-                                                                                label='JSON Based'
+                                                                                label='基于 JSON'
                                                                                 variant='outlined'
                                                                             />
                                                                         </Stack>
@@ -313,7 +309,7 @@ const Evaluators = () => {
                                                                         <Stack flexDirection='row' sx={{ alignItems: 'center' }}>
                                                                             <Chip
                                                                                 icon={<IconAugmentedReality />}
-                                                                                label='LLM Based'
+                                                                                label='基于 LLM'
                                                                                 variant='outlined'
                                                                             />
                                                                         </Stack>
@@ -368,7 +364,7 @@ const Evaluators = () => {
                                                                                 }}
                                                                                 label={
                                                                                     <span>
-                                                                                        <b>Operator</b>:{' '}
+                                                                                        <b>操作符</b>:{' '}
                                                                                         {
                                                                                             [
                                                                                                 ...evaluatorsOptions,
@@ -393,7 +389,7 @@ const Evaluators = () => {
                                                                                 }}
                                                                                 label={
                                                                                     <span>
-                                                                                        <b>Value</b>: {ds?.value}
+                                                                                        <b>值</b>: {ds?.value}
                                                                                     </span>
                                                                                 }
                                                                             />
@@ -419,7 +415,7 @@ const Evaluators = () => {
                                                                                 }}
                                                                                 label={
                                                                                     <span>
-                                                                                        <b>Operator</b>:{' '}
+                                                                                        <b>操作符</b>:{' '}
                                                                                         {
                                                                                             [
                                                                                                 ...evaluatorsOptions,
@@ -444,7 +440,7 @@ const Evaluators = () => {
                                                                                 }}
                                                                                 label={
                                                                                     <span>
-                                                                                        <b>Value</b>: {ds?.value}
+                                                                                        <b>值</b>: {ds?.value}
                                                                                     </span>
                                                                                 }
                                                                             />
@@ -470,7 +466,7 @@ const Evaluators = () => {
                                                                                 }}
                                                                                 label={
                                                                                     <span>
-                                                                                        <b>Operator</b>:{' '}
+                                                                                        <b>操作符</b>:{' '}
                                                                                         {
                                                                                             [...evaluatorsOptions].find(
                                                                                                 (item) => item.name === ds?.operator
@@ -501,7 +497,7 @@ const Evaluators = () => {
                                                                                 }}
                                                                                 label={
                                                                                     <span>
-                                                                                        <b>Prompt</b>: {truncateString(ds?.prompt, 100)}
+                                                                                        <b>提示词</b>: {truncateString(ds?.prompt, 100)}
                                                                                     </span>
                                                                                 }
                                                                             />
@@ -537,7 +533,7 @@ const Evaluators = () => {
                                                                 <TableCell>
                                                                     <PermissionIconButton
                                                                         permissionId={'evaluators:delete'}
-                                                                        title='Delete'
+                                                                        title='删除'
                                                                         color='error'
                                                                         onClick={() => deleteEvaluator(ds)}
                                                                     >

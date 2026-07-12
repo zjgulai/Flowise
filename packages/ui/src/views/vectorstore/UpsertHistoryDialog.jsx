@@ -93,7 +93,7 @@ function UpsertHistoryRow(props) {
                 <TableCell>{props.upsertHistory.result?.numSkipped ?? '0'}</TableCell>
                 <TableCell>{props.upsertHistory.result?.numDeleted ?? '0'}</TableCell>
                 <TableCell>
-                    <IconButton aria-label='expand row' size='small' color='inherit' onClick={() => setOpen(!open)}>
+                    <IconButton aria-label='展开行' size='small' color='inherit' onClick={() => setOpen(!open)}>
                         {open ? <IconChevronsUp /> : <IconChevronsDown />}
                     </IconButton>
                 </TableCell>
@@ -389,7 +389,7 @@ const UpsertHistoryDialog = ({ show, dialogProps, onCancel }) => {
                                                 }}
                                             />
                                         </TableCell>
-                                        <TableCell>Date</TableCell>
+                                        <TableCell>日期</TableCell>
                                         <TableCell>
                                             Added{' '}
                                             <TooltipWithParser
@@ -424,7 +424,7 @@ const UpsertHistoryDialog = ({ show, dialogProps, onCancel }) => {
                                                 }
                                             />
                                         </TableCell>
-                                        <TableCell>Details</TableCell>
+                                        <TableCell>详情</TableCell>
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
@@ -445,7 +445,7 @@ const UpsertHistoryDialog = ({ show, dialogProps, onCancel }) => {
                 </>
             </DialogContent>
             <DialogActions>
-                <Button onClick={onCancel}>Close</Button>
+                <Button onClick={onCancel}>关闭</Button>
             </DialogActions>
         </Dialog>
     ) : null

@@ -55,8 +55,8 @@ const UpsertHistoryDetailsDialog = ({ show, dialogProps, onCancel }) => {
                     }}
                 >
                     <StatsCard title='Added' stat={dialogProps.numAdded ?? 0} />
-                    <StatsCard title='Updated' stat={dialogProps.numUpdated ?? 0} />
-                    <StatsCard title='Skipped' stat={dialogProps.numSkipped ?? 0} />
+                    <StatsCard title='已更新' stat={dialogProps.numUpdated ?? 0} />
+                    <StatsCard title='已跳过' stat={dialogProps.numSkipped ?? 0} />
                     <StatsCard title='Deleted' stat={dialogProps.numDeleted ?? 0} />
                 </div>
                 <div>

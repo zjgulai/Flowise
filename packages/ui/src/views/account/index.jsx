@@ -207,7 +207,7 @@ const AccountSettings = () => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: 'Failed to access billing portal',
+                message: '无法访问账单门户',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -238,7 +238,7 @@ const AccountSettings = () => {
                     payload.emailChangePending &&
                     `Check your current email (${payload.user.email}) to confirm the change to ${payload.pendingEmail}.`
                 enqueueSnackbar({
-                    message: pendingMsg || 'Profile updated',
+                    message: pendingMsg || '个人资料已更新',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -255,7 +255,7 @@ const AccountSettings = () => {
             } else if (payload) {
                 store.dispatch(userProfileUpdated(payload))
                 enqueueSnackbar({
-                    message: 'Profile updated',
+                    message: '个人资料已更新',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -293,10 +293,10 @@ const AccountSettings = () => {
         try {
             const validationErrors = []
             if (!oldPassword) {
-                validationErrors.push('Old Password cannot be left blank')
+                validationErrors.push('旧密码不能为空')
             }
             if (newPassword !== confirmPassword) {
-                validationErrors.push('New Password and Confirm Password do not match')
+                validationErrors.push('新密码与确认密码不一致')
             }
             const passwordErrors = validatePassword(newPassword)
             if (passwordErrors.length > 0) {
@@ -335,7 +335,7 @@ const AccountSettings = () => {
                 setConfirmPassword('')
                 await logoutApi.request()
                 enqueueSnackbar({
-                    message: 'Password updated',
+                    message: '密码已更新',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -380,7 +380,7 @@ const AccountSettings = () => {
                 prorationInfo.prorationDate
             )
             enqueueSnackbar({
-                message: 'Seats updated successfully',
+                message: '席位更新成功',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'success',
@@ -450,7 +450,7 @@ const AccountSettings = () => {
     return (
         <MainCard maxWidth='md'>
             <Stack flexDirection='column' sx={{ gap: 4 }}>
-                <ViewHeader title='Account Settings' />
+                <ViewHeader title='账户设置' />
                 {isLoading && !getUserByIdApi.data ? (
                     <Box display='flex' flexDirection='column' gap={gridSpacing}>
                         <Skeleton width='25%' height={32} />
@@ -471,7 +471,7 @@ const AccountSettings = () => {
                     <>
                         {isCloud && (
                             <>
-                                <SettingsSection title='Subscription & Billing'>
+                                <SettingsSection title='订阅与账单'>
                                     <Box
                                         sx={{
                                             width: '100%',
@@ -493,7 +493,7 @@ const AccountSettings = () => {
                                         >
                                             {currentPlanTitle && (
                                                 <Stack sx={{ alignItems: 'center' }} flexDirection='row'>
-                                                    <Typography variant='body2'>Current Organization Plan:</Typography>
+                                                    <Typography variant='body2'>当前组织计划：</Typography>
                                                     <Typography sx={{ ml: 1, color: theme.palette.success.dark }} variant='h3'>
                                                         {currentPlanTitle.toUpperCase()}
                                                     </Typography>
@@ -504,7 +504,7 @@ const AccountSettings = () => {
                                                 variant='body2'
                                                 color='text.secondary'
                                             >
-                                                Update your billing details and subscription
+                                                更新您的账单详情和订阅
                                             </Typography>
                                         </Box>
                                         <Box
@@ -527,10 +527,10 @@ const AccountSettings = () => {
                                                 {isBillingLoading ? (
                                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                                         <CircularProgress size={16} color='inherit' />
-                                                        Loading
+                                                        加载中
                                                     </Box>
                                                 ) : (
-                                                    'Billing'
+                                                    '账单'
                                                 )}
                                             </Button>
                                             <Button
@@ -564,7 +564,7 @@ const AccountSettings = () => {
                                         </Box>
                                     </Box>
                                 </SettingsSection>
-                                <SettingsSection title='Seats'>
+                                <SettingsSection title='座位'>
                                     <Box
                                         sx={{
                                             width: '100%',
@@ -585,13 +585,13 @@ const AccountSettings = () => {
                                             }}
                                         >
                                             <Stack sx={{ alignItems: 'center' }} flexDirection='row'>
-                                                <Typography variant='body2'>Seats Included in Plan:</Typography>
+                                                <Typography variant='body2'>计划包含席位：</Typography>
                                                 <Typography sx={{ ml: 1, color: 'inherit' }} variant='h3'>
                                                     {getAdditionalSeatsQuantityApi.loading ? <CircularProgress size={16} /> : includedSeats}
                                                 </Typography>
                                             </Stack>
                                             <Stack sx={{ alignItems: 'center' }} flexDirection='row'>
-                                                <Typography variant='body2'>Additional Seats Purchased:</Typography>
+                                                <Typography variant='body2'>已购买额外席位：</Typography>
                                                 <Typography sx={{ ml: 1, color: theme.palette.success.dark }} variant='h3'>
                                                     {getAdditionalSeatsQuantityApi.loading ? (
                                                         <CircularProgress size={16} />
@@ -601,7 +601,7 @@ const AccountSettings = () => {
                                                 </Typography>
                                             </Stack>
                                             <Stack sx={{ alignItems: 'center' }} flexDirection='row'>
-                                                <Typography variant='body2'>Occupied Seats:</Typography>
+                                                <Typography variant='body2'>已占用席位：</Typography>
                                                 <Typography sx={{ ml: 1, color: 'inherit' }} variant='h3'>
                                                     {getAdditionalSeatsQuantityApi.loading ? (
                                                         <CircularProgress size={16} />
@@ -656,7 +656,7 @@ const AccountSettings = () => {
                                         </Box>
                                     </Box>
                                 </SettingsSection>
-                                <SettingsSection title='Usage'>
+                                <SettingsSection title='使用'>
                                     <Box
                                         sx={{
                                             width: '100%',
@@ -666,7 +666,7 @@ const AccountSettings = () => {
                                     >
                                         <Box sx={{ p: 2.5, borderRight: 1, borderColor: theme.palette.grey[900] + 25 }}>
                                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                                <Typography variant='h3'>Predictions</Typography>
+                                                <Typography variant='h3'>预测</Typography>
                                                 <Typography variant='body2' color='text.secondary'>
                                                     {`${usage?.predictions?.usage || 0} / ${usage?.predictions?.limit || 0}`}
                                                 </Typography>
@@ -697,7 +697,7 @@ const AccountSettings = () => {
                                         </Box>
                                         <Box sx={{ p: 2.5 }}>
                                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                                <Typography variant='h3'>Storage</Typography>
+                                                <Typography variant='h3'>存储</Typography>
                                                 <Typography variant='body2' color='text.secondary'>
                                                     {`${(usage?.storage?.usage || 0).toFixed(2)}MB / ${(usage?.storage?.limit || 0).toFixed(
                                                         2
@@ -738,7 +738,7 @@ const AccountSettings = () => {
                                     Save
                                 </StyledButton>
                             }
-                            title='Profile'
+                            title='个人资料'
                         >
                             <Box
                                 sx={{
@@ -750,24 +750,24 @@ const AccountSettings = () => {
                                 }}
                             >
                                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                    <Typography variant='body1'>Name</Typography>
+                                    <Typography variant='body1'>姓名</Typography>
                                     <OutlinedInput
                                         id='name'
                                         type='string'
                                         fullWidth
-                                        placeholder='Your Name'
+                                        placeholder='您的姓名'
                                         name='name'
                                         onChange={(e) => setProfileName(e.target.value)}
                                         value={profileName}
                                     />
                                 </Box>
                                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                    <Typography variant='body1'>Email Address</Typography>
+                                    <Typography variant='body1'>邮箱地址</Typography>
                                     <OutlinedInput
                                         id='email'
                                         type='string'
                                         fullWidth
-                                        placeholder='Email Address'
+                                        placeholder='邮箱地址'
                                         name='email'
                                         onChange={(e) => setEmail(e.target.value)}
                                         value={email}
@@ -784,10 +784,10 @@ const AccountSettings = () => {
                                         sx={{ borderRadius: 2, height: 40 }}
                                         variant='contained'
                                     >
-                                        Save
+                                        保存
                                     </StyledButton>
                                 }
-                                title='Security'
+                                title='安全'
                             >
                                 <Box
                                     sx={{
@@ -806,12 +806,12 @@ const AccountSettings = () => {
                                             gap: 1
                                         }}
                                     >
-                                        <Typography variant='body1'>Old Password</Typography>
+                                        <Typography variant='body1'>旧密码</Typography>
                                         <OutlinedInput
                                             id='oldPassword'
                                             type='password'
                                             fullWidth
-                                            placeholder='Old Password'
+                                            placeholder='旧密码'
                                             name='oldPassword'
                                             onChange={(e) => setOldPassword(e.target.value)}
                                             value={oldPassword}
@@ -825,21 +825,18 @@ const AccountSettings = () => {
                                             gap: 1
                                         }}
                                     >
-                                        <Typography variant='body1'>New Password</Typography>
+                                        <Typography variant='body1'>新密码</Typography>
                                         <OutlinedInput
                                             id='newPassword'
                                             type='password'
                                             fullWidth
-                                            placeholder='New Password'
+                                            placeholder='新密码'
                                             name='newPassword'
                                             onChange={(e) => setNewPassword(e.target.value)}
                                             value={newPassword}
                                         />
                                         <Typography variant='caption'>
-                                            <i>
-                                                Password must be at least 8 characters long and contain at least one lowercase letter, one
-                                                uppercase letter, one digit, and one special character.
-                                            </i>
+                                            <i>密码必须至少8个字符长，且至少包含一个小写字母、一个大写字母、一个数字和一个特殊字符。</i>
                                         </Typography>
                                     </Box>
                                     <Box
@@ -850,12 +847,12 @@ const AccountSettings = () => {
                                             gap: 1
                                         }}
                                     >
-                                        <Typography variant='body1'>Confirm New Password</Typography>
+                                        <Typography variant='body1'>确认新密码</Typography>
                                         <OutlinedInput
                                             id='confirmPassword'
                                             type='password'
                                             fullWidth
-                                            placeholder='Confirm New Password'
+                                            placeholder='确认新密码'
                                             name='confirmPassword'
                                             onChange={(e) => setConfirmPassword(e.target.value)}
                                             value={confirmPassword}
@@ -866,7 +863,7 @@ const AccountSettings = () => {
                         )}
                         {isCloud && (
                             <>
-                                <SettingsSection title='Delete Account'>
+                                <SettingsSection title='删除账户'>
                                     <Box
                                         sx={{
                                             width: '100%',
@@ -939,7 +936,7 @@ const AccountSettings = () => {
             )}
             {/* Remove Seats Dialog */}
             <Dialog fullWidth maxWidth='sm' open={openRemoveSeatsDialog} onClose={handleRemoveSeatsDialogClose}>
-                <DialogTitle variant='h4'>Remove Additional Seats</DialogTitle>
+                <DialogTitle variant='h4'>移除额外席位</DialogTitle>
                 <DialogContent>
                     <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
                         {emptySeats === 0 ? (
@@ -954,7 +951,7 @@ const AccountSettings = () => {
                                 }}
                             >
                                 <IconAlertCircle size={20} />
-                                You must remove users from your organization before removing seats.
+                                在移除席位之前，您必须先从组织中移除用户。
                             </Typography>
                         ) : (
                             <Box
@@ -969,18 +966,18 @@ const AccountSettings = () => {
                             >
                                 {/* Occupied Seats */}
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant='body2'>Occupied Seats</Typography>
+                                    <Typography variant='body2'>已占用席位</Typography>
                                     <Typography variant='body2'>{occupiedSeats}</Typography>
                                 </Box>
 
                                 {/* Empty Seats */}
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant='body2'>Empty Seats</Typography>
+                                    <Typography variant='body2'>空席位</Typography>
                                     <Typography variant='body2'>{emptySeats}</Typography>
                                 </Box>
 
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant='body2'>Number of Empty Seats to Remove</Typography>
+                                    <Typography variant='body2'>要移除的空席位数量</Typography>
                                     <TextField
                                         size='small'
                                         type='number'
@@ -1016,7 +1013,7 @@ const AccountSettings = () => {
                                         borderTop: `1px solid ${theme.palette.divider}`
                                     }}
                                 >
-                                    <Typography variant='h5'>New Total Seats</Typography>
+                                    <Typography variant='h5'>新总席位</Typography>
                                     <Typography variant='h5'>{totalSeats - seatsQuantity}</Typography>
                                 </Box>
                             </Box>
@@ -1032,7 +1029,7 @@ const AccountSettings = () => {
                             <CircularProgress size={20} />
                         ) : getCustomerDefaultSourceApi.data?.invoice_settings?.default_payment_method ? (
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 2 }}>
-                                <Typography variant='subtitle2'>Payment Method</Typography>
+                                <Typography variant='subtitle2'>支付方式</Typography>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     {getCustomerDefaultSourceApi.data.invoice_settings.default_payment_method.card && (
                                         <>
@@ -1128,7 +1125,7 @@ const AccountSettings = () => {
                                     }}
                                 >
                                     <Box>
-                                        <Typography variant='body2'>Additional Seats Left (Prorated)</Typography>
+                                        <Typography variant='body2'>剩余额外席位（按比例）</Typography>
                                         <Typography variant='caption' color='text.secondary'>
                                             Qty {purchasedSeats - seatsQuantity}
                                         </Typography>
@@ -1172,7 +1169,7 @@ const AccountSettings = () => {
                                         borderTop: `1px solid ${theme.palette.divider}`
                                     }}
                                 >
-                                    <Typography variant='h5'>Due today</Typography>
+                                    <Typography variant='h5'>今日应付</Typography>
                                     <Typography variant='h5'>
                                         {prorationInfo.currency} {Math.max(0, prorationInfo.prorationAmount).toFixed(2)}
                                     </Typography>
@@ -1186,7 +1183,7 @@ const AccountSettings = () => {
                                             fontStyle: 'italic'
                                         }}
                                     >
-                                        Your available credit will automatically apply to your next invoice.
+                                        您的可用信用将自动应用到您的下一张发票。
                                     </Typography>
                                 )}
                             </Box>
@@ -1214,10 +1211,10 @@ const AccountSettings = () => {
                             {isUpdatingSeats ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     <CircularProgress size={16} color='inherit' />
-                                    Updating...
+                                    更新中...
                                 </Box>
                             ) : (
-                                'Remove Seats'
+                                '移除席位'
                             )}
                         </Button>
                     </DialogActions>
@@ -1225,7 +1222,7 @@ const AccountSettings = () => {
             </Dialog>
             {/* Add Seats Dialog */}
             <Dialog fullWidth maxWidth='sm' open={openAddSeatsDialog} onClose={handleAddSeatsDialogClose}>
-                <DialogTitle variant='h4'>Add Additional Seats</DialogTitle>
+                <DialogTitle variant='h4'>添加额外席位</DialogTitle>
                 <DialogContent>
                     <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
                         <Box
@@ -1246,18 +1243,18 @@ const AccountSettings = () => {
 
                             {/* Included Seats */}
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Typography variant='body2'>Seats Included with Plan</Typography>
+                                <Typography variant='body2'>计划包含席位</Typography>
                                 <Typography variant='body2'>{includedSeats}</Typography>
                             </Box>
 
                             {/* Additional Seats */}
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Typography variant='body2'>Additional Seats Purchased</Typography>
+                                <Typography variant='body2'>已购买额外席位</Typography>
                                 <Typography variant='body2'>{purchasedSeats}</Typography>
                             </Box>
 
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Typography variant='body2'>Number of Additional Seats to Add</Typography>
+                                <Typography variant='body2'>要添加的额外席位数量</Typography>
                                 <TextField
                                     size='small'
                                     type='number'
@@ -1306,7 +1303,7 @@ const AccountSettings = () => {
                             <CircularProgress size={20} />
                         ) : getCustomerDefaultSourceApi.data?.invoice_settings?.default_payment_method ? (
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 2 }}>
-                                <Typography variant='subtitle2'>Payment Method</Typography>
+                                <Typography variant='subtitle2'>支付方式</Typography>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     {getCustomerDefaultSourceApi.data.invoice_settings.default_payment_method.card && (
                                         <>
@@ -1390,7 +1387,7 @@ const AccountSettings = () => {
                                 {/* Additional Seats */}
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Box>
-                                        <Typography variant='body2'>Additional Seats (Prorated)</Typography>
+                                        <Typography variant='body2'>额外席位（按比例）</Typography>
                                         <Typography variant='caption' color='text.secondary'>
                                             Qty {seatsQuantity + purchasedSeats}
                                         </Typography>
@@ -1408,7 +1405,7 @@ const AccountSettings = () => {
                                 {/* Credit Balance */}
                                 {prorationInfo.creditBalance !== 0 && (
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <Typography variant='body2'>Applied account balance</Typography>
+                                        <Typography variant='body2'>已应用账户余额</Typography>
                                         <Typography variant='body2' color={prorationInfo.creditBalance < 0 ? 'success.main' : 'error.main'}>
                                             {prorationInfo.currency} {prorationInfo.creditBalance.toFixed(2)}
                                         </Typography>
@@ -1425,7 +1422,7 @@ const AccountSettings = () => {
                                         borderTop: `1px solid ${theme.palette.divider}`
                                     }}
                                 >
-                                    <Typography variant='h5'>Due today</Typography>
+                                    <Typography variant='h5'>今日应付</Typography>
                                     <Typography variant='h5'>
                                         {prorationInfo.currency}{' '}
                                         {Math.max(0, prorationInfo.prorationAmount + prorationInfo.creditBalance).toFixed(2)}
@@ -1440,7 +1437,7 @@ const AccountSettings = () => {
                                             fontStyle: 'italic'
                                         }}
                                     >
-                                        Your available credit will automatically apply to your next invoice.
+                                        您的可用信用将自动应用到您的下一张发票。
                                     </Typography>
                                 )}
                             </Box>
@@ -1466,10 +1463,10 @@ const AccountSettings = () => {
                             {isUpdatingSeats ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     <CircularProgress size={16} color='inherit' />
-                                    Updating...
+                                    更新中...
                                 </Box>
                             ) : (
-                                'Add Seats'
+                                '添加席位'
                             )}
                         </Button>
                     </DialogActions>

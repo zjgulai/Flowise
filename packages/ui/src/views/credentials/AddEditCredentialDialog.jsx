@@ -283,7 +283,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                 )
 
                 if (!authWindow) {
-                    throw new Error('Failed to open authorization window. Please check if popups are blocked.')
+                    throw new Error('打开授权窗口失败，请检查是否阻止了弹窗。')
                 }
 
                 // Listen for messages from the popup window

@@ -90,10 +90,10 @@ function APIKeyRow(props) {
                         : `${props.apiKey.apiKey.substring(0, 2)}${'•'.repeat(18)}${props.apiKey.apiKey.substring(
                               props.apiKey.apiKey.length - 5
                           )}`}
-                    <IconButton title='Copy' color='success' onClick={props.onCopyClick}>
+                    <IconButton title='复制' color='success' onClick={props.onCopyClick}>
                         <IconCopy />
                     </IconButton>
-                    <IconButton title='Show' color='inherit' onClick={props.onShowAPIClick}>
+                    <IconButton title='显示' color='inherit' onClick={props.onShowAPIClick}>
                         {props.showApiKeys.includes(props.apiKey.apiKey) ? <IconEyeOff /> : <IconEye />}
                     </IconButton>
                     <Popover
@@ -140,7 +140,7 @@ function APIKeyRow(props) {
                 <StyledTableCell>
                     {props.apiKey.chatFlows.length}{' '}
                     {props.apiKey.chatFlows.length > 0 && (
-                        <IconButton aria-label='expand row' size='small' color='inherit' onClick={() => setOpen(!open)}>
+                        <IconButton aria-label='展开行' size='small' color='inherit' onClick={() => setOpen(!open)}>
                             {props.apiKey.chatFlows.length > 0 && open ? <IconChevronsUp /> : <IconChevronsDown />}
                         </IconButton>
                     )}
@@ -148,14 +148,14 @@ function APIKeyRow(props) {
                 <StyledTableCell>{moment(props.apiKey.createdAt).format('MMMM Do, YYYY')}</StyledTableCell>
                 <Available permission={'apikeys:update,apikeys:create'}>
                     <StyledTableCell>
-                        <IconButton title='Edit' color='primary' onClick={props.onEditClick}>
+                        <IconButton title='编辑' color='primary' onClick={props.onEditClick}>
                             <IconEdit />
                         </IconButton>
                     </StyledTableCell>
                 </Available>
                 <Available permission={'apikeys:delete'}>
                     <StyledTableCell>
-                        <IconButton title='Delete' color='error' onClick={props.onDeleteClick}>
+                        <IconButton title='删除' color='error' onClick={props.onDeleteClick}>
                             <IconTrash />
                         </IconButton>
                     </StyledTableCell>
@@ -171,7 +171,7 @@ function APIKeyRow(props) {
                                         <TableRow>
                                             <StyledTableCell sx={{ width: '30%' }}>Chatflow Name</StyledTableCell>
                                             <StyledTableCell sx={{ width: '20%' }}>Modified On</StyledTableCell>
-                                            <StyledTableCell sx={{ width: '50%' }}>Category</StyledTableCell>
+                                            <StyledTableCell sx={{ width: '50%' }}>分类</StyledTableCell>
                                         </TableRow>
                                     </TableHead>
                                     <TableBody>
@@ -283,7 +283,7 @@ const APIKey = () => {
 
     const addNew = () => {
         const dialogProp = {
-            title: 'Add New API Key',
+            title: '添加新 API 密钥',
             type: 'ADD',
             cancelButtonName: 'Cancel',
             confirmButtonName: 'Add',
@@ -390,7 +390,7 @@ const APIKey = () => {
                             onSearchChange={onSearchChange}
                             search={true}
                             searchPlaceholder='Search API Keys'
-                            title='API Keys'
+                            title='API密钥'
                             description='Flowise API & SDK authentication keys'
                         >
                             <StyledPermissionButton
@@ -413,7 +413,7 @@ const APIKey = () => {
                                         alt='APIEmptySVG'
                                     />
                                 </Box>
-                                <div>No API Keys Yet</div>
+                                <div>暂无 API 密钥</div>
                             </Stack>
                         ) : (
                             <>
@@ -433,9 +433,9 @@ const APIKey = () => {
                                             <TableRow>
                                                 <StyledTableCell>Key Name</StyledTableCell>
                                                 <StyledTableCell>API Key</StyledTableCell>
-                                                <StyledTableCell>Permissions</StyledTableCell>
-                                                <StyledTableCell>Usage</StyledTableCell>
-                                                <StyledTableCell>Updated</StyledTableCell>
+                                                <StyledTableCell>权限</StyledTableCell>
+                                                <StyledTableCell>使用</StyledTableCell>
+                                                <StyledTableCell>已更新</StyledTableCell>
                                                 <Available permission={'apikeys:update,apikeys:create'}>
                                                     <StyledTableCell> </StyledTableCell>
                                                 </Available>

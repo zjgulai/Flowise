@@ -183,7 +183,7 @@ const EditWorkspaceUserRoleDialog = ({ show, dialogProps, onCancel, onConfirm })
                         onChange={handleRoleChange}
                         getOptionLabel={(option) => option.label || ''}
                         options={availableRoles}
-                        renderInput={(params) => <TextField {...params} variant='outlined' placeholder='Select Role' />}
+                        renderInput={(params) => <TextField {...params} variant='outlined' placeholder='选择角色' />}
                         value={selectedRole}
                         PopperComponent={StyledPopper}
                     />

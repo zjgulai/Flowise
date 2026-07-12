@@ -194,7 +194,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 </Box>
                 <Box sx={{ p: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
-                        <Typography>Description</Typography>
+                        <Typography>描述</Typography>
 
                         <div style={{ flexGrow: 1 }}></div>
                     </div>
@@ -212,7 +212,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 </Box>
             </DialogContent>
             <DialogActions>
-                <Button onClick={() => onCancel()}>Cancel</Button>
+                <Button onClick={() => onCancel()}>取消</Button>
                 <StyledButton
                     disabled={!documentStoreName}
                     variant='contained'

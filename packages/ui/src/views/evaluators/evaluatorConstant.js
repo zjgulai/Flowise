@@ -27,7 +27,7 @@ export const evaluators = [
     {
         type: 'text',
         name: 'StartsWith',
-        label: 'Starts With',
+        label: '以...开始',
         description: 'Returns true if the response starts with the specified value.'
     },
     {
@@ -39,19 +39,19 @@ export const evaluators = [
     {
         type: 'json',
         name: 'IsValidJSON',
-        label: 'Is Valid JSON',
+        label: '是有效的 JSON',
         description: 'Returns true if the response is a valid JSON.'
     },
     {
         type: 'json',
         name: 'IsNotValidJSON',
-        label: 'Is Not a Valid JSON',
+        label: '不是有效的 JSON',
         description: 'Returns true if the response is a not a valid JSON.'
     },
     {
         type: 'numeric',
         name: 'totalTokens',
-        label: 'Total Tokens',
+        label: '总令牌数',
         description: 'Sum of Prompt Tokens and Completion Tokens.'
     },
     {
@@ -68,13 +68,13 @@ export const evaluators = [
     },
     {
         type: 'numeric',
-        label: 'Total API Latency',
+        label: '总 API 延迟',
         name: 'apiLatency',
         description: 'Total time taken for the Flowise Prediction API call (milliseconds).'
     },
     {
         type: 'numeric',
-        label: 'LLM Latency',
+        label: 'LLM 延迟',
         name: 'llm',
         description: 'Actual LLM invocation time (milliseconds).'
     },
@@ -86,7 +86,7 @@ export const evaluators = [
     },
     {
         type: 'numeric',
-        label: 'Output Chars Length',
+        label: '输出字符长度',
         name: 'responseLength',
         description: 'Number of characters in the response.'
     }
@@ -109,7 +109,7 @@ export const evaluatorTypes = [
         description: 'Set of Evaluators that evaluate the metrics (latency, tokens, cost, length of response) of a Chatflow.'
     },
     {
-        label: 'LLM based Grading (JSON)',
+        label: '基于 LLM 的评分（JSON）',
         name: 'llm',
         description: 'Post execution, grades the answers by using an LLM.'
     }
@@ -121,7 +121,7 @@ export const numericOperators = [
         name: 'equals'
     },
     {
-        label: 'Not Equals',
+        label: '不等于',
         name: 'notEquals'
     },
     {
@@ -129,7 +129,7 @@ export const numericOperators = [
         name: 'greaterThan'
     },
     {
-        label: 'Less Than',
+        label: '小于',
         name: 'lessThan'
     },
     {
@@ -137,7 +137,7 @@ export const numericOperators = [
         name: 'greaterThanOrEquals'
     },
     {
-        label: 'Less Than or Equals',
+        label: '小于或等于',
         name: 'lessThanOrEquals'
     }
 ]

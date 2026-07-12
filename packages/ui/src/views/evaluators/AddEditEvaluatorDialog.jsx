@@ -150,7 +150,7 @@ const AddEditEvaluatorDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 type: 'actions',
                 width: 80,
                 getActions: (params) => [
-                    <GridActionsCellItem key={'Delete'} icon={<DeleteIcon />} label='Delete' onClick={deleteItem(params.id)} />
+                    <GridActionsCellItem key={'Delete'} icon={<DeleteIcon />} label='删除' onClick={deleteItem(params.id)} />
                 ]
             }
         ],
@@ -348,7 +348,7 @@ const AddEditEvaluatorDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ pb: 2 }}>
-                    <Typography variant='overline'>Name</Typography>
+                    <Typography variant='overline'>名称</Typography>
                     <OutlinedInput
                         size='small'
                         multiline={false}
@@ -397,7 +397,7 @@ const AddEditEvaluatorDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                             />
                         </Box>
                         <Box sx={{ pb: 2 }}>
-                            <Typography variant='overline'>Value</Typography>
+                            <Typography variant='overline'>值</Typography>
                             <OutlinedInput
                                 size='small'
                                 type='number'
@@ -415,7 +415,7 @@ const AddEditEvaluatorDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 {evaluatorType === 'text' && selectedEvaluator && (
                     <>
                         <Box sx={{ pb: 2 }}>
-                            <Typography variant='overline'>Value</Typography>
+                            <Typography variant='overline'>值</Typography>
                             <OutlinedInput
                                 size='small'
                                 multiline={true}
@@ -454,7 +454,7 @@ const AddEditEvaluatorDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                         </Box>
                         <Box sx={{ pb: 2 }}>
                             <div style={{ display: 'flex', flexDirection: 'row' }}>
-                                <Typography variant='overline'>Prompt</Typography>
+                                <Typography variant='overline'>提示词</Typography>
                                 <div style={{ flexGrow: 1 }}></div>
                                 {prompt && (
                                     <IconButton
@@ -463,7 +463,7 @@ const AddEditEvaluatorDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                                             height: 25,
                                             width: 25
                                         }}
-                                        title='Expand'
+                                        title='展开'
                                         color='primary'
                                         onClick={() =>
                                             onExpandDialogClicked({

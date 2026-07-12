@@ -205,7 +205,7 @@ const EvalDatasets = () => {
                             isEditButton={false}
                             onSearchChange={onSearchChange}
                             search={true}
-                            title='Datasets'
+                            title='数据集'
                             description=''
                         >
                             <StyledPermissionButton
@@ -227,7 +227,7 @@ const EvalDatasets = () => {
                                         alt='empty_datasetSVG'
                                     />
                                 </Box>
-                                <div>No Datasets Yet</div>
+                                <div>暂无数据集</div>
                             </Stack>
                         ) : (
                             <>
@@ -245,9 +245,9 @@ const EvalDatasets = () => {
                                             }}
                                         >
                                             <TableRow>
-                                                <TableCell>Name</TableCell>
-                                                <TableCell>Description</TableCell>
-                                                <TableCell>Rows</TableCell>
+                                                <TableCell>名称</TableCell>
+                                                <TableCell>描述</TableCell>
+                                                <TableCell>行</TableCell>
                                                 <TableCell>Last Updated</TableCell>
                                                 <Available permission={'datasets:update,datasets:create'}>
                                                     <TableCell> </TableCell>
@@ -324,7 +324,7 @@ const EvalDatasets = () => {
                                                             </TableCell>
                                                             <Available permission={'datasets:update,datasets:create'}>
                                                                 <TableCell>
-                                                                    <IconButton title='Edit' color='primary' onClick={() => edit(ds)}>
+                                                                    <IconButton title='编辑' color='primary' onClick={() => edit(ds)}>
                                                                         <IconEdit />
                                                                     </IconButton>
                                                                 </TableCell>
@@ -332,7 +332,7 @@ const EvalDatasets = () => {
                                                             <Available permission={'datasets:delete'}>
                                                                 <TableCell>
                                                                     <IconButton
-                                                                        title='Delete'
+                                                                        title='删除'
                                                                         color='error'
                                                                         onClick={() => deleteDataset(ds)}
                                                                     >
