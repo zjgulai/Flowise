@@ -93,7 +93,7 @@ last_updated: 2026-07-12
 -   Batch 4 登录后核心 E2E 仍是最高产品风险，但受专用测试账号、隔离 workspace 和安全凭证交付路径阻塞。
 -   Task 4 已把 Batch 5A 收敛成独立 commit：DeepSeek/Kimi fail-closed transport、credential schema、错误脱敏、取消/超时和 SSRF 边界均有自动化证据；真实 provider call 继续禁用。
 -   Batch 6A header owner 的 July 10 L4 保持有效；Task 5 已把 Batch 6B 收敛成独立 commit。生产仍维持 `compat` CSP 且未开启 report-only，部署与 enforcement 提升需单独授权。
--   Task 6 release provenance source/config 已完成；实际 Docker image/archive manifest 尚未生成。Stage 0 下一步是 Task 7 文档闭环与 Task 8 whole-branch verification，不是部署。
+-   Stage 0 Task 1-8 已完成本地 source/config/review 闭环；实际 Docker image/archive manifest 尚未生成。下一步是 registry 可用后的本地 artifact completion，不是直接部署。
 -   Batch 7 处理约 3.57 GB runtime image、5.74 MB 主 bundle、runtime 编译工具链和 upstream/i18n 维护债。
 
 # 2026-07-12 Task 4 Provider Source Contract
@@ -125,6 +125,15 @@ last_updated: 2026-07-12
 -   Release manifest v1 分离 Git source、image config digest、archive SHA-256/bytes 和 platform；RepoDigest 不得由这些字段推断。Task 6 只完成 source/config 验证，实际 archive manifest 未生成。
 -   `.dockerignore` 已排除 `.env*`、常见 key/pem、嵌套 `node_modules/dist/build` 和 macOS metadata，避免将敏感文件或 AppleDouble 带入镜像。
 -   runtime 阶段仍安装 `make`、`g++`、`build-base`、`cairo-dev`、`pango-dev` 和 `git`，与“仅运行时依赖”注释不一致。它不是当前上线阻断项，但属于镜像体积与攻击面债务，已加入 Batch 7。
+
+# 2026-07-12 Task 8 Final Review Findings
+
+-   原 release source gate 只检查少量生成目录与 SSH key，Git-ignored 的 uploads、`api.json`、cert/key variants、`extensions/`、private apps 和本地 agent 文件仍可被 `COPY . .` 带入镜像而不进入 clean manifest。现已镜像当前 ignore contract、加入 ignored/allow probes、数组长度 fail-fast，并检查本 checkout 实际 ignored paths；真实 Docker context/image 仍需 registry 恢复后的 artifact verification。
+-   生产只读证据显示容器用户为 `node`、HOME 为 `/home/node`，现有 `encryption.key` 位于 `/home/node/.flowise`，而持久卷挂载到 `/usr/src/flowise/.flowise`。Compose/Dockerfile 现绑定并赋权持久路径，同时要求 `FLOWISE_SECRETKEY_OVERWRITE`；但部署前必须通过另行授权复用当前 key，不能生成替代值或只改路径后 recreate。
+-   `global-agent@3` 的默认 `forceGlobalAgent=true` 会覆盖 `secureFetch` 的 DNS-pinned Agent，使请求在校验后可能再次解析 DNS。Server 现用 `bootstrap({ forceGlobalAgent: false })`，Node 24 子进程集成测试与独立真实组合验证均证明 transport 保留显式 Agent、没有 fallback lookup。
+-   `.env.production.template` 原有宽泛 Tool external dependencies，但 Compose 未转发；直接补转发会首次扩大生产攻击面。模板现默认两项额外依赖为空，env preflight 强制为空，回归测试确认 `pg,puppeteer,playwright` 会 fail closed；后续开启需单独产品/安全授权。
+-   单纯全文件 grep 无法证明 env key 属于 Flowise service。Static gate 现实际渲染 Compose JSON，并绑定 `services.flowise.environment`、required secret presence 和 `flowise_data -> /usr/src/flowise/.flowise`；模板值不输出，临时文件权限为 `0600` 并清理。
+-   Task 8 clean-clone L2：release `19/19`、static `114/114`、components `1018/1018`、server `1004/1004`、UI `65/65`、`build:docker` `4/4`；三条独立复审 APPROVED。真实 image/archive/runtime 未验证，生产未改变。
 
 # 2026-07-10 历史 Node 24 构建调查
 

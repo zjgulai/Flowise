@@ -134,3 +134,8 @@ date: 2026-07-10
 -   Task 7 开始同步 9 个 current-state 文档；历史 root reports、`pnpm-lock.yaml`、Docker variants、sidecar 文件保持未暂存。
 -   Stage 0 全程 `production unchanged`、`production_write=false`、`provider_call=false`、`secrets_read=false`、`registry_push=false`。
 -   Task 7 九个文档路径已通过 stale-state、Markdown 格式、精确 cached allowlist 与两条独立复审；`pnpm-lock.yaml`、历史 root reports、Docker variants 和 upload sidecars 未进入提交边界。
+-   Task 8 初次 whole-branch review 发现 Docker context/manifest 漂移、encryption key 非持久化、Compose env 未生效、`global-agent` 覆盖 DNS-pinned Agent，以及 text-only Compose gate 可假绿；全部以 RED 证据和最小修复闭环。
+-   Task 8 修复 commit `75f75f48622bcc213c4eb99388a147ff5213aaf6` 精确包含 13 个路径；用户 `pnpm-lock.yaml` 与历史/备用文件未暂存。三条独立复审 lane 最终均 APPROVED，无剩余 Critical/Important。
+-   Clean clone 使用 Node `v24.18.0`、pnpm `10.26.0`，frozen install 后 lock hash 不变；release `19/19`、static `114/114`、components `24/24` suites / `1018/1018` tests、server `35/35` / `1004/1004`、UI `2/2` / `65/65`、`build:docker` `4/4`，source/Compose/TypeScript/lint/format/diff gates 通过。
+-   生产只读 follow-up 仅确认当前 `encryption.key` 位于 `/home/node/.flowise` 容器层而非 `/usr/src/flowise/.flowise` 持久卷，未读取值。未来 recreate 必须先经单独授权复用旧 key；`production unchanged`、`secrets_read=false`。
+-   Task 8 未重试真实 Docker build；registry `EOF` 证据边界保持：`docker_build_verified=false`、`builder_image_verified=false`、`final_image_loaded=false`、`runtime_smoke_verified=false`、`actual_archive_manifest_verified=false`。

@@ -206,7 +206,7 @@ evidence_model: L0-L4
 -   [x] Task 5 CSP/request：`1372561`，server `127/127`、UI `65/65`、static `52/52`，未部署。
 -   [!] Task 6 provenance：`699b59b`，release `18/18`、static `95/95`、clean-clone frozen install 通过；没有 candidate image/archive/actual manifest。
 -   [x] Task 7 current-state docs：July 12 L3 与本地 source/config 证据已同步，并通过 9-path 原子门禁与独立复审。
--   [ ] Task 8 whole-branch verification/review；不 merge、push、PR、deploy 或调用 Provider。
+-   [x] Task 8 whole-branch verification/review：修复 commit `75f75f4`，clean-clone full gates 与三条独立复审通过；未 merge、push、PR、deploy 或调用 Provider。
 
 Task 7 前本地快照：branch `codex/flowise-release-foundation-20260712`，base `bb773ffa710bd22639c4ba2643413a0ea2b679d3`，source HEAD `699b59b1c08413e0785a9732c2dfe4c020b4a331`，12 commits/212 paths，`tracked_changed_paths=2`、`untracked_paths_all=32`、`cached_paths=0`。
 
@@ -214,11 +214,12 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 
 # 后续批次执行顺序
 
-1. **Stage 0 Task 7/8（当前）**：完成 9-path 文档闭环与 whole-branch verification；Docker blocker 如实保留，不部署。
-2. **Batch 7A 剩余项**：upstream sync checklist、历史文档归档、backup restore drill、日志和容量策略；release source/config contract 已完成，actual archive manifest 仍需可用 registry/build。
-3. **Batch 5B（本地可执行项）**：先补 `reasoning_content` 持久化/UI 链路和统一成本 schema，再决定是否重新暴露 K2.7；真实 provider smoke 继续等待单独授权。
-4. **Batch 4（条件阻塞）**：取得专用测试账号和隔离 workspace 后执行认证后 E2E；所有生产写入记录 ID 并清理。
-5. **Batch 7B（性能与攻击面）**：runtime 工具链和镜像瘦身、未登录 bundle 拆分、About 外联治理；必须用节点运行矩阵防止瘦身破坏功能。
+1. **Release artifact completion（本地）**：registry/build 可用后，从 clean commit 构建并 inspect `linux/amd64` candidate，生成并验证真实 archive manifest；当前不得把 source/config 证据冒充 image/runtime evidence。
+2. **Production encryption-key migration（需单独授权）**：用受保护流程复用当前容器层 key，准备 immutable rollback，再允许 Flowise recreate；不得打印、轮换或臆造 key。
+3. **Batch 7A 剩余项**：upstream sync checklist、历史文档归档、backup restore drill、日志和容量策略。
+4. **Batch 5B（本地可执行项）**：先补 `reasoning_content` 持久化/UI 链路和统一成本 schema，再决定是否重新暴露 K2.7；真实 provider smoke 继续等待单独授权。
+5. **Batch 4（条件阻塞）**：取得专用测试账号和隔离 workspace 后执行认证后 E2E；所有生产写入记录 ID 并清理。
+6. **Batch 7B（性能与攻击面）**：runtime 工具链和镜像瘦身、未登录 bundle 拆分、About 外联治理；必须用节点运行矩阵防止瘦身破坏功能。
 
 # 已完成的 Node 24 生产批次证据
 

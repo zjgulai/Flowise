@@ -526,14 +526,14 @@ git commit -m "docs(ops): align release and production evidence"
 
 **Files:**
 
--   Verify only; no planned source additions.
+-   Verification was planned as read-only, but final review found release-blocking gaps. The reviewed fix commit `75f75f48622bcc213c4eb99388a147ff5213aaf6` changes 13 source/config/test/runbook paths; this closeout section records the resulting evidence.
 
 **Interfaces:**
 
 -   Consumes: Tasks 1-7 commits.
 -   Produces: review-ready branch evidence; no merge, push, PR, or deploy.
 
--   [ ] **Step 1: Verify repository and staged state**
+-   [x] **Step 1: Verify repository and staged state**
 
 ```bash
 git status --short --branch
@@ -545,7 +545,7 @@ node --test scripts/release-manifest.test.mjs
 git diff --check
 ```
 
--   [ ] **Step 2: Run full relevant local gates under the pinned toolchain**
+-   [x] **Step 2: Run full relevant local gates under the pinned toolchain**
 
 ```bash
 pnpm install --frozen-lockfile
@@ -555,12 +555,20 @@ pnpm --filter flowise-ui test --runInBand
 pnpm build:docker
 ```
 
-Run a local `linux/amd64` image/manifest smoke if disk space remains safe. Never delete volumes or unrelated images to create space.
+The clean clone at `75f75f4` used Node `v24.18.0` and pnpm `10.26.0`; frozen install preserved lock SHA-256 `1962e9b6aba4e53f3583641f393d33b5ce79f8ece6086d14619beaac23a7552c`. Release tests were `19/19`, static security `114/114`, components `24/24` suites and `1018/1018` tests, server `35/35` suites and `1004/1004` tests, UI `2/2` suites and `65/65` tests, and `build:docker` completed `4/4` workspaces. Compose render, source gate, ESLint, Prettier, TypeScript, and diff checks also passed.
 
--   [ ] **Step 3: Run final whole-branch code review**
+No real Docker image build was retried. The Task 6 registry `EOF` remains the last image-build evidence, so `docker_build_verified=false`, `builder_image_verified=false`, `final_image_loaded=false`, `runtime_smoke_verified=false`, and `actual_archive_manifest_verified=false` remain unchanged.
+
+-   [x] **Step 3: Run final whole-branch code review**
 
 Review the complete branch against this plan. Fix all Critical/Important findings, rerun covering tests, and re-review.
 
--   [ ] **Step 4: Hand off without external side effects**
+The first review found: Git-ignored files could enter Docker context outside the manifest; Flowise encryption state was not bound to the persistent volume; template runtime keys were not effective in Compose; `global-agent` could replace the DNS-pinned Agent used by `secureFetch`; and text-only Compose assertions could pass with keys under the wrong service. The fix adds ignored/allow probes plus current ignored-path inspection, a writable persistent mountpoint and required encryption-key contract, fail-closed Tool dependency defaults, a rendered Compose semantic gate, and a Node 24 integration test for explicit Agent preservation. Three independent re-review lanes returned APPROVED with no remaining Critical/Important findings.
+
+The Task 8 production read-only follow-up found the current key file under `/home/node/.flowise` rather than the mounted `/usr/src/flowise/.flowise`. A future recreate is therefore blocked until a separately authorized secret-handling procedure reuses the exact existing key; Stage 0 did not read or migrate it.
+
+-   [x] **Step 4: Hand off without external side effects**
 
 Report commit list, verification evidence, remaining ignored/historical files, and next authorization boundary. Do not merge, push, create a PR, deploy, restart, or call a Provider.
+
+Task 8 preserved the user-owned `pnpm-lock.yaml` modification and all historical reports, alternate Dockerfiles, and upload sidecars outside the index. The branch is review-ready locally; it has not been pushed, merged, opened as a PR, or deployed. `production unchanged`, `production_write=false`, `provider_call=false`, `secrets_read=false`, `registry_push=false`.
