@@ -21,6 +21,7 @@ services:
             # 基础配置
             - PORT=3000
             - NODE_ENV=production
+            - HOME=/usr/src/flowise
             - APP_URL=${APP_URL:-http://localhost:3000}
             - FLOWISE_FILE_SIZE_LIMIT=${FLOWISE_FILE_SIZE_LIMIT:-50mb}
 
@@ -32,6 +33,8 @@ services:
             - DATABASE_USER=${POSTGRES_USER:-flowise}
             - DATABASE_PASSWORD=${POSTGRES_PASSWORD}
             - DATABASE_SSL=${DATABASE_SSL:-false}
+            - DATABASE_REJECT_UNAUTHORIZED=${DATABASE_REJECT_UNAUTHORIZED:-true}
+            - DATABASE_PATH=/usr/src/flowise/.flowise
 
             # 认证配置
             - SECURE_COOKIES=${SECURE_COOKIES:-true}
@@ -45,6 +48,8 @@ services:
             - EXPRESS_SESSION_SECRET=${EXPRESS_SESSION_SECRET}
             - PASSWORD_SALT_HASH_ROUNDS=${PASSWORD_SALT_HASH_ROUNDS:-10}
             - TOKEN_HASH_SECRET=${TOKEN_HASH_SECRET}
+            - SECRETKEY_PATH=/usr/src/flowise/.flowise
+            - FLOWISE_SECRETKEY_OVERWRITE=${FLOWISE_SECRETKEY_OVERWRITE:?FLOWISE_SECRETKEY_OVERWRITE must reuse the current production encryption key}
 
             # 安全开关 —— 生产环境强制启用
             - HTTP_SECURITY_CHECK=${HTTP_SECURITY_CHECK:-true}
@@ -55,13 +60,16 @@ services:
             - KIMI_BASE_URL_ALLOWLIST=${KIMI_BASE_URL_ALLOWLIST:-}
             - TRUST_PROXY=${TRUST_PROXY:-1}
             - CORS_ORIGINS=${CORS_ORIGINS}
+            - CORS_ALLOW_CREDENTIALS=${CORS_ALLOW_CREDENTIALS:-false}
             - IFRAME_ORIGINS=${IFRAME_ORIGINS:-'self'}
             - CSP_ENFORCEMENT_MODE=${CSP_ENFORCEMENT_MODE:-compat}
             - CSP_REPORT_ONLY_MODE=${CSP_REPORT_ONLY_MODE:-off}
+            - CUSTOM_MCP_ALLOWED_COMMANDS=${CUSTOM_MCP_ALLOWED_COMMANDS:-}
 
             # 日志配置
             - LOG_LEVEL=${LOG_LEVEL:-warn}
             - LOG_PATH=/usr/src/flowise/.flowise/logs
+            - LOG_SANITIZE_BODY_FIELDS=${LOG_SANITIZE_BODY_FIELDS}
 
             # 性能配置
             - NODE_OPTIONS=--max-old-space-size=4096
@@ -74,6 +82,10 @@ services:
             # 其他功能开关
             - DISABLE_FLOWISE_TELEMETRY=${DISABLE_FLOWISE_TELEMETRY:-true}
             - SHOW_COMMUNITY_NODES=${SHOW_COMMUNITY_NODES:-false}
+            # Tool Function / Custom Function 依赖白名单
+            - TOOL_FUNCTION_BUILTIN_DEP=${TOOL_FUNCTION_BUILTIN_DEP:-}
+            - TOOL_FUNCTION_EXTERNAL_DEP=${TOOL_FUNCTION_EXTERNAL_DEP:-}
+            - ALLOW_BUILTIN_DEP=${ALLOW_BUILTIN_DEP:-false}
 
             # 外部 API Keys（按需填写）
             - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}

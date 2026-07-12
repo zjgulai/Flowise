@@ -36,6 +36,8 @@ The following metadata was observed at `2026-07-12T10:51:01Z` on `VM-0-16-ubuntu
 -   Docker inspect and the host listener table showed Flowise bound only to `172.20.0.1:3000`. PostgreSQL remained bound to `127.0.0.1:5432`; Nginx owned public `80/443` and was `running` and container-health `healthy`.
 -   `/opt/flowise/backups` existed with `authorized-hardening-20260710092411` and `authorized-node24-20260710T053915Z`. The shared Nginx backup directory also existed with the recorded Flowise header-owner files.
 -   Backup evidence is limited to `backup_state=exists_not_checksum_or_restore_verified`.
+-   A Task 8 read-only follow-up found the container user was `node`, effective home was `/home/node`, and the current `encryption.key` existed under `/home/node/.flowise` but not under the mounted `/usr/src/flowise/.flowise` path. The running container did not explicitly configure the `HOME`, `DATABASE_PATH`, `SECRETKEY_PATH`, or `FLOWISE_SECRETKEY_OVERWRITE` env key names. No key value was read.
+-   Therefore the current encryption key is in the container writable layer, not the observed persistent volume. Any Flowise recreate is blocked until an authorized secret-handling procedure reuses that exact key.
 
 Container health is not login, workflow, provider, database, or restore acceptance. This observation preserved `production_write=false`, `provider_call=false`, `secrets_read=false`, and `production unchanged`.
 
@@ -117,8 +119,21 @@ The image ID must equal the manifest config digest; the loaded tag, platform, so
 Check required env key names before any restart. Do not print or inspect values.
 
 ```bash
-ssh tencent-lighthouse 'cd /opt/flowise && for key in FLOWISE_IMAGE POSTGRES_IMAGE POSTGRES_PASSWORD JWT_AUTH_TOKEN_SECRET JWT_REFRESH_TOKEN_SECRET EXPRESS_SESSION_SECRET TOKEN_HASH_SECRET; do grep -q "^${key}=" .env.production || exit 1; done'
+ssh tencent-lighthouse 'cd /opt/flowise && for key in FLOWISE_IMAGE POSTGRES_IMAGE POSTGRES_PASSWORD JWT_AUTH_TOKEN_SECRET JWT_REFRESH_TOKEN_SECRET EXPRESS_SESSION_SECRET TOKEN_HASH_SECRET FLOWISE_SECRETKEY_OVERWRITE; do grep -q "^${key}=" .env.production || exit 1; done'
 ```
+
+### Encryption-key migration gate
+
+The first deployment using the reviewed Compose contract must reuse the exact encryption key from the currently running container. Do **not** generate a replacement `FLOWISE_SECRETKEY_OVERWRITE`, do not switch only `SECRETKEY_PATH`, and do not recreate Flowise while this gate is unresolved; any of those paths can make existing credentials undecryptable.
+
+The owner-authorized migration procedure must:
+
+1. Confirm the legacy key file exists and is non-empty by path/status only, without printing it.
+2. Transfer the same value into the protected production secret store or `.env.production` as `FLOWISE_SECRETKEY_OVERWRITE`, using a workflow that never places the value in terminal output, command arguments, logs, or repository files.
+3. Run `bash scripts/verify-security.sh /path/to/.env.production` and Compose `config --quiet`; neither command prints the value.
+4. Before cutover, retain an immutable rollback image/config that references the same key. After cutover, perform an authenticated credential-decryption smoke without invoking a Provider.
+
+This migration is a production secret read/write and requires separate explicit authorization. The Stage 0 release-foundation work does not perform it; `production unchanged`, `secrets_read=false`.
 
 For `IFRAME_ORIGINS`, Compose strips ordinary shell quotes from `.env` values. Use this exact value for same-origin framing:
 

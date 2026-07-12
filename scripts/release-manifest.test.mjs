@@ -548,6 +548,52 @@ test('production env preflight rejects an all-zero dirty image identity', () => 
     }
 })
 
+test('production env preflight rejects unreviewed Tool Function dependencies', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'flowise-release-tool-deps-preflight-test-'))
+    const envPath = join(fixtureRoot, '.env.production')
+    const strongSecret = 'a'.repeat(64)
+    const validEnv = [
+        `FLOWISE_IMAGE=flowise-chinese:git-${'a'.repeat(40)}`,
+        'POSTGRES_IMAGE=postgres:16-alpine',
+        'NODE_ENV=production',
+        'SECURE_COOKIES=true',
+        'TRUST_PROXY=1',
+        'APP_URL=https://flowise.example.invalid',
+        `POSTGRES_PASSWORD=${strongSecret}`,
+        `JWT_AUTH_TOKEN_SECRET=${strongSecret}`,
+        `JWT_REFRESH_TOKEN_SECRET=${strongSecret}`,
+        `EXPRESS_SESSION_SECRET=${strongSecret}`,
+        `TOKEN_HASH_SECRET=${strongSecret}`,
+        `FLOWISE_SECRETKEY_OVERWRITE=${strongSecret}`,
+        'CORS_ORIGINS=https://flowise.example.invalid',
+        'IFRAME_ORIGINS="\'self\'"',
+        'CSP_ENFORCEMENT_MODE=compat',
+        'CSP_REPORT_ONLY_MODE=off',
+        'HTTP_SECURITY_CHECK=true',
+        'PATH_TRAVERSAL_SAFETY=true',
+        'CUSTOM_MCP_SECURITY_CHECK=true',
+        'CUSTOM_MCP_ALLOWED_COMMANDS=',
+        'OAUTH2_SECURITY_CHECK=true',
+        'DATABASE_REJECT_UNAUTHORIZED=true',
+        'CORS_ALLOW_CREDENTIALS=false',
+        'ALLOW_BUILTIN_DEP=false',
+        'LOG_SANITIZE_BODY_FIELDS=password,secret,token',
+        'TOOL_FUNCTION_BUILTIN_DEP=',
+        'TOOL_FUNCTION_EXTERNAL_DEP=pg,puppeteer,playwright',
+        'LOG_LEVEL=warn'
+    ].join('\n')
+
+    try {
+        writeFileSync(envPath, `${validEnv}\n`)
+        const result = spawnSync('bash', [SECURITY_SCRIPT_PATH, envPath], { encoding: 'utf8' })
+        assert.equal(result.status, 1)
+        assert.match(result.stdout, /FAIL TOOL_FUNCTION_EXTERNAL_DEP must remain empty until separately reviewed and authorized/)
+        assert.doesNotMatch(result.stdout, /PASS TOOL_FUNCTION_EXTERNAL_DEP is empty/)
+    } finally {
+        rmSync(fixtureRoot, { recursive: true, force: true })
+    }
+})
+
 test('URL sanitizer removes credentials, query and fragment and rejects unsafe protocols', () => {
     assert.equal(
         sanitizeRepositoryUrl(

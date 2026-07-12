@@ -120,6 +120,9 @@ WORKDIR /usr/src/flowise
 # 使用 --chown=node:node 确保 node 用户拥有所有文件
 COPY --from=builder --chown=node:node /usr/src/flowise .
 
+# Seed the named volume with a mountpoint writable by the non-root runtime user.
+RUN mkdir -p /usr/src/flowise/.flowise && chown node:node /usr/src/flowise/.flowise
+
 # 切换到非 root 用户运行（安全最佳实践）
 USER node
 

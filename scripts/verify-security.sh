@@ -54,6 +54,17 @@ file_exact_line() {
     fi
 }
 
+file_has_exact_line() {
+    local file=$1
+    local expected=$2
+    local label=$3
+    if grep -Fqx -- "$expected" "$REPO_ROOT/$file"; then
+        pass "$label"
+    else
+        fail "$label"
+    fi
+}
+
 file_fixed_count() {
     local file=$1
     local pattern=$2
@@ -167,6 +178,35 @@ check_bool() {
         pass "$key=$expected"
     else
         fail "$key expected $expected"
+    fi
+}
+
+check_boolean() {
+    local key=$1
+    local val
+    val="$(get_env_value "$key")"
+    case "$val" in
+        true|false)
+            pass "$key is boolean"
+            ;;
+        *)
+            fail "$key must be true or false"
+            ;;
+    esac
+}
+
+check_empty() {
+    local key=$1
+    local val
+    if ! env_has_key "$key"; then
+        fail "$key is missing"
+        return
+    fi
+    val="$(get_env_value "$key")"
+    if [[ -z "$val" ]]; then
+        pass "$key is empty"
+    else
+        fail "$key must remain empty until separately reviewed and authorized"
     fi
 }
 
@@ -307,6 +347,70 @@ check_postgres_image() {
     fi
 }
 
+check_rendered_compose_contract() {
+    local compose_json
+
+    if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+        fail "Rendered Compose contract requires Docker Compose"
+        return
+    fi
+    if ! command -v node >/dev/null 2>&1; then
+        fail "Rendered Compose contract requires Node.js"
+        return
+    fi
+
+    compose_json="$(mktemp "${TMPDIR:-/tmp}/flowise-compose-contract.XXXXXX" 2>/dev/null)"
+    if [[ -z "$compose_json" ]]; then
+        fail "Rendered Compose contract temp file is available"
+        return
+    fi
+    chmod 600 "$compose_json"
+
+    if ! docker compose --env-file "$REPO_ROOT/.env.production.template" -f "$REPO_ROOT/docker-compose.prod.yml" config --format json >"$compose_json" 2>/dev/null; then
+        rm -f -- "$compose_json"
+        fail "Rendered Compose contract is valid"
+        return
+    fi
+
+    if node - "$compose_json" <<'NODE'
+const fs = require('fs')
+
+const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+const flowise = config.services?.flowise
+const environment = flowise?.environment
+const exactEnvironment = {
+    HOME: '/usr/src/flowise',
+    DATABASE_PATH: '/usr/src/flowise/.flowise',
+    SECRETKEY_PATH: '/usr/src/flowise/.flowise',
+    DATABASE_REJECT_UNAUTHORIZED: 'true',
+    CORS_ALLOW_CREDENTIALS: 'false',
+    CUSTOM_MCP_ALLOWED_COMMANDS: '',
+    TOOL_FUNCTION_BUILTIN_DEP: '',
+    TOOL_FUNCTION_EXTERNAL_DEP: '',
+    ALLOW_BUILTIN_DEP: 'false'
+}
+
+if (!flowise || !environment) process.exit(1)
+for (const [key, value] of Object.entries(exactEnvironment)) {
+    if (environment[key] !== value) process.exit(1)
+}
+if (typeof environment.FLOWISE_SECRETKEY_OVERWRITE !== 'string' || environment.FLOWISE_SECRETKEY_OVERWRITE.length === 0) process.exit(1)
+if (typeof environment.LOG_SANITIZE_BODY_FIELDS !== 'string' || environment.LOG_SANITIZE_BODY_FIELDS.length === 0) process.exit(1)
+
+const hasPersistentVolume = Array.isArray(flowise.volumes) && flowise.volumes.some((volume) => {
+    return volume?.type === 'volume' && volume?.source === 'flowise_data' && volume?.target === '/usr/src/flowise/.flowise'
+})
+if (!hasPersistentVolume) process.exit(1)
+NODE
+    then
+        pass "Rendered Compose binds the Flowise runtime and persistent state contract"
+    else
+        fail "Rendered Compose binds the Flowise runtime and persistent state contract"
+    fi
+
+    rm -f -- "$compose_json"
+}
+
 echo "Flowise production hardening verification"
 echo "repo: $REPO_ROOT"
 echo ""
@@ -335,6 +439,7 @@ file_contains "Dockerfile" "COPY packages/agentflow/package.json ./packages/agen
 file_contains "Dockerfile" "COPY packages/observe/package.json ./packages/observe/" "Dockerfile installs the observe workspace"
 file_contains "Dockerfile" 'CMD [ "node", "packages/server/bin/run", "start" ]' "Runtime starts through the built Node CLI"
 file_not_contains_regex "Dockerfile" 'CMD[[:space:]]*\[[[:space:]]*"pnpm"' "Runtime CMD does not require pnpm"
+file_contains "Dockerfile" 'RUN mkdir -p /usr/src/flowise/.flowise && chown node:node /usr/src/flowise/.flowise' "Runtime prepares the persistent Flowise mountpoint for the node user"
 file_contains "Dockerfile" "ARG BUILD_SOURCE" "Runtime requires an OCI source build argument"
 file_contains "Dockerfile" "ARG BUILD_REVISION" "Runtime requires an OCI revision build argument"
 file_contains "Dockerfile" "ARG BUILD_VERSION" "Runtime requires an OCI version build argument"
@@ -355,12 +460,26 @@ file_contains "docker-compose.prod.yml" 'CSP_ENFORCEMENT_MODE=${CSP_ENFORCEMENT_
 file_contains "docker-compose.prod.yml" 'CSP_REPORT_ONLY_MODE=${CSP_REPORT_ONLY_MODE:-off}' "Compose defaults CSP report-only to off"
 file_contains "docker-compose.prod.yml" 'DEEPSEEK_BASE_URL_ALLOWLIST=${DEEPSEEK_BASE_URL_ALLOWLIST:-}' "Compose forwards the DeepSeek endpoint allowlist"
 file_contains "docker-compose.prod.yml" 'KIMI_BASE_URL_ALLOWLIST=${KIMI_BASE_URL_ALLOWLIST:-}' "Compose forwards the Kimi endpoint allowlist"
+file_fixed_count "docker-compose.prod.yml" 'HOME=/usr/src/flowise' 1 "Compose binds the runtime home to the persistent Flowise root exactly once"
+file_fixed_count "docker-compose.prod.yml" 'DATABASE_PATH=/usr/src/flowise/.flowise' 1 "Compose binds local database state to the persistent Flowise volume exactly once"
+file_fixed_count "docker-compose.prod.yml" 'SECRETKEY_PATH=/usr/src/flowise/.flowise' 1 "Compose binds encryption keys to the persistent Flowise volume exactly once"
+file_fixed_count "docker-compose.prod.yml" 'FLOWISE_SECRETKEY_OVERWRITE=${FLOWISE_SECRETKEY_OVERWRITE:?FLOWISE_SECRETKEY_OVERWRITE must reuse the current production encryption key}' 1 "Compose requires the migrated production encryption key exactly once"
+file_fixed_count "docker-compose.prod.yml" 'DATABASE_REJECT_UNAUTHORIZED=${DATABASE_REJECT_UNAUTHORIZED:-true}' 1 "Compose forwards the database certificate policy exactly once"
+file_fixed_count "docker-compose.prod.yml" 'CORS_ALLOW_CREDENTIALS=${CORS_ALLOW_CREDENTIALS:-false}' 1 "Compose defaults credentialed CORS off exactly once"
+file_fixed_count "docker-compose.prod.yml" 'CUSTOM_MCP_ALLOWED_COMMANDS=${CUSTOM_MCP_ALLOWED_COMMANDS:-}' 1 "Compose forwards the Custom MCP command allowlist exactly once"
+file_not_contains_regex ".env.production.template" '^FLOWISE_LANGUAGE=' "Production template does not advertise an unused language variable"
+file_fixed_count "docker-compose.prod.yml" 'LOG_SANITIZE_BODY_FIELDS=${LOG_SANITIZE_BODY_FIELDS}' 1 "Compose forwards the log redaction field list exactly once"
+file_fixed_count "docker-compose.prod.yml" 'TOOL_FUNCTION_BUILTIN_DEP=${TOOL_FUNCTION_BUILTIN_DEP:-}' 1 "Compose forwards reviewed extra builtin dependencies exactly once"
+file_fixed_count "docker-compose.prod.yml" 'TOOL_FUNCTION_EXTERNAL_DEP=${TOOL_FUNCTION_EXTERNAL_DEP:-}' 1 "Compose forwards reviewed extra external dependencies exactly once"
+file_fixed_count "docker-compose.prod.yml" 'ALLOW_BUILTIN_DEP=${ALLOW_BUILTIN_DEP:-false}' 1 "Compose defaults broad builtin dependency access off exactly once"
 file_contains ".env.production.template" "DEEPSEEK_BASE_URL_ALLOWLIST=" "Production template defines the DeepSeek endpoint allowlist"
 file_contains ".env.production.template" "KIMI_BASE_URL_ALLOWLIST=" "Production template defines the Kimi endpoint allowlist"
 file_contains ".env.production.template" "FLOWISE_IMAGE=" "Production template defines the immutable Flowise image key"
 file_contains ".env.production.template" "POSTGRES_IMAGE=" "Production template defines the explicit PostgreSQL image key"
 file_contains ".env.production.template" "CSP_ENFORCEMENT_MODE=compat" "Production template keeps compatible CSP enforcement"
 file_contains ".env.production.template" "CSP_REPORT_ONLY_MODE=off" "Production template requires explicit CSP observation"
+file_has_exact_line ".env.production.template" "TOOL_FUNCTION_BUILTIN_DEP=" "Production template does not expand builtin dependencies"
+file_has_exact_line ".env.production.template" "TOOL_FUNCTION_EXTERNAL_DEP=" "Production template does not allow external dependencies"
 file_not_contains_regex "packages/ui/index.html" "fonts\\.googleapis|fonts\\.gstatic|r\\.wdfl\\.co|rewardful" "UI index has no blocked third-party font/rewardful resources"
 file_not_contains_regex "packages/ui/index.html" "<script[[:space:]]*>" "UI index has no executable inline script block"
 file_contains "packages/ui/index.html" '<script src="/global.js"></script>' "UI loads the compatibility bootstrap from self"
@@ -384,6 +503,9 @@ file_contains "packages/server/src/utils/cspReport.ts" "const CSP_REPORT_BODY_LI
 file_contains "packages/server/src/utils/csp.ts" "CSP_REPORT_ONLY_MODE must be stricter" "CSP report-only policy cannot downgrade enforcement"
 file_contains "packages/server/src/utils/csp.ts" "resolveReportingEndpoint(env.APP_URL)" "Reporting API endpoint is derived from canonical APP_URL"
 file_contains "packages/server/src/index.ts" "validateCspReportTrustProxy(trustProxy, cspReportOnlyEnabled)" "CSP reporting rejects unrestricted proxy trust"
+file_contains "packages/server/src/index.ts" "import './globalAgent'" "Server initializes the controlled global proxy bootstrap first"
+file_not_contains_regex "packages/server/src/index.ts" "global-agent/bootstrap" "Server does not use the forceful global-agent bootstrap"
+file_contains "packages/server/src/globalAgent.ts" "forceGlobalAgent: false" "Global proxy bootstrap preserves explicit security agents"
 file_not_contains_regex "packages/server/src/index.ts" "existingCsp|baseCspDirectives" "Server has no hand-written CSP merge"
 file_contains_in_order "packages/server/src/index.ts" "this.app.use(CSP_REPORT_ENDPOINT" "this.app.use(express.json" "CSP report route precedes the global JSON parser"
 file_exists "scripts/release-manifest.mjs" "Release manifest generator exists"
@@ -407,6 +529,7 @@ file_contains ".github/workflows/docker-image-ecr.yml" "file: Dockerfile" "ECR b
 file_contains ".github/workflows/docker-image-ecr.yml" "push: false" "ECR foundation lane never pushes"
 file_contains ".github/workflows/docker-image-ecr.yml" "BUILD_REVISION=" "ECR foundation lane injects OCI provenance"
 file_not_contains_regex ".github/workflows/docker-image-ecr.yml" "default:[[:space:]]*['\"]?latest|amazon-ecr-login|configure-aws-credentials|push:[[:space:]]*true" "ECR foundation lane has no latest tag or registry login"
+check_rendered_compose_contract
 
 if [[ -n "$ENV_FILE" ]]; then
     echo ""
@@ -434,6 +557,15 @@ if [[ -n "$ENV_FILE" ]]; then
         check_bool "PATH_TRAVERSAL_SAFETY" "true"
         check_bool "CUSTOM_MCP_SECURITY_CHECK" "true"
         check_bool "OAUTH2_SECURITY_CHECK" "true"
+        check_bool "DATABASE_REJECT_UNAUTHORIZED" "true"
+        check_boolean "CORS_ALLOW_CREDENTIALS"
+        if [[ "$(get_env_value CORS_ALLOW_CREDENTIALS)" == "true" ]]; then
+            warn "CORS_ALLOW_CREDENTIALS=true requires an exact reviewed CORS_ORIGINS list"
+        fi
+        check_bool "ALLOW_BUILTIN_DEP" "false"
+        check_required "LOG_SANITIZE_BODY_FIELDS"
+        check_empty "TOOL_FUNCTION_BUILTIN_DEP"
+        check_empty "TOOL_FUNCTION_EXTERNAL_DEP"
         check_mcp_allowed_commands
         if [[ "$(get_env_value LOG_LEVEL)" == "debug" || "$(get_env_value LOG_LEVEL)" == "verbose" ]]; then
             warn "LOG_LEVEL is verbose for production"

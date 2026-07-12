@@ -97,7 +97,7 @@
 *.csr
 
 ## Certificate
-*.der 
+*.der
 
 ## Key database file
 *.kdb
