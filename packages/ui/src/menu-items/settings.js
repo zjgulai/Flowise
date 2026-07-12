@@ -33,28 +33,28 @@ const settings = {
     children: [
         {
             id: 'viewMessages',
-            title: 'View Messages',
+            title: '查看消息',
             type: 'item',
             url: '',
             icon: icons.IconMessage
         },
         {
             id: 'viewLeads',
-            title: 'View Leads',
+            title: '查看线索',
             type: 'item',
             url: '',
             icon: icons.IconUsers
         },
         {
             id: 'viewUpsertHistory',
-            title: 'Upsert History',
+            title: '更新历史',
             type: 'item',
             url: '',
             icon: icons.IconDatabaseExport
         },
         {
             id: 'chatflowConfiguration',
-            title: 'Configuration',
+            title: '配置',
             type: 'item',
             url: '',
             permission: 'chatflows:config',
@@ -62,7 +62,7 @@ const settings = {
         },
         {
             id: 'saveAsTemplate',
-            title: 'Save As Template',
+            title: '保存为模板',
             type: 'item',
             url: '',
             icon: icons.IconTemplate,
@@ -70,7 +70,7 @@ const settings = {
         },
         {
             id: 'duplicateChatflow',
-            title: 'Duplicate Chatflow',
+            title: '复制对话流程',
             type: 'item',
             url: '',
             icon: icons.IconCopy,
@@ -78,7 +78,7 @@ const settings = {
         },
         {
             id: 'loadChatflow',
-            title: 'Load Chatflow',
+            title: '加载对话流程',
             type: 'item',
             url: '',
             icon: icons.IconFileUpload,
@@ -86,7 +86,7 @@ const settings = {
         },
         {
             id: 'exportChatflow',
-            title: 'Export Chatflow',
+            title: '导出对话流程',
             type: 'item',
             url: '',
             icon: icons.IconFileExport,
@@ -94,7 +94,7 @@ const settings = {
         },
         {
             id: 'deleteChatflow',
-            title: 'Delete Chatflow',
+            title: '删除对话流程',
             type: 'item',
             url: '',
             icon: icons.IconTrash,
