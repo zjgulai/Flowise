@@ -14,7 +14,7 @@ jobs:
         strategy:
             matrix:
                 platform: [ubuntu-latest]
-                node-version: [24.15.0]
+                node-version: [24.18.0]
         runs-on: ${{ matrix.platform }}
         env:
             PUPPETEER_SKIP_DOWNLOAD: true
@@ -29,7 +29,17 @@ jobs:
                   node-version: ${{ matrix.node-version }}
                   cache: 'pnpm'
                   cache-dependency-path: 'pnpm-lock.yaml'
-            - run: pnpm install
+            - name: Frozen install without lockfile drift
+              run: |
+                  before="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+                  pnpm install --frozen-lockfile
+                  after="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+                  test "$before" = "$after"
+            - name: Verify release contracts
+              run: |
+                  pnpm test:release
+                  bash scripts/verify-release-source.sh
+                  bash scripts/verify-security.sh
             - run: pnpm lint
             - run: pnpm build
               env:

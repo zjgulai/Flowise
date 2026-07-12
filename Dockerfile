@@ -11,8 +11,7 @@
 # ==========================================
 # Stage 1: Builder
 # ==========================================
-ARG NODE_VERSION=24-alpine
-FROM node:${NODE_VERSION} AS deps
+FROM docker.io/library/node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS deps
 
 # 安装编译依赖和中文字体
 RUN apk update && \
@@ -69,7 +68,22 @@ RUN pnpm build:docker && rm -f .npmrc
 # ==========================================
 # Stage 2: Runtime
 # ==========================================
-FROM node:${NODE_VERSION} AS runtime
+FROM docker.io/library/node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS runtime
+
+# Immutable release provenance is supplied by the release pipeline.
+ARG BUILD_SOURCE
+ARG BUILD_REVISION
+ARG BUILD_VERSION
+ARG BUILD_CREATED
+RUN test -n "$BUILD_SOURCE" && \
+    test -n "$BUILD_VERSION" && \
+    test -n "$BUILD_CREATED" && \
+    test "${#BUILD_REVISION}" -eq 40 && \
+    ! printf '%s' "$BUILD_REVISION" | grep -q '[^0-9a-f]'
+LABEL org.opencontainers.image.source="${BUILD_SOURCE}" \
+    org.opencontainers.image.revision="${BUILD_REVISION}" \
+    org.opencontainers.image.version="${BUILD_VERSION}" \
+    org.opencontainers.image.created="${BUILD_CREATED}"
 
 # 安装当前运行时节点所需的系统依赖和工具
 RUN apk update && \
