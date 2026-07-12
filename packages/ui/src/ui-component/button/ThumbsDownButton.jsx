@@ -11,7 +11,7 @@ const ThumbsDownButton = (props) => {
             onClick={props.onClick}
             size='small'
             sx={{ background: 'transparent', border: 'none' }}
-            title='Thumbs Down'
+            title='踩'
         >
             <IconThumbDown
                 style={{ width: '20px', height: '20px' }}

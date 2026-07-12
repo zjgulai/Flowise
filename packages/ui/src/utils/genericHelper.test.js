@@ -3,14 +3,14 @@ import { applyVisibleInputDefaults, showHideInputs } from './genericHelper'
 describe('showHideInputs – declared defaults of sibling fields', () => {
     const buildParams = () => [
         {
-            label: 'Schedule Type',
+            label: '计划类型',
             name: 'scheduleType',
             type: 'options',
             default: 'visualPicker',
             show: { startInputType: 'scheduleInput' }
         },
         {
-            label: 'Schedule Input Mode',
+            label: '计划输入模式',
             name: 'scheduleInputMode',
             type: 'options',
             default: 'text',
@@ -61,7 +61,7 @@ describe('showHideInputs – declared defaults of sibling fields', () => {
 
     it('does not synthesize defaults for fields without a declared `default`', () => {
         const params = [
-            { label: 'Other', name: 'other', type: 'string' /* no default */ },
+            { label: '其他', name: 'other', type: 'string' /* no default */ },
             { label: 'Sib', name: 'sib', type: 'string', show: { other: 'expected' } }
         ]
         const nodeData = { inputParams: params, inputs: {} }

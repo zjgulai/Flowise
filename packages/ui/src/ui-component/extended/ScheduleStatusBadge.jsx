@@ -27,12 +27,12 @@ const ScheduleStatusBadge = ({ scheduleStatus, size = 'md' }) => {
     const colors = isActive ? ACTIVE[palette] : PAUSED[palette]
 
     const tooltipText = isLoading
-        ? 'Checking schedule status…'
+        ? '正在检查调度状态…'
         : isActive
         ? scheduleStatus.nextRunAt
-            ? `Schedule active — next run ${moment(scheduleStatus.nextRunAt).format('MMM D, YYYY h:mm A')}`
-            : 'Schedule active'
-        : 'Schedule configured but turned off'
+            ? `调度已激活 — 下次运行 ${moment(scheduleStatus.nextRunAt).format('MMM D, YYYY h:mm A')}`
+            : '调度已激活'
+        : '调度已配置但已关闭'
 
     const dims =
         size === 'sm'
@@ -85,7 +85,7 @@ const ScheduleStatusBadge = ({ scheduleStatus, size = 'md' }) => {
                 ) : (
                     <IconClock size={dims.icon} stroke={2} />
                 )}
-                {isLoading ? 'Loading…' : isActive ? 'Scheduled' : 'Paused'}
+                {isLoading ? '加载中…' : isActive ? '已计划' : '已暂停'}
             </Box>
         </Tooltip>
     )

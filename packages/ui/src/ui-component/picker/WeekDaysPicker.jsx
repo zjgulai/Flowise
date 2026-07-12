@@ -4,13 +4,13 @@ import { Box, Chip } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 
 const DEFAULT_DAYS = [
-    { label: 'Mon', value: '1' },
-    { label: 'Tue', value: '2' },
-    { label: 'Wed', value: '3' },
-    { label: 'Thu', value: '4' },
+    { label: '周一', value: '1' },
+    { label: '周二', value: '2' },
+    { label: '周三', value: '3' },
+    { label: '周四', value: '4' },
     { label: 'Fri', value: '5' },
-    { label: 'Sat', value: '6' },
-    { label: 'Sun', value: '7' }
+    { label: '周六', value: '6' },
+    { label: '周日', value: '7' }
 ]
 
 export const WeekDaysPicker = ({ value, options, onChange, disabled = false }) => {

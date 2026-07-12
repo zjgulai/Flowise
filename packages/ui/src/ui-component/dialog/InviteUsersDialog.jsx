@@ -492,7 +492,7 @@ const InviteUsersDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     }
 
     const renderUserSearchInput = (params) => (
-        <TextField {...params} variant='outlined' placeholder={selectedUsers.length > 0 ? '' : 'Invite users by name or email'} />
+        <TextField {...params} variant='outlined' placeholder={selectedUsers.length > 0 ? '' : '按姓名或邮箱邀请用户'} />
     )
 
     const renderUserSearchOptions = (props, option) => {
@@ -634,7 +634,7 @@ const InviteUsersDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
                 <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                     <IconUser style={{ marginRight: '10px' }} />
-                    Invite Users
+                    邀请用户
                 </div>
             </DialogTitle>
             <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -678,7 +678,7 @@ const InviteUsersDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                             getOptionLabel={(option) => option.label || ''}
                             onChange={handleWorkspaceChange}
                             options={workspaces}
-                            renderInput={(params) => <TextField {...params} variant='outlined' placeholder='Select Workspace' />}
+                            renderInput={(params) => <TextField {...params} variant='outlined' placeholder='选择工作空间' />}
                             sx={{ mt: 0.5 }}
                             value={getWorkspaceValue()}
                             PopperComponent={StyledPopper}
@@ -692,7 +692,7 @@ const InviteUsersDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                             getOptionLabel={(option) => option.label || ''}
                             onChange={handleRoleChange}
                             options={availableRoles}
-                            renderInput={(params) => <TextField {...params} variant='outlined' placeholder='Select Role' />}
+                            renderInput={(params) => <TextField {...params} variant='outlined' placeholder='选择角色' />}
                             sx={{ mt: 0.5 }}
                             value={getRoleValue()}
                             PopperComponent={StyledPopper}

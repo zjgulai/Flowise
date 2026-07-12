@@ -8,7 +8,7 @@ export const TableViewOnly = ({ columns, rows, sx }) => {
         if (row[key] === null || row[key] === undefined) {
             return ''
         } else if (key === 'enabled') {
-            return row[key] ? <Chip label='Enabled' color='primary' /> : <Chip label='Disabled' />
+            return row[key] ? <Chip label='已启用' color='primary' /> : <Chip label='已禁用' />
         } else if (key === 'type' && row.schema) {
             // If there's schema information, add a tooltip
             let schemaContent

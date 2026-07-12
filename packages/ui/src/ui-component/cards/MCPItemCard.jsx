@@ -185,7 +185,7 @@ const MCPItemCard = ({ data, onClick }) => {
                             }}
                         >
                             <IconTool style={{ marginRight: 5 }} size={15} />
-                            {toolCount} {toolCount === 1 ? 'tool' : 'tools'}
+                            {toolCount} {toolCount === 1 ? '工具' : '工具'}
                         </div>
                     </Grid>
                 </Grid>

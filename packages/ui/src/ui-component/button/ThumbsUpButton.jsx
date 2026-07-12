@@ -11,7 +11,7 @@ const ThumbsUpButton = (props) => {
             onClick={props.onClick}
             size='small'
             sx={{ background: 'transparent', border: 'none' }}
-            title='Thumbs Up'
+            title='赞'
         >
             <IconThumbUp
                 style={{ width: '20px', height: '20px' }}

@@ -12,7 +12,7 @@ import { flowContext } from '@/store/context/ReactFlowContext'
 
 export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }) => {
     const [arrayItems, setArrayItems] = useState([]) // these are the actual values. Ex: [{name: 'John', age: 30}, {name: 'Jane', age: 25}]
-    const [itemParameters, setItemParameters] = useState([]) // these are the input parameters for each array item. Ex: [{label: 'Name', type: 'string', display: true}, {label: 'age', type: 'number', display: false}]
+    const [itemParameters, setItemParameters] = useState([]) // these are the input parameters for each array item. Ex: [{label: '名称', type: 'string', display: true}, {label: 'age', type: 'number', display: false}]
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
     const flowContextValue = useContext(flowContext)
@@ -201,7 +201,7 @@ export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }
                         {/* Delete button for array item */}
                         {isDeleteButtonVisible && (
                             <IconButton
-                                title='Delete'
+                                title='删除'
                                 onClick={() => handleDeleteItem(index)}
                                 sx={{
                                     position: 'absolute',

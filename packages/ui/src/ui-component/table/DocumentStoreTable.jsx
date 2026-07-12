@@ -85,7 +85,7 @@ export const DocumentStoreTable = ({ data, isLoading, onRowClick, images, showAc
                                     Name
                                 </TableSortLabel>
                             </StyledTableCell>
-                            <StyledTableCell>Description</StyledTableCell>
+                            <StyledTableCell>描述</StyledTableCell>
                             <StyledTableCell>Connected flows</StyledTableCell>
                             <StyledTableCell>Total characters</StyledTableCell>
                             <StyledTableCell>Total chunks</StyledTableCell>
