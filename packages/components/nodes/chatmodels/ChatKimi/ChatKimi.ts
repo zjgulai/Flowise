@@ -1,8 +1,8 @@
+import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
 import { BaseCache } from '@langchain/core/caches'
-import { ChatDeepSeek, ChatDeepSeekInput } from '@langchain/deepseek'
 import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
-import { getModels, MODEL_TYPE } from '../../../src/modelLoader'
 import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+import { getModels, MODEL_TYPE } from '../../../src/modelLoader'
 import {
     buildSecureProviderConfiguration,
     parseOptionalProviderNumber,
@@ -11,14 +11,14 @@ import {
     resolveProviderBaseUrl
 } from '../providerUtils'
 
-const DEEPSEEK_ENDPOINT_POLICY = {
-    providerLabel: 'Deepseek',
-    defaultBaseUrl: 'https://api.deepseek.com',
-    officialOrigins: ['https://api.deepseek.com'],
-    allowlistEnvVar: 'DEEPSEEK_BASE_URL_ALLOWLIST'
+const KIMI_ENDPOINT_POLICY = {
+    providerLabel: 'Kimi',
+    defaultBaseUrl: 'https://api.moonshot.cn/v1',
+    officialOrigins: ['https://api.moonshot.cn'],
+    allowlistEnvVar: 'KIMI_BASE_URL_ALLOWLIST'
 }
 
-class Deepseek_ChatModels implements INode {
+class ChatKimi_ChatModels implements INode {
     label: string
     name: string
     version: number
@@ -31,19 +31,19 @@ class Deepseek_ChatModels implements INode {
     inputs: INodeParams[]
 
     constructor() {
-        this.label = 'Deepseek'
-        this.name = 'chatDeepseek'
+        this.label = 'Kimi (Moonshot)'
+        this.name = 'chatKimi'
         this.version = 1.0
-        this.type = 'chatDeepseek'
-        this.icon = 'deepseek.svg'
+        this.type = 'ChatKimi'
+        this.icon = 'kimi.svg'
         this.category = 'Chat Models'
-        this.description = 'Wrapper around Deepseek large language models that use the Chat endpoint'
-        this.baseClasses = [this.type, ...getBaseClasses(ChatDeepSeek)]
+        this.description = 'Kimi (Moonshot AI) 大语言模型，支持 OpenAI 兼容 API'
+        this.baseClasses = [this.type, ...getBaseClasses(ChatOpenAI)]
         this.credential = {
             label: 'Connect Credential',
             name: 'credential',
             type: 'credential',
-            credentialNames: ['deepseekApi']
+            credentialNames: ['kimiApi']
         }
         this.inputs = [
             {
@@ -57,15 +57,15 @@ class Deepseek_ChatModels implements INode {
                 name: 'modelName',
                 type: 'asyncOptions',
                 loadMethod: 'listModels',
-                default: 'deepseek-v4-flash'
+                default: 'kimi-k2.6'
             },
             {
                 label: 'Temperature',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
-                default: 0.7,
-                optional: true
+                optional: true,
+                description: 'Leave empty for the provider default. K2 thinking uses 1; K2.6/K2.5 non-thinking uses 0.6.'
             },
             {
                 label: 'Streaming',
@@ -89,6 +89,7 @@ class Deepseek_ChatModels implements INode {
                 type: 'number',
                 step: 0.1,
                 optional: true,
+                description: 'K2.7/K2.6/K2.5 require 0.95 when this value is supplied.',
                 additionalParams: true
             },
             {
@@ -97,6 +98,7 @@ class Deepseek_ChatModels implements INode {
                 type: 'number',
                 step: 0.1,
                 optional: true,
+                description: 'K2.7/K2.6/K2.5 require 0 when this value is supplied.',
                 additionalParams: true
             },
             {
@@ -105,6 +107,7 @@ class Deepseek_ChatModels implements INode {
                 type: 'number',
                 step: 0.1,
                 optional: true,
+                description: 'K2.7/K2.6/K2.5 require 0 when this value is supplied.',
                 additionalParams: true
             },
             {
@@ -117,21 +120,12 @@ class Deepseek_ChatModels implements INode {
                 additionalParams: true
             },
             {
-                label: 'Stop Sequence',
-                name: 'stopSequence',
-                type: 'string',
-                rows: 4,
-                optional: true,
-                description: 'List of stop words to use when generating. Use comma to separate multiple stop words.',
-                additionalParams: true
-            },
-            {
                 label: 'Base Path',
                 name: 'basepath',
                 type: 'string',
                 optional: true,
-                default: 'https://api.deepseek.com',
-                description: 'Deepseek API 基础地址；自定义 origin 必须由 DEEPSEEK_BASE_URL_ALLOWLIST 明确允许。',
+                default: 'https://api.moonshot.cn/v1',
+                description: 'Kimi API 基础地址；自定义 origin 必须由 KIMI_BASE_URL_ALLOWLIST 明确允许。',
                 additionalParams: true
             },
             {
@@ -139,8 +133,8 @@ class Deepseek_ChatModels implements INode {
                 name: 'baseOptions',
                 type: 'json',
                 optional: true,
-                additionalParams: true,
-                description: 'Additional HTTP headers for the Deepseek client. This must be a JSON object.'
+                description: 'Additional HTTP headers for the Kimi client. This must be a JSON object.',
+                additionalParams: true
             }
         ]
     }
@@ -148,65 +142,68 @@ class Deepseek_ChatModels implements INode {
     //@ts-ignore
     loadMethods = {
         async listModels(): Promise<INodeOptionsValue[]> {
-            return await getModels(MODEL_TYPE.CHAT, 'deepseek')
+            return await getModels(MODEL_TYPE.CHAT, 'kimi')
         }
     }
 
     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
-        const temperature = parseOptionalProviderNumber(nodeData.inputs?.temperature, 'Temperature', { min: 0, max: 2 })
-        const modelName = (nodeData.inputs?.modelName as string) || 'deepseek-v4-flash'
+        const temperature = parseOptionalProviderNumber(nodeData.inputs?.temperature, 'Temperature', { min: 0, max: 1 })
+        const modelName = (nodeData.inputs?.modelName as string) || 'kimi-k2.6'
         const maxTokens = parseOptionalProviderNumber(nodeData.inputs?.maxTokens, 'Max Tokens', { integer: true, min: 1 })
         const topP = parseOptionalProviderNumber(nodeData.inputs?.topP, 'Top Probability', { min: 0, max: 1 })
-        const frequencyPenalty = parseOptionalProviderNumber(nodeData.inputs?.frequencyPenalty, 'Frequency Penalty')
-        const presencePenalty = parseOptionalProviderNumber(nodeData.inputs?.presencePenalty, 'Presence Penalty')
+        const frequencyPenalty = parseOptionalProviderNumber(nodeData.inputs?.frequencyPenalty, 'Frequency Penalty', { min: -2, max: 2 })
+        const presencePenalty = parseOptionalProviderNumber(nodeData.inputs?.presencePenalty, 'Presence Penalty', { min: -2, max: 2 })
         const timeout = parseOptionalProviderNumber(nodeData.inputs?.timeout, 'Timeout', { integer: true, min: 1 })
-        const stopSequence = nodeData.inputs?.stopSequence as string
         const streaming = nodeData.inputs?.streaming as boolean
         const thinking = nodeData.inputs?.thinking
-        const reasoningEffort = nodeData.inputs?.reasoningEffort
-
-        if (thinking === true || thinking === 'true' || reasoningEffort || modelName === 'deepseek-reasoner') {
-            throw new Error('Deepseek reasoning and thinking are not supported by this node transport')
-        }
-        const basePath = resolveProviderBaseUrl(nodeData.inputs?.basepath, DEEPSEEK_ENDPOINT_POLICY)
-        const baseOptions = parseProviderHeaders(nodeData.inputs?.baseOptions, 'Deepseek')
-
-        if (nodeData.inputs?.credentialId) {
-            nodeData.credential = nodeData.inputs?.credentialId
-        }
-        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
-        const apiKey = requireProviderApiKey(getCredentialParam('deepseekApiKey', credentialData, nodeData), 'Deepseek')
-
+        const basePath = resolveProviderBaseUrl(nodeData.inputs?.basepath, KIMI_ENDPOINT_POLICY)
+        const baseOptions = parseProviderHeaders(nodeData.inputs?.baseOptions, 'Kimi')
         const cache = nodeData.inputs?.cache as BaseCache
 
-        const obj: ChatDeepSeekInput = {
+        const isKimiK27 = modelName.startsWith('kimi-k2.7')
+        const isKimiK25Or26 = modelName === 'kimi-k2.5' || modelName === 'kimi-k2.6'
+        if (thinking === true || thinking === 'true' || isKimiK27) {
+            throw new Error('Kimi reasoning and thinking are not supported by this node transport')
+        }
+        if (isKimiK25Or26) {
+            if (temperature !== undefined && temperature !== 0.6) throw new Error(`${modelName} temperature must be 0.6`)
+            if (topP !== undefined && topP !== 0.95) throw new Error(`${modelName} Top Probability must be 0.95`)
+            if (frequencyPenalty !== undefined && frequencyPenalty !== 0) throw new Error(`${modelName} Frequency Penalty must be 0`)
+            if (presencePenalty !== undefined && presencePenalty !== 0) throw new Error(`${modelName} Presence Penalty must be 0`)
+        }
+
+        if (nodeData.inputs?.credentialId) {
+            nodeData.credential = nodeData.inputs.credentialId
+        }
+        const credentialData = await getCredentialData(nodeData.credential ?? '', options)
+        const kimiApiKey = requireProviderApiKey(getCredentialParam('kimiApiKey', credentialData, nodeData), 'Kimi')
+
+        const obj: ChatOpenAIFields = {
             modelName,
-            apiKey,
+            apiKey: kimiApiKey,
             streaming: streaming ?? true,
             maxRetries: 0
         }
 
         if (temperature !== undefined) obj.temperature = temperature
-        if (maxTokens !== undefined) obj.maxTokens = maxTokens
+        if (maxTokens !== undefined && !isKimiK25Or26) obj.maxTokens = maxTokens
         if (topP !== undefined) obj.topP = topP
         if (frequencyPenalty !== undefined) obj.frequencyPenalty = frequencyPenalty
         if (presencePenalty !== undefined) obj.presencePenalty = presencePenalty
         if (timeout !== undefined) obj.timeout = timeout
         if (cache) obj.cache = cache
-        if (stopSequence) {
-            const stopSequenceArray = stopSequence
-                .split(',')
-                .map((item) => item.trim())
-                .filter(Boolean)
-            if (stopSequenceArray.length) obj.stop = stopSequenceArray
+        if (isKimiK25Or26) {
+            obj.modelKwargs = {
+                thinking: { type: 'disabled' },
+                ...(maxTokens !== undefined ? { max_completion_tokens: maxTokens } : {})
+            }
         }
-        if (modelName.startsWith('deepseek-v4')) obj.modelKwargs = { thinking: { type: 'disabled' } }
 
         obj.configuration = buildSecureProviderConfiguration(basePath, baseOptions)
 
-        const model = new ChatDeepSeek(obj)
+        const model = new ChatOpenAI(obj)
         return model
     }
 }
 
-module.exports = { nodeClass: Deepseek_ChatModels }
+module.exports = { nodeClass: ChatKimi_ChatModels }

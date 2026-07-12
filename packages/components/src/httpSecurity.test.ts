@@ -1,5 +1,13 @@
 import { describe, expect, it } from '@jest/globals'
-import { isDeniedIP } from './httpSecurity'
+import dns from 'dns/promises'
+import http from 'http'
+import fetch, { Headers, Response } from 'node-fetch'
+import { checkDenyList, isDeniedIP, secureFetch } from './httpSecurity'
+
+jest.mock('node-fetch', () => {
+    const actual = jest.requireActual('node-fetch')
+    return { ...actual, __esModule: true, default: jest.fn() }
+})
 
 // Test deny list covering common SSRF targets
 const TEST_DENY_LIST = [
@@ -393,5 +401,388 @@ describe('isDeniedIP - SSRF Protection', () => {
             expect(() => isDeniedIP('1.1.1.1', multiMalformedList)).not.toThrow()
             expect(() => isDeniedIP('10.0.0.1', multiMalformedList)).not.toThrow()
         })
+    })
+})
+
+describe('secureFetch redirect policy', () => {
+    const originalSecurityCheck = process.env.HTTP_SECURITY_CHECK
+    const mockedFetch = fetch as unknown as jest.Mock
+    const policy = {
+        enforceDefaultDenyList: true,
+        validateUrl(url: URL) {
+            if (url.protocol !== 'https:') throw new Error('Provider requests must use HTTPS')
+            if (url.origin !== 'https://8.8.8.8') throw new Error('Provider redirect origin is not allowed')
+        }
+    }
+
+    afterEach(() => {
+        mockedFetch.mockReset()
+        if (originalSecurityCheck === undefined) delete process.env.HTTP_SECURITY_CHECK
+        else process.env.HTTP_SECURITY_CHECK = originalSecurityCheck
+    })
+
+    it.each([301, 302, 303, 307, 308])('rejects cross-origin HTTP %s before a second request', async (status) => {
+        mockedFetch.mockResolvedValueOnce(new Response('', { status, headers: { location: 'https://1.1.1.1/redirected' } }))
+
+        await expect(
+            secureFetch(
+                'https://8.8.8.8/start',
+                { method: 'POST', headers: { Authorization: 'Bearer fixture' }, body: 'fixture-body' },
+                5,
+                undefined,
+                policy
+            )
+        ).rejects.toThrow(/origin/i)
+
+        expect(mockedFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([301, 302, 303, 307, 308])('rejects HTTPS downgrade on HTTP %s before a second request', async (status) => {
+        mockedFetch.mockResolvedValueOnce(new Response('', { status, headers: { location: 'http://8.8.8.8/redirected' } }))
+
+        await expect(
+            secureFetch(
+                'https://8.8.8.8/start',
+                { method: 'POST', headers: { Authorization: 'Bearer fixture' }, body: 'fixture-body' },
+                5,
+                undefined,
+                policy
+            )
+        ).rejects.toThrow(/HTTPS/i)
+
+        expect(mockedFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([301, 302, 303])('changes POST to GET without forwarding its body on same-origin HTTP %s', async (status) => {
+        mockedFetch
+            .mockResolvedValueOnce(new Response('', { status, headers: { location: '/redirected' } }))
+            .mockResolvedValueOnce(new Response('ok', { status: 200 }))
+
+        await expect(
+            secureFetch(
+                'https://8.8.8.8/start',
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: 'Bearer fixture',
+                        'Content-Length': '12',
+                        'Content-Type': 'text/plain',
+                        'Transfer-Encoding': 'chunked',
+                        'X-Trace': 'same-origin'
+                    },
+                    body: 'fixture-body'
+                },
+                5,
+                undefined,
+                policy
+            )
+        ).resolves.toHaveProperty('status', 200)
+
+        expect(mockedFetch).toHaveBeenCalledTimes(2)
+        const redirectedHeaders = new Headers(mockedFetch.mock.calls[1][1].headers)
+        expect(mockedFetch.mock.calls[1][1]).toEqual(expect.objectContaining({ method: 'GET', body: undefined }))
+        expect(redirectedHeaders.get('authorization')).toBe('Bearer fixture')
+        expect(redirectedHeaders.get('x-trace')).toBe('same-origin')
+        expect(redirectedHeaders.get('content-length')).toBeNull()
+        expect(redirectedHeaders.get('content-type')).toBeNull()
+        expect(redirectedHeaders.get('transfer-encoding')).toBeNull()
+    })
+
+    it.each([307, 308])('preserves POST body on same-origin HTTP %s', async (status) => {
+        mockedFetch
+            .mockResolvedValueOnce(new Response('', { status, headers: { location: '/redirected' } }))
+            .mockResolvedValueOnce(new Response('ok', { status: 200 }))
+
+        await secureFetch(
+            'https://8.8.8.8/start',
+            { method: 'POST', headers: { Authorization: 'Bearer fixture' }, body: 'fixture-body' },
+            5,
+            undefined,
+            policy
+        )
+
+        expect(mockedFetch.mock.calls[1][1]).toEqual(
+            expect.objectContaining({ method: 'POST', body: 'fixture-body', headers: { Authorization: 'Bearer fixture' } })
+        )
+    })
+
+    it.each(['https://100.64.0.1/', 'https://203.0.113.1/', 'https://[::]/', 'https://[3fff::1]/', 'https://[64:ff9b::a00:1]/'])(
+        'keeps the default deny list for Provider policy when the global switch is off: %s',
+        async (url) => {
+            process.env.HTTP_SECURITY_CHECK = 'false'
+
+            await expect(
+                secureFetch(url, undefined, 5, undefined, { enforceDefaultDenyList: true, validateUrl: () => undefined })
+            ).rejects.toThrow(/denied by policy/i)
+            expect(mockedFetch).not.toHaveBeenCalled()
+        }
+    )
+
+    it.each([
+        [301, 'PUT'],
+        [302, 'PATCH'],
+        [303, 'POST'],
+        [307, 'POST'],
+        [308, 'PATCH']
+    ])('fails closed before cross-origin HTTP %s can forward %s credentials or body', async (status, method) => {
+        mockedFetch.mockResolvedValueOnce(new Response('', { status, headers: { location: 'https://1.1.1.1/redirected' } }))
+
+        await expect(
+            secureFetch('https://8.8.8.8/start', {
+                method,
+                headers: { Authorization: 'Bearer fixture', Cookie: 'session=fixture' },
+                body: 'fixture-body'
+            })
+        ).rejects.toThrow(/cross-origin redirect/i)
+
+        expect(mockedFetch).toHaveBeenCalledTimes(1)
+    })
+
+    const sensitiveHeaderCases: Array<[string, Headers | string[][] | Record<string, string>]> = [
+        [
+            'Headers',
+            new Headers({
+                Authorization: 'Bearer fixture',
+                'Proxy-Authorization': 'Basic fixture',
+                ApiKey: 'api-key-fixture',
+                Cookie: 'session=fixture',
+                Cookie2: 'legacy=fixture',
+                'Set-Cookie': 'server-cookie=fixture',
+                'X-Trace': 'keep-me'
+            })
+        ],
+        [
+            'array',
+            [
+                ['Authorization', 'Bearer fixture'],
+                ['Proxy-Authorization', 'Basic fixture'],
+                ['ApiKey', 'api-key-fixture'],
+                ['Cookie', 'session=fixture'],
+                ['Cookie2', 'legacy=fixture'],
+                ['Set-Cookie', 'server-cookie=fixture'],
+                ['X-Trace', 'keep-me']
+            ]
+        ],
+        [
+            'object',
+            {
+                Authorization: 'Bearer fixture',
+                'Proxy-Authorization': 'Basic fixture',
+                ApiKey: 'api-key-fixture',
+                Cookie: 'session=fixture',
+                Cookie2: 'legacy=fixture',
+                'Set-Cookie': 'server-cookie=fixture',
+                'X-Trace': 'keep-me'
+            }
+        ]
+    ]
+
+    it.each(['GET', 'HEAD'])('strips sensitive headers from safe cross-origin %s redirects for every HeaderInit form', async (method) => {
+        for (const [_label, headers] of sensitiveHeaderCases) {
+            mockedFetch
+                .mockResolvedValueOnce(new Response('', { status: 307, headers: { location: 'https://1.1.1.1/redirected' } }))
+                .mockResolvedValueOnce(new Response('ok', { status: 200 }))
+
+            await secureFetch('https://8.8.8.8/start', { method, headers })
+
+            const redirectedHeaders = new Headers(mockedFetch.mock.calls.at(-1)[1].headers)
+            expect(redirectedHeaders.get('authorization')).toBeNull()
+            expect(redirectedHeaders.get('proxy-authorization')).toBeNull()
+            expect(redirectedHeaders.get('apikey')).toBeNull()
+            expect(redirectedHeaders.get('cookie')).toBeNull()
+            expect(redirectedHeaders.get('cookie2')).toBeNull()
+            expect(redirectedHeaders.get('set-cookie')).toBeNull()
+            expect(redirectedHeaders.get('x-trace')).toBe('keep-me')
+        }
+    })
+})
+
+describe('default global-reachability policy', () => {
+    const originalSecurityCheck = process.env.HTTP_SECURITY_CHECK
+    const originalDenyList = process.env.HTTP_DENY_LIST
+    const mockedFetch = fetch as unknown as jest.Mock
+
+    beforeEach(() => {
+        process.env.HTTP_SECURITY_CHECK = 'true'
+        process.env.HTTP_DENY_LIST = ''
+    })
+
+    afterEach(() => {
+        mockedFetch.mockReset()
+        jest.restoreAllMocks()
+    })
+
+    afterAll(() => {
+        if (originalSecurityCheck === undefined) delete process.env.HTTP_SECURITY_CHECK
+        else process.env.HTTP_SECURITY_CHECK = originalSecurityCheck
+        if (originalDenyList === undefined) delete process.env.HTTP_DENY_LIST
+        else process.env.HTTP_DENY_LIST = originalDenyList
+    })
+
+    it.each([
+        'https://0.1.2.3/',
+        'https://192.0.0.8/',
+        'https://192.0.2.1/',
+        'https://198.18.0.1/',
+        'https://198.51.100.1/',
+        'https://203.0.113.1/',
+        'https://192.88.99.2/',
+        'https://[100::1]/',
+        'https://[100:0:0:1::1]/',
+        'https://[2001:2::1]/',
+        'https://[2001:db8::1]/',
+        'https://[3ffe::1]/',
+        'https://[3fff::1]/',
+        'https://[4000::1]/',
+        'https://[5f00::1]/',
+        'https://[fec0::1]/',
+        'https://[64:ff9b:1::808:808]/',
+        'https://[64:ff9b::a00:1]/'
+    ])('rejects a literal address that is not globally reachable: %s', async (url) => {
+        await expect(checkDenyList(url)).rejects.toThrow(/denied by policy/i)
+    })
+
+    it.each([
+        'https://8.8.8.8/',
+        'https://192.0.0.9/',
+        'https://192.0.0.10/',
+        'https://[2001:1::3]/',
+        'https://[2001:20::1]/',
+        'https://[2606:4700:4700::1111]/',
+        'https://[64:ff9b::808:808]/'
+    ])('allows a globally reachable literal address: %s', async (url) => {
+        await expect(checkDenyList(url)).resolves.toBeUndefined()
+    })
+
+    it('rejects a hostname when mocked DNS resolves to special-use space', async () => {
+        jest.spyOn(dns, 'lookup').mockResolvedValue([{ address: '198.51.100.40', family: 4 }] as never)
+
+        await expect(checkDenyList('https://special.fixture.invalid/')).rejects.toThrow(/denied by policy/i)
+    })
+
+    it.each(['4000::1', 'fec0::1'])('rejects a hostname when mocked DNS returns reserved IPv6 %s', async (address) => {
+        jest.spyOn(dns, 'lookup').mockResolvedValue([{ address, family: 6 }] as never)
+
+        await expect(checkDenyList('https://reserved-v6.fixture.invalid/')).rejects.toThrow(/denied by policy/i)
+    })
+
+    it('allows public IPv4 and IPv6 answers from mocked DNS', async () => {
+        jest.spyOn(dns, 'lookup').mockResolvedValue([
+            { address: '8.8.8.8', family: 4 },
+            { address: '2606:4700:4700::1111', family: 6 }
+        ] as never)
+
+        await expect(checkDenyList('https://public.fixture.invalid/')).resolves.toBeUndefined()
+    })
+
+    it('blocks a public-to-special redirect before the second request', async () => {
+        mockedFetch.mockResolvedValueOnce(
+            new Response('', { status: 302, headers: { location: 'https://special.fixture.invalid/redirected' } })
+        )
+        jest.spyOn(dns, 'lookup').mockResolvedValue([{ address: '203.0.113.50', family: 4 }] as never)
+
+        await expect(secureFetch('https://8.8.8.8/start')).rejects.toThrow(/denied by policy/i)
+        expect(mockedFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('preserves custom-list-only semantics when global checks and request enforcement are disabled', async () => {
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        process.env.HTTP_DENY_LIST = '10.0.0.40'
+
+        await expect(checkDenyList('https://10.0.0.41/')).resolves.toBeUndefined()
+        await expect(checkDenyList('https://10.0.0.40/')).rejects.toThrow(/denied by policy/i)
+    })
+
+    it('denies a custom hostname case-insensitively with trailing-dot normalization without echoing it', async () => {
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        process.env.HTTP_DENY_LIST = 'LoCaLhOsT.'
+        jest.spyOn(dns, 'lookup').mockResolvedValue([{ address: '127.0.0.1', family: 4 }] as never)
+
+        const errorText = await checkDenyList('http://LOCALHOST/').then(
+            () => '',
+            (error) => String(error)
+        )
+
+        expect(errorText).toMatch(/denied by policy/i)
+        expect(errorText.toLowerCase()).not.toContain('localhost')
+    })
+
+    it('blocks secureFetch on a custom canonical hostname before DNS or fetch', async () => {
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        process.env.HTTP_DENY_LIST = 'LOCALHOST'
+        const lookup = jest.spyOn(dns, 'lookup').mockResolvedValue([{ address: '127.0.0.1', family: 4 }] as never)
+
+        await expect(secureFetch('http://localhost./')).rejects.toThrow(/denied by policy/i)
+        expect(lookup).not.toHaveBeenCalled()
+        expect(mockedFetch).not.toHaveBeenCalled()
+    })
+
+    it('allows a non-matching custom hostname when mocked DNS is globally reachable', async () => {
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        process.env.HTTP_DENY_LIST = 'blocked.fixture.invalid.'
+        jest.spyOn(dns, 'lookup').mockResolvedValue([{ address: '8.8.8.8', family: 4 }] as never)
+
+        await expect(checkDenyList('https://ALLOWED.fixture.invalid./')).resolves.toBeUndefined()
+    })
+
+    it.each(['8.8.8.8', '8.8.8.0/24'])('applies custom IPv4 deny entry %s to NAT64 embedded IPv4', async (denyEntry) => {
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        process.env.HTTP_DENY_LIST = denyEntry
+
+        await expect(checkDenyList('https://[64:ff9b::808:808]/')).rejects.toThrow(/denied by policy/i)
+    })
+
+    it('allows NAT64 when the custom IPv4 deny list does not match its embedded address', async () => {
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        process.env.HTTP_DENY_LIST = '9.9.9.0/24'
+
+        await expect(checkDenyList('https://[64:ff9b::808:808]/')).resolves.toBeUndefined()
+    })
+})
+
+describe('secureFetch pinned lookup integration', () => {
+    const originalSecurityCheck = process.env.HTTP_SECURITY_CHECK
+    const originalDenyList = process.env.HTTP_DENY_LIST
+    let server: http.Server
+    let port: number
+
+    beforeAll(async () => {
+        server = http.createServer((_request, response) => {
+            response.writeHead(200, { 'content-type': 'text/plain' })
+            response.end('local fixture')
+        })
+        await new Promise<void>((resolve, reject) => {
+            server.once('error', reject)
+            server.listen(0, '127.0.0.1', () => resolve())
+        })
+        const address = server.address()
+        if (!address || typeof address === 'string') throw new Error('local fixture did not bind a TCP port')
+        port = address.port
+    })
+
+    afterAll(async () => {
+        await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()))
+        })
+        if (originalSecurityCheck === undefined) delete process.env.HTTP_SECURITY_CHECK
+        else process.env.HTTP_SECURITY_CHECK = originalSecurityCheck
+        if (originalDenyList === undefined) delete process.env.HTTP_DENY_LIST
+        else process.env.HTTP_DENY_LIST = originalDenyList
+    })
+
+    it('supports Node 24 all-address lookup while preserving the pinned IP', async () => {
+        expect(process.versions.node).toMatch(/^24\./)
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        process.env.HTTP_DENY_LIST = ''
+
+        let actualSecureFetch!: typeof secureFetch
+        jest.dontMock('node-fetch')
+        jest.isolateModules(() => {
+            actualSecureFetch = require('./httpSecurity').secureFetch
+        })
+
+        const response = await actualSecureFetch(`http://localhost:${port}/fixture`)
+
+        await expect(response.text()).resolves.toBe('local fixture')
     })
 })

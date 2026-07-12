@@ -1742,19 +1742,58 @@
             ]
         },
         {
+            "name": "kimi",
+            "models": [
+                {
+                    "label": "kimi-k2.6",
+                    "name": "kimi-k2.6",
+                    "description": "Kimi K2.6 - general agentic and multimodal model"
+                },
+                {
+                    "label": "kimi-k2.5",
+                    "name": "kimi-k2.5",
+                    "description": "Kimi K2.5 - previous general agentic and multimodal model"
+                },
+                {
+                    "label": "moonshot-v1-8k",
+                    "name": "moonshot-v1-8k",
+                    "description": "Kimi V1 8K - 上下文 8K",
+                    "input_cost": 0.000012,
+                    "output_cost": 0.000012
+                },
+                {
+                    "label": "moonshot-v1-32k",
+                    "name": "moonshot-v1-32k",
+                    "description": "Kimi V1 32K - 上下文 32K",
+                    "input_cost": 0.000024,
+                    "output_cost": 0.000024
+                },
+                {
+                    "label": "moonshot-v1-128k",
+                    "name": "moonshot-v1-128k",
+                    "description": "Kimi V1 128K - 上下文 128K",
+                    "input_cost": 0.00006,
+                    "output_cost": 0.00006
+                }
+            ]
+        },
+        {
             "name": "deepseek",
             "models": [
                 {
-                    "label": "deepseek-chat",
-                    "name": "deepseek-chat",
-                    "input_cost": 0.00027,
-                    "output_cost": 0.0011
+                    "label": "deepseek-v4-flash",
+                    "name": "deepseek-v4-flash",
+                    "description": "DeepSeek V4 Flash - low-latency V4 model"
                 },
                 {
-                    "label": "deepseek-reasoner",
-                    "name": "deepseek-reasoner",
-                    "input_cost": 0.00055,
-                    "output_cost": 0.00219
+                    "label": "deepseek-v4-pro",
+                    "name": "deepseek-v4-pro",
+                    "description": "DeepSeek V4 Pro - higher-capability V4 model"
+                },
+                {
+                    "label": "deepseek-chat (Legacy)",
+                    "name": "deepseek-chat",
+                    "description": "Legacy compatibility alias; deprecated on 2026-07-24"
                 }
             ]
         },
