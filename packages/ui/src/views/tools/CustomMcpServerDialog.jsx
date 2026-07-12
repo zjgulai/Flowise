@@ -990,8 +990,8 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.75, px: 0.5 }}>
                                     <Typography variant='caption' sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
                                         {toolSearch
-                                            ? `${filteredTools.length} of ${discoveredTools.length} tools`
-                                            : `${discoveredTools.length} tools`}
+                                            ? `已显示 ${filteredTools.length} 个，共 ${discoveredTools.length} 个工具`
+                                            : `共 ${discoveredTools.length} 个工具`}
                                     </Typography>
                                     <Button
                                         size='small'
