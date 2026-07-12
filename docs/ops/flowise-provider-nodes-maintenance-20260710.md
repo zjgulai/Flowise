@@ -19,6 +19,12 @@ last_verified_l2: 2026-07-12
 -   `production_write=false`
 -   测试响应全部由本地 fixture 提供，不读取真实凭证，不向 provider 发请求。
 
+## Stage 0 源码证据（2026-07-12）
+
+-   Provider hardening 的已复审源码提交为 `b73a3c89586de994bc840cfb8dff50a27d81c057`。
+-   Node `v24.18.0` / pnpm `10.26.0` 下，Provider 定向 Jest 为 `225/225`，ESLint、`tsc --noEmit`、components build 与静态安全门禁均通过；独立复审结论为通过。
+-   以上只证明 Stage 0 本地源码已验收，尚未部署到生产；不得据此宣称真实 Provider 可用或生产已验证，边界继续保持 `provider_call=false` 与 `production unchanged`。
+
 ## 单一事实源
 
 | 范围                    | 文件                                                        |

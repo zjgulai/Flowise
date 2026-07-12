@@ -2,7 +2,20 @@
 
 **Updated:** 2026-07-12
 **Applies to:** FlowAgentic Flowise fork
-**Current production state:** unchanged by Batch 6B
+**Current production state:** Stage 0 source not deployed; fresh public L3 is recorded below
+
+## Stage 0 Source Evidence (2026-07-12)
+
+-   The reviewed source commit is `137256127d42e787faaa0292e56bb8d4da75ace6`.
+-   Final local verification passed `127/127` focused server tests, `65/65` UI tests, and `52/52` static security checks; TypeScript, focused ESLint, and the UI production build also passed.
+-   Independent review found that the report router preceded the application security-header middleware. The fix installs the combined fallback/CSP middleware before the receiver, so early `204`, `400`, `413`, and `415` report responses share the header boundary; the regression suite passed and the fix was independently re-reviewed.
+-   This Stage 0 source has not been deployed. Production promotion remains gated on explicit authorization and the observation/rollback procedure below.
+
+## Fresh Production L3 Observation (2026-07-12)
+
+-   The read-only public edge smoke passed `14/14`: the sign-in response contained exactly one HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, and CSP header.
+-   The same response had `0` Content-Security-Policy-Report-Only headers and `0` Reporting-Endpoints headers; its enforced CSP still contained `'unsafe-eval'` and no reporting directive.
+-   These observations support only the current public read-only contract. They provide no evidence that the Stage 0 Batch 6B source or report-only rollout has reached production.
 
 ## Header Ownership
 
