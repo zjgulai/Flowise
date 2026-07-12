@@ -12,7 +12,8 @@ jest.mock('./logger', () => ({
 }))
 
 import logger from './logger'
-import { getAllowedIframeOrigins, getCorsOptions, getIframeSecurityHeaders, validateCorsConfig } from './XSS'
+import { getAllowedIframeOrigins, getCorsOptions, getIframeSecurityHeaders, parseIframeOrigins, validateCorsConfig } from './XSS'
+import { extractChatflowId, isPublicChatflowRequest, isTTSGenerateRequest, validateChatflowDomain } from './domainValidation'
 
 // ---------------------------------------------------------------------------
 // getCorsOptions
@@ -21,12 +22,19 @@ import { getAllowedIframeOrigins, getCorsOptions, getIframeSecurityHeaders, vali
 describe('getCorsOptions', () => {
     const SAVED_CORS_ORIGINS = process.env.CORS_ORIGINS
     const SAVED_CORS_ALLOW_CREDENTIALS = process.env.CORS_ALLOW_CREDENTIALS
+    const SAVED_IFRAME_ORIGINS = process.env.IFRAME_ORIGINS
+    const SAVED_NODE_ENV = process.env.NODE_ENV
 
     afterEach(() => {
         if (SAVED_CORS_ORIGINS !== undefined) process.env.CORS_ORIGINS = SAVED_CORS_ORIGINS
         else delete process.env.CORS_ORIGINS
         if (SAVED_CORS_ALLOW_CREDENTIALS !== undefined) process.env.CORS_ALLOW_CREDENTIALS = SAVED_CORS_ALLOW_CREDENTIALS
         else delete process.env.CORS_ALLOW_CREDENTIALS
+        if (SAVED_IFRAME_ORIGINS !== undefined) process.env.IFRAME_ORIGINS = SAVED_IFRAME_ORIGINS
+        else delete process.env.IFRAME_ORIGINS
+        if (SAVED_NODE_ENV !== undefined) process.env.NODE_ENV = SAVED_NODE_ENV
+        else delete process.env.NODE_ENV
+        jest.clearAllMocks()
     })
 
     function getCredentials(corsOrigins: string | undefined, corsAllowCredentials: string | undefined): boolean {
@@ -64,6 +72,49 @@ describe('getCorsOptions', () => {
         })
     })
 
+    describe('public chatflow domain checks', () => {
+        async function getOriginDecision(req: any, origin: string): Promise<boolean | undefined> {
+            let captured: any
+            getCorsOptions()(req, (_err: any, options: any) => {
+                captured = options
+            })
+
+            return new Promise((resolve, reject) => {
+                captured.origin(origin, (err: Error | null, allow?: boolean) => {
+                    if (err) reject(err)
+                    else resolve(allow)
+                })
+            })
+        }
+
+        it('denies malformed public chatflow IDs without calling domain validation', async () => {
+            delete process.env.CORS_ORIGINS
+            ;(isPublicChatflowRequest as jest.Mock).mockReturnValue(true)
+            ;(isTTSGenerateRequest as jest.Mock).mockReturnValue(false)
+            ;(extractChatflowId as jest.Mock).mockReturnValue('not-a-uuid')
+
+            await expect(getOriginDecision({ url: '/api/v1/prediction/not-a-uuid' }, 'https://evil.example')).resolves.toBe(false)
+            expect(validateChatflowDomain).not.toHaveBeenCalled()
+        })
+
+        it('still uses domain validation for valid public chatflow IDs', async () => {
+            delete process.env.CORS_ORIGINS
+            ;(isPublicChatflowRequest as jest.Mock).mockReturnValue(true)
+            ;(isTTSGenerateRequest as jest.Mock).mockReturnValue(false)
+            ;(extractChatflowId as jest.Mock).mockReturnValue('123e4567-e89b-42d3-a456-426614174000')
+            ;(validateChatflowDomain as jest.Mock).mockResolvedValue(true)
+
+            await expect(
+                getOriginDecision({ url: '/api/v1/prediction/123e4567-e89b-42d3-a456-426614174000' }, 'https://trusted.example')
+            ).resolves.toBe(true)
+            expect(validateChatflowDomain).toHaveBeenCalledWith(
+                '123e4567-e89b-42d3-a456-426614174000',
+                'https://trusted.example',
+                undefined
+            )
+        })
+    })
+
     describe('validateCorsConfig', () => {
         beforeEach(() => jest.clearAllMocks())
 
@@ -87,136 +138,123 @@ describe('getCorsOptions', () => {
             validateCorsConfig()
             expect(logger.warn).not.toHaveBeenCalled()
         })
+
+        it('warns once at startup when production CORS origins are missing, not once per request', () => {
+            process.env.NODE_ENV = 'production'
+            process.env.IFRAME_ORIGINS = "'self'"
+            delete process.env.CORS_ORIGINS
+
+            validateCorsConfig()
+            expect(logger.warn).toHaveBeenCalledTimes(1)
+
+            for (let requestIndex = 0; requestIndex < 3; requestIndex += 1) {
+                getCorsOptions()({ url: '/api/v1/test' }, jest.fn())
+            }
+            expect(logger.warn).toHaveBeenCalledTimes(1)
+        })
     })
 })
 
 describe('getAllowedIframeOrigins', () => {
     const originalEnv = process.env.IFRAME_ORIGINS
+    const originalNodeEnv = process.env.NODE_ENV
 
     afterEach(() => {
-        // Restore original environment variable after each test
         if (originalEnv !== undefined) {
             process.env.IFRAME_ORIGINS = originalEnv
         } else {
             delete process.env.IFRAME_ORIGINS
         }
+        if (originalNodeEnv !== undefined) {
+            process.env.NODE_ENV = originalNodeEnv
+        } else {
+            delete process.env.NODE_ENV
+        }
     })
 
-    describe('default behavior', () => {
-        it("should return 'self' when IFRAME_ORIGINS is not set", () => {
-            delete process.env.IFRAME_ORIGINS
-            expect(getAllowedIframeOrigins()).toBe("'self'")
-        })
-
-        it("should return 'self' when IFRAME_ORIGINS is empty string", () => {
-            process.env.IFRAME_ORIGINS = ''
-            expect(getAllowedIframeOrigins()).toBe("'self'")
-        })
-
-        it("should return 'self' when IFRAME_ORIGINS is only whitespace", () => {
-            process.env.IFRAME_ORIGINS = '   '
-            expect(getAllowedIframeOrigins()).toBe("'self'")
-        })
+    it.each([undefined, '', '   '])("defaults %p to 'self'", (value) => {
+        if (value === undefined) delete process.env.IFRAME_ORIGINS
+        else process.env.IFRAME_ORIGINS = value
+        expect(getAllowedIframeOrigins()).toBe("'self'")
     })
 
-    describe('CSP special values', () => {
-        it("should handle 'self' value", () => {
-            process.env.IFRAME_ORIGINS = "'self'"
-            expect(getAllowedIframeOrigins()).toBe("'self'")
-        })
-
-        it("should handle 'none' value", () => {
-            process.env.IFRAME_ORIGINS = "'none'"
-            expect(getAllowedIframeOrigins()).toBe("'none'")
-        })
-
-        it('should handle wildcard * value', () => {
-            process.env.IFRAME_ORIGINS = '*'
-            expect(getAllowedIframeOrigins()).toBe('*')
-        })
+    it('normalizes, deduplicates, and preserves first-source order', () => {
+        expect(
+            parseIframeOrigins("'self', HTTPS://EXAMPLE.COM:443,https://embed.example.com:8443,https://example.com", 'production')
+        ).toEqual(["'self'", 'https://example.com', 'https://embed.example.com:8443'])
     })
 
-    describe('single domain', () => {
-        it('should handle a single FQDN', () => {
-            process.env.IFRAME_ORIGINS = 'https://example.com'
-            expect(getAllowedIframeOrigins()).toBe('https://example.com')
-        })
-
-        it('should trim whitespace from single domain', () => {
-            process.env.IFRAME_ORIGINS = '  https://example.com  '
-            expect(getAllowedIframeOrigins()).toBe('https://example.com')
-        })
+    it("allows 'none' only as a standalone source", () => {
+        expect(parseIframeOrigins("'none'", 'production')).toEqual(["'none'"])
+        expect(() => parseIframeOrigins("'none',https://example.com", 'production')).toThrow(/IFRAME_ORIGINS/)
     })
 
-    describe('multiple domains', () => {
-        it('should convert comma-separated domains to space-separated', () => {
-            process.env.IFRAME_ORIGINS = 'https://domain1.com,https://domain2.com'
-            expect(getAllowedIframeOrigins()).toBe('https://domain1.com https://domain2.com')
-        })
-
-        it('should handle multiple domains with spaces', () => {
-            process.env.IFRAME_ORIGINS = 'https://domain1.com, https://domain2.com, https://domain3.com'
-            expect(getAllowedIframeOrigins()).toBe('https://domain1.com https://domain2.com https://domain3.com')
-        })
-
-        it('should trim individual domains in comma-separated list', () => {
-            process.env.IFRAME_ORIGINS = '  https://app.com  ,  https://admin.com  '
-            expect(getAllowedIframeOrigins()).toBe('https://app.com https://admin.com')
-        })
+    it('allows local HTTP and wildcard only outside production', () => {
+        expect(parseIframeOrigins('http://localhost:3000,http://127.0.0.1:3001,http://[::1]:3002', 'development')).toEqual([
+            'http://localhost:3000',
+            'http://127.0.0.1:3001',
+            'http://[::1]:3002'
+        ])
+        expect(parseIframeOrigins('*', 'development')).toEqual(['*'])
+        expect(() => parseIframeOrigins('*', 'production')).toThrow(/wildcard/i)
     })
 
-    describe('edge cases', () => {
-        it('should handle domains with ports', () => {
-            process.env.IFRAME_ORIGINS = 'https://localhost:3000,https://localhost:4000'
-            expect(getAllowedIframeOrigins()).toBe('https://localhost:3000 https://localhost:4000')
-        })
-
-        it('should handle domains with paths (though not typical for CSP)', () => {
-            process.env.IFRAME_ORIGINS = 'https://example.com/path1,https://example.com/path2'
-            expect(getAllowedIframeOrigins()).toBe('https://example.com/path1 https://example.com/path2')
-        })
-
-        it('should handle mixed protocols', () => {
-            process.env.IFRAME_ORIGINS = 'http://example.com,https://secure.com'
-            expect(getAllowedIframeOrigins()).toBe('http://example.com https://secure.com')
-        })
-
-        it('should handle trailing comma', () => {
-            process.env.IFRAME_ORIGINS = 'https://example.com,'
-            expect(getAllowedIframeOrigins()).toBe('https://example.com')
-        })
-
-        it('should handle leading comma', () => {
-            process.env.IFRAME_ORIGINS = ',https://example.com'
-            expect(getAllowedIframeOrigins()).toBe('https://example.com')
-        })
-
-        it('should handle multiple consecutive commas', () => {
-            process.env.IFRAME_ORIGINS = 'https://domain1.com,,https://domain2.com'
-            expect(getAllowedIframeOrigins()).toBe('https://domain1.com https://domain2.com')
-        })
+    it.each([
+        ['bare self', 'self'],
+        ['bare none', 'none'],
+        ['unsupported quoted keyword', "'unsafe-inline'"],
+        ['directive separator', "'self'; script-src *"],
+        ['newline', "'self'\nhttps://evil.example"],
+        ['leading empty CSV item', ',https://example.com'],
+        ['trailing empty CSV item', 'https://example.com,'],
+        ['consecutive empty CSV item', 'https://one.example,,https://two.example'],
+        ['path', 'https://example.com/embed'],
+        ['query', 'https://example.com/?key=value'],
+        ['fragment', 'https://example.com/#embed'],
+        ['credentials', 'https://user:password@example.com'],
+        ['scheme source', 'https:'],
+        ['remote HTTP in development', 'http://example.com']
+    ])('rejects %s values without reflecting them', (_label, value) => {
+        let message = ''
+        try {
+            parseIframeOrigins(value, 'development')
+        } catch (error) {
+            message = (error as Error).message
+        }
+        expect(message).toMatch(/IFRAME_ORIGINS/)
+        expect(message).not.toContain(value)
     })
 
-    describe('real-world scenarios', () => {
-        it('should handle typical production configuration', () => {
-            process.env.IFRAME_ORIGINS = 'https://app.example.com,https://admin.example.com,https://dashboard.example.com'
-            expect(getAllowedIframeOrigins()).toBe('https://app.example.com https://admin.example.com https://dashboard.example.com')
-        })
+    it('rejects all remote HTTP origins in production', () => {
+        expect(() => parseIframeOrigins('http://example.com', 'production')).toThrow(/HTTPS/i)
+        expect(() => parseIframeOrigins('http://localhost:3000', 'production')).toThrow(/HTTPS/i)
+    })
 
-        it('should handle development configuration with localhost', () => {
-            process.env.IFRAME_ORIGINS = 'http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000'
-            expect(getAllowedIframeOrigins()).toBe('http://localhost:3000 http://localhost:3001 http://127.0.0.1:3000')
-        })
+    it.each(['https://*.example.com', 'https://foo*bar.example.com', 'https://*', 'https://%2a.example.com', 'https://%2A.example.com'])(
+        'rejects hostname wildcards after URL normalization: %s',
+        (value) => {
+            let message = ''
+            try {
+                parseIframeOrigins(value, 'development')
+            } catch (error) {
+                message = (error as Error).message
+            }
 
-        it("should handle mix of 'self' and domains", () => {
-            process.env.IFRAME_ORIGINS = "'self',https://trusted.com"
-            expect(getAllowedIframeOrigins()).toBe("'self' https://trusted.com")
-        })
+            expect(message).toMatch(/IFRAME_ORIGINS/)
+            expect(message).not.toContain(value)
+        }
+    )
+
+    it('fails validation instead of warning and falling back from a production wildcard', () => {
+        process.env.NODE_ENV = 'production'
+        process.env.IFRAME_ORIGINS = '*'
+        expect(() => validateCorsConfig()).toThrow(/wildcard/i)
     })
 })
 
 describe('getIframeSecurityHeaders', () => {
     const originalEnv = process.env.IFRAME_ORIGINS
+    const originalNodeEnv = process.env.NODE_ENV
 
     afterEach(() => {
         if (originalEnv !== undefined) {
@@ -224,9 +262,15 @@ describe('getIframeSecurityHeaders', () => {
         } else {
             delete process.env.IFRAME_ORIGINS
         }
+        if (originalNodeEnv !== undefined) {
+            process.env.NODE_ENV = originalNodeEnv
+        } else {
+            delete process.env.NODE_ENV
+        }
     })
 
-    it('returns CSP only for wildcard allowlists', () => {
+    it('returns CSP only for development wildcard allowlists', () => {
+        process.env.NODE_ENV = 'development'
         process.env.IFRAME_ORIGINS = '*'
         expect(getIframeSecurityHeaders()).toEqual({
             'Content-Security-Policy': 'frame-ancestors *'

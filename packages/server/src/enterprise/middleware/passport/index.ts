@@ -29,27 +29,14 @@ import {
 } from '../../utils/authSecrets'
 import { decryptToken, encryptToken, generateSafeCopy } from '../../utils/tempTokenUtils'
 import { getAuthStrategy } from './AuthStrategy'
+import { enforceAuthResolvePostOnly, resolveSecureCookie } from './authSecurityPolicy'
 import { initializeDBClientAndStore, initializeRedisClientAndStore } from './SessionPersistance'
 
 const localStrategy = require('passport-local').Strategy
 
 const expireAuthTokensOnRestart = process.env.EXPIRE_AUTH_TOKENS_ON_RESTART === 'true'
 
-// Allow explicit override of cookie security settings
-// This is useful when running behind a reverse proxy/load balancer that terminates SSL
-// In production, always enforce secure cookies to prevent clear-text transmission of session data.
-const secureCookie =
-    process.env.NODE_ENV === 'production'
-        ? true
-        : process.env.SECURE_COOKIES === 'false'
-        ? false
-        : process.env.SECURE_COOKIES === 'true'
-        ? true
-        : process.env.APP_URL?.startsWith('https')
-        ? true
-        : false
-
-const _initializePassportMiddleware = async (app: express.Application) => {
+const _initializePassportMiddleware = async (app: express.Application, secureCookie: boolean) => {
     // Configure session middleware
     let options: any = {
         secret: getExpressSessionSecret(),
@@ -96,7 +83,8 @@ const _initializePassportMiddleware = async (app: express.Application) => {
 }
 
 export const initializeJwtCookieMiddleware = async (app: express.Application, identityManager: IdentityManager) => {
-    await _initializePassportMiddleware(app)
+    const secureCookie = resolveSecureCookie()
+    await _initializePassportMiddleware(app, secureCookie)
 
     const jwtOptions = {
         secretOrKey: getJWTAuthTokenSecret(),
@@ -196,6 +184,8 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
             }
         )
     )
+
+    app.all('/api/v1/auth/resolve', enforceAuthResolvePostOnly)
 
     app.post('/api/v1/auth/resolve', async (req, res) => {
         // check for the organization, if empty redirect to the organization setup page for OpenSource and Enterprise Versions
@@ -306,6 +296,7 @@ export const setTokenOrCookies = (
     redirect?: boolean,
     isSSO?: boolean
 ) => {
+    const secureCookie = resolveSecureCookie()
     const token = generateJwtAuthToken(user)
     let refreshToken: string = ''
     if (regenerateRefreshToken) {

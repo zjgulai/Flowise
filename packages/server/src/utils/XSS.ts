@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from 'express'
+import { isValidUUID } from 'flowise-components'
 import sanitizeHtml from 'sanitize-html'
 import { extractChatflowId, isPublicChatflowRequest, isTTSGenerateRequest, validateChatflowDomain } from './domainValidation'
 import logger from './logger'
@@ -70,7 +71,16 @@ function parseAllowedOrigins(allowedOrigins: string): string[] {
 }
 
 export function validateCorsConfig(): void {
-    if (getAllowedCorsOrigins() === '*' && getAllowCredentials()) {
+    const allowedOrigins = getAllowedCorsOrigins()
+    if (!allowedOrigins && process.env.NODE_ENV === 'production') {
+        logger.warn(
+            '[CORS] CORS_ORIGINS is not set in production environment. ' +
+                'All cross-origin requests will be rejected. ' +
+                'Set CORS_ORIGINS to an explicit comma-separated list of trusted origins.'
+        )
+    }
+
+    if (allowedOrigins === '*' && getAllowCredentials()) {
         logger.warn(
             '[CORS] Unsafe configuration detected: CORS_ORIGINS=* cannot be combined with ' +
                 'CORS_ALLOW_CREDENTIALS=true. Access-Control-Allow-Credentials has been forced to false. ' +
@@ -78,6 +88,8 @@ export function validateCorsConfig(): void {
                 'list of trusted origins instead of *.'
         )
     }
+
+    getAllowedIframeOrigins()
 }
 
 export function getCorsOptions(): any {
@@ -115,6 +127,9 @@ export function getCorsOptions(): any {
                     const chatflowId = isTTSReq ? req.body?.chatflowId : extractChatflowId(req.url)
                     let chatflowAllowed = false
                     if (chatflowId) {
+                        if (!isValidUUID(chatflowId)) {
+                            return originCallback(null, globallyAllowed)
+                        }
                         try {
                             chatflowAllowed = await validateChatflowDomain(chatflowId, originLc, req.user?.activeWorkspaceId)
                         } catch (error) {
@@ -137,39 +152,84 @@ export function getCorsOptions(): any {
     }
 }
 
-/**
- * Retrieves and normalizes allowed iframe embedding origins for CSP frame-ancestors directive.
- *
- * Reads `IFRAME_ORIGINS` environment variable (comma-separated FQDNs) and converts it to
- * space-separated format required by Content Security Policy specification.
- *
- * Input format:
- * - Comma-separated: `https://domain1.com,https://domain2.com`
- * - Special values: `'self'`, `'none'`, or `*`
- * - Default: `'self'` (same-origin only)
- *
- * Output examples:
- * - `https://app.com,https://admin.com` → `https://app.com https://admin.com`
- * - `'self'` → `'self'`
- * - `*` → `*`
- *
- * @returns Space-separated string for CSP frame-ancestors directive
- */
-export function getAllowedIframeOrigins(): string {
-    // Expects FQDN separated by commas, otherwise nothing or * for all.
-    // Also CSP allowed values: self or none
-    const origins = (process.env.IFRAME_ORIGINS?.trim() || undefined) ?? "'self'"
-    // Convert CSV to space-separated for CSP frame-ancestors directive
-    return origins
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .join(' ')
+function invalidIframeOrigins(reason: string): never {
+    throw new Error(`[CSP] Invalid IFRAME_ORIGINS: ${reason}.`)
 }
 
-export function getIframeSecurityHeaders(): Record<string, string> {
-    const allowedOrigins = getAllowedIframeOrigins()
+function isLocalHostname(hostname: string): boolean {
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+}
 
+export function parseIframeOrigins(rawValue: string | undefined, nodeEnv: string | undefined = process.env.NODE_ENV): string[] {
+    const raw = rawValue?.trim()
+    if (!raw) return ["'self'"]
+
+    if (/[\u0000-\u001f\u007f;]/.test(raw)) {
+        invalidIframeOrigins('control characters and directive separators are not allowed')
+    }
+
+    const sources = raw.split(',').map((source) => source.trim())
+    if (sources.some((source) => source.length === 0)) {
+        invalidIframeOrigins('empty comma-separated entries are not allowed')
+    }
+
+    const normalized: string[] = []
+    for (const source of sources) {
+        if (source === "'self'") {
+            normalized.push(source)
+            continue
+        }
+        if (source === "'none'") {
+            normalized.push(source)
+            continue
+        }
+        if (source === '*') {
+            if (nodeEnv === 'production') invalidIframeOrigins('wildcard embedding is not allowed in production')
+            normalized.push(source)
+            continue
+        }
+        if (source.startsWith("'") || source.endsWith("'") || source === 'self' || source === 'none') {
+            invalidIframeOrigins('unsupported quoted or bare keywords are not allowed')
+        }
+
+        let parsed: URL
+        try {
+            parsed = new URL(source)
+        } catch {
+            invalidIframeOrigins('each source must be an exact origin')
+        }
+
+        if (parsed.hostname.includes('*')) invalidIframeOrigins('hostname wildcards are not allowed')
+        if (parsed.username || parsed.password) invalidIframeOrigins('URL credentials are not allowed')
+        if (parsed.pathname !== '/' || source.includes('?') || source.includes('#')) {
+            invalidIframeOrigins('paths, queries, and fragments are not allowed')
+        }
+
+        if (parsed.protocol === 'http:') {
+            if (nodeEnv === 'production') invalidIframeOrigins('production origins must use HTTPS')
+            if (!isLocalHostname(parsed.hostname)) invalidIframeOrigins('HTTP is limited to local development origins')
+        } else if (parsed.protocol !== 'https:') {
+            invalidIframeOrigins('origins must use HTTPS')
+        }
+
+        normalized.push(parsed.origin)
+    }
+
+    const uniqueSources = [...new Set(normalized)]
+    if (uniqueSources.includes("'none'") && uniqueSources.length !== 1) {
+        invalidIframeOrigins("'none' cannot be combined with another source")
+    }
+    if (uniqueSources.includes('*') && uniqueSources.length !== 1) {
+        invalidIframeOrigins('wildcard cannot be combined with another source')
+    }
+    return uniqueSources
+}
+
+export function getAllowedIframeOrigins(): string {
+    return parseIframeOrigins(process.env.IFRAME_ORIGINS).join(' ')
+}
+
+export function getIframeSecurityHeaders(allowedOrigins = getAllowedIframeOrigins()): Record<string, string> {
     if (allowedOrigins === '*') {
         return {
             'Content-Security-Policy': 'frame-ancestors *'
