@@ -41,8 +41,8 @@
         "clsx": "^1.1.1",
         "dompurify": "^3.2.6",
         "dotenv": "^16.0.0",
-        "flowise-embed": "latest",
-        "flowise-embed-react": "latest",
+        "flowise-embed": "3.1.5",
+        "flowise-embed-react": "3.1.5",
         "flowise-react-json-view": "*",
         "formik": "^2.2.6",
         "framer-motion": "^4.1.13",
@@ -76,7 +76,8 @@
         "showdown": "^2.1.0",
         "tippy.js": "^6.3.7",
         "uuid": "^10.0.0",
-        "yup": "^0.32.9"
+        "yup": "^0.32.9",
+        "zod": "^3.25.76"
     },
     "scripts": {
         "dev": "vite",
