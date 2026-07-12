@@ -29,12 +29,23 @@
 # misc
 .DS_Store
 
+## local generated artifacts
+/.codegraph/
+/.playwright-cli/
+/output/
+/test_reports/
+/.superpowers/
+/tmp/
+
 ## env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 .env
+.env*
+!*.example
+!/.env.production.template
 
 ## turbo
 .turbo
@@ -119,4 +130,3 @@ apps/*/
 .claude/plans/
 .claude/settings.local.json
 .claude/agent-memory/*
-

@@ -8,3 +8,9 @@ build
 
 packages/server/.env
 packages/ui/.env
+.codegraph/
+.playwright-cli/
+output/
+test_reports/
+.superpowers/
+tmp/
