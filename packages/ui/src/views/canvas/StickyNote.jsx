@@ -74,7 +74,7 @@ const StickyNote = ({ data }) => {
                             }}
                         >
                             <IconButton
-                                title='Duplicate'
+                                title='复制'
                                 onClick={() => {
                                     duplicateNode(data.id)
                                 }}
@@ -88,7 +88,7 @@ const StickyNote = ({ data }) => {
                                 <IconCopy />
                             </IconButton>
                             <IconButton
-                                title='Delete'
+                                title='删除'
                                 onClick={() => {
                                     deleteNode(data.id)
                                 }}

@@ -70,7 +70,7 @@ const LoadAssistantDialog = ({ show, dialogProps, onCancel, onAssistantSelected,
                         key={credentialId}
                         data={credentialId ? { credential: credentialId } : {}}
                         inputParam={{
-                            label: 'Connect Credential',
+                            label: '连接凭据',
                             name: 'credential',
                             type: 'credential',
                             credentialNames: ['openAIApi']

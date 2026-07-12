@@ -50,7 +50,7 @@ const CredentialInputHandler = ({ inputParam, data, onSelect, disabled = false }
             if (componentCredentialsResp.data) {
                 if (Array.isArray(componentCredentialsResp.data)) {
                     const dialogProp = {
-                        title: 'Add New Credential',
+                        title: '添加新凭据',
                         componentsCredentials: componentCredentialsResp.data
                     }
                     setCredentialListDialogProps(dialogProp)
@@ -58,8 +58,8 @@ const CredentialInputHandler = ({ inputParam, data, onSelect, disabled = false }
                 } else {
                     const dialogProp = {
                         type: 'ADD',
-                        cancelButtonName: 'Cancel',
-                        confirmButtonName: 'Add',
+                        cancelButtonName: '取消',
+                        confirmButtonName: '添加',
                         credentialComponent: componentCredentialsResp.data
                     }
                     setSpecificCredentialDialogProps(dialogProp)
@@ -115,7 +115,7 @@ const CredentialInputHandler = ({ inputParam, data, onSelect, disabled = false }
                                 onCreateNew={() => addAsyncOption(inputParam.name)}
                             />
                             {credentialId && hasPermission('credentials:update') && (
-                                <IconButton title='Edit' color='primary' size='small' onClick={() => editCredential(credentialId)}>
+                                <IconButton title='编辑' color='primary' size='small' onClick={() => editCredential(credentialId)}>
                                     <IconEdit />
                                 </IconButton>
                             )}

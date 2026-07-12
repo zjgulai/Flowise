@@ -217,7 +217,7 @@ const IterationNode = ({ data }) => {
                 <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
                     <IconButton
                         size={'small'}
-                        title='Duplicate'
+                        title='复制'
                         onClick={() => {
                             duplicateNode(data.id)
                         }}
@@ -232,7 +232,7 @@ const IterationNode = ({ data }) => {
                     </IconButton>
                     <IconButton
                         size={'small'}
-                        title='Delete'
+                        title='删除'
                         onClick={() => {
                             deleteNode(data.id)
                         }}
@@ -247,7 +247,7 @@ const IterationNode = ({ data }) => {
                     </IconButton>
                     <IconButton
                         size={'small'}
-                        title='Info'
+                        title='提示'
                         onClick={() => {
                             setInfoDialogProps({ data })
                             setShowInfoDialog(true)

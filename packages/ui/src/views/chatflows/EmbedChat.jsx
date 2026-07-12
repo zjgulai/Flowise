@@ -112,7 +112,7 @@ export const defaultThemeConfig = {
         message: 'By using this chatbot, you agree to the <a target="_blank" href="https://flowiseai.com/terms">Terms & Condition</a>',
         textColor: 'black',
         buttonColor: '#3b82f6',
-        buttonText: 'Start Chatting',
+        buttonText: '开始对话',
         buttonTextColor: 'white',
         blurredBackgroundColor: 'rgba(0, 0, 0, 0.4)',
         backgroundColor: 'white'
@@ -124,7 +124,7 @@ export const defaultThemeConfig = {
         title: 'Flowise Bot',
         titleAvatarSrc: 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/svg/google-messages.svg',
         welcomeMessage: 'Hello! This is custom welcome message',
-        errorMessage: 'This is a custom error message',
+        errorMessage: '这是自定义错误消息',
         backgroundColor: '#ffffff',
         backgroundImage: 'enter image path or link',
         height: 700,
@@ -148,7 +148,7 @@ export const defaultThemeConfig = {
             avatarSrc: 'https://raw.githubusercontent.com/zahidkhawaja/langchain-chat-nextjs/main/public/usericon.png'
         },
         textInput: {
-            placeholder: 'Type your question',
+            placeholder: '输入您的问题',
             backgroundColor: '#ffffff',
             textColor: '#303235',
             sendButtonColor: '#3B81F6',
@@ -332,7 +332,7 @@ const EmbedChat = ({ chatflowid }) => {
         <>
             <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                 <div style={{ flex: 80 }}>
-                    <Tabs value={value} onChange={handleChange} aria-label='tabs'>
+                    <Tabs value={value} onChange={handleChange} aria-label='标签页'>
                         {codes.map((codeLang, index) => (
                             <Tab key={index} label={codeLang} {...a11yProps(index)}></Tab>
                         ))}
@@ -363,7 +363,7 @@ const EmbedChat = ({ chatflowid }) => {
                     )}
                     <CopyBlock theme={atomOneDark} text={getCode(codeLang)} language='javascript' showLineNumbers={false} wrapLines />
 
-                    <CheckboxInput label='Show Embed Chat Config' value={embedChatCheckboxVal} onChange={onCheckBoxEmbedChatChanged} />
+                    <CheckboxInput label='显示嵌入聊天配置' value={embedChatCheckboxVal} onChange={onCheckBoxEmbedChatChanged} />
 
                     {embedChatCheckboxVal && (
                         <CopyBlock

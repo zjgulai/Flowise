@@ -125,7 +125,7 @@ const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
                                 </Typography>
 
                                 {data?.id && (
-                                    <ButtonBase title='Edit Name' sx={{ borderRadius: '50%' }}>
+                                    <ButtonBase title='编辑名称' sx={{ borderRadius: '50%' }}>
                                         <Avatar
                                             variant='rounded'
                                             sx={{
@@ -171,7 +171,7 @@ const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
                                         }
                                     }}
                                 />
-                                <ButtonBase title='Save Name' sx={{ borderRadius: '50%' }}>
+                                <ButtonBase title='保存名称' sx={{ borderRadius: '50%' }}>
                                     <Avatar
                                         variant='rounded'
                                         sx={{
@@ -197,7 +197,7 @@ const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
                                         <IconCheck stroke={1.5} size='1rem' />
                                     </Avatar>
                                 </ButtonBase>
-                                <ButtonBase title='Cancel' sx={{ borderRadius: '50%' }}>
+                                <ButtonBase title='取消' sx={{ borderRadius: '50%' }}>
                                     <Avatar
                                         variant='rounded'
                                         sx={{

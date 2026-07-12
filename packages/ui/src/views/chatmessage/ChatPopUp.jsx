@@ -148,7 +148,7 @@ const ChatPopUp = ({ chatflowid, isAgentCanvas, onOpenChange }) => {
                 size='small'
                 color='secondary'
                 aria-label='chat'
-                title='Chat'
+                title='对话'
                 onClick={handleToggle}
             >
                 {open ? <IconX /> : <IconMessage />}

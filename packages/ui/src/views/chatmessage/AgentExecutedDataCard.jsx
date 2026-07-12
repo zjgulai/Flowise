@@ -179,7 +179,7 @@ function CustomLabel({ icon: Icon, itemStatus, children, name, label, data, meta
                 <IconButton
                     onClick={handleOpenDialog}
                     size='small'
-                    title='View Details'
+                    title='查看详情'
                     sx={{
                         ml: 2,
                         zIndex: 10 // Increase z-index to ensure the button is clickable
@@ -198,7 +198,7 @@ function CustomLabel({ icon: Icon, itemStatus, children, name, label, data, meta
                     )}
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={handleCloseDialog}>Close</Button>
+                    <Button onClick={handleCloseDialog}>关闭</Button>
                 </DialogActions>
             </Dialog>
         </TreeItem2Label>

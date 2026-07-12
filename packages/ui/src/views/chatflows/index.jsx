@@ -138,8 +138,8 @@ const Chatflows = () => {
                     <ViewHeader
                         onSearchChange={onSearchChange}
                         search={true}
-                        searchPlaceholder='Search Name or Category'
-                        title='Chatflows'
+                        searchPlaceholder='搜索名称或分类'
+                        title='对话流程'
                         description='Build single-agent systems, chatbots and simple LLM flows'
                     >
                         <ToggleButtonGroup
@@ -158,7 +158,7 @@ const Chatflows = () => {
                                 }}
                                 variant='contained'
                                 value='card'
-                                title='Card View'
+                                title='卡片视图'
                             >
                                 <IconLayoutGrid />
                             </ToggleButton>
@@ -170,7 +170,7 @@ const Chatflows = () => {
                                 }}
                                 variant='contained'
                                 value='list'
-                                title='List View'
+                                title='列表视图'
                             >
                                 <IconList />
                             </ToggleButton>
@@ -226,7 +226,7 @@ const Chatflows = () => {
                                     alt='WorkflowEmptySVG'
                                 />
                             </Box>
-                            <div>No Chatflows Yet</div>
+                            <div>暂无对话流程</div>
                         </Stack>
                     )}
                 </Stack>

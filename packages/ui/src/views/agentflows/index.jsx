@@ -219,9 +219,9 @@ const Agentflows = () => {
                     <ViewHeader
                         onSearchChange={onSearchChange}
                         search={true}
-                        searchPlaceholder='Search Name or Category'
-                        title='Agentflows'
-                        description='Multi-agent systems, workflow orchestration'
+                        searchPlaceholder='搜索名称或分类'
+                        title='智能体流程'
+                        description='多智能体系统，工作流编排'
                     >
                         <ToggleButtonGroup
                             sx={{ borderRadius: 2, maxHeight: 40 }}
@@ -272,7 +272,7 @@ const Agentflows = () => {
                                 }}
                                 variant='contained'
                                 value='card'
-                                title='Card View'
+                                title='卡片视图'
                             >
                                 <IconLayoutGrid />
                             </ToggleButton>
@@ -284,7 +284,7 @@ const Agentflows = () => {
                                 }}
                                 variant='contained'
                                 value='list'
-                                title='List View'
+                                title='列表视图'
                             >
                                 <IconList />
                             </ToggleButton>
@@ -296,7 +296,7 @@ const Agentflows = () => {
                             startIcon={<IconPlus />}
                             sx={{ borderRadius: 2, height: 40 }}
                         >
-                            Add New
+                            新建
                         </StyledPermissionButton>
                     </ViewHeader>
 
@@ -324,8 +324,7 @@ const Agentflows = () => {
                                 }}
                             />
                             <Box sx={{ flex: 1 }}>
-                                <strong>V1 Agentflows are deprecated.</strong> We recommend migrating to V2 for improved performance and
-                                continued support.
+                                <strong>V1 智能体流程已弃用。</strong> 建议迁移到 V2 以获得更好的性能和持续支持。
                             </Box>
                             <IconButton
                                 aria-label='dismiss'
@@ -387,7 +386,7 @@ const Agentflows = () => {
                                     alt='AgentsEmptySVG'
                                 />
                             </Box>
-                            <div>No Agents Yet</div>
+                            <div>暂无智能体</div>
                         </Stack>
                     )}
                 </Stack>

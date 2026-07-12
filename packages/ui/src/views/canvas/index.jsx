@@ -617,8 +617,8 @@ const Canvas = () => {
                                         onClick={() => {
                                             setIsSnappingEnabled(!isSnappingEnabled)
                                         }}
-                                        title='toggle snapping'
-                                        aria-label='toggle snapping'
+                                        title='切换吸附'
+                                        aria-label='切换吸附'
                                     >
                                         {isSnappingEnabled ? <IconMagnetFilled /> : <IconMagnetOff />}
                                     </button>
@@ -627,8 +627,8 @@ const Canvas = () => {
                                         onClick={() => {
                                             setIsBackgroundEnabled(!isBackgroundEnabled)
                                         }}
-                                        title='toggle background'
-                                        aria-label='toggle background'
+                                        title='切换背景'
+                                        aria-label='切换背景'
                                     >
                                         {isBackgroundEnabled ? <IconArtboard /> : <IconArtboardOff />}
                                     </button>
@@ -648,8 +648,8 @@ const Canvas = () => {
                                             }
                                         }}
                                         size='small'
-                                        aria-label='sync'
-                                        title='Sync Nodes'
+                                        aria-label='同步'
+                                        title='同步节点'
                                         onClick={() => syncNodes()}
                                     >
                                         <IconRefreshAlert />

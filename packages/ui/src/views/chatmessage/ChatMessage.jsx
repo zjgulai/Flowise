@@ -160,7 +160,7 @@ const CardWithDeleteOverlay = ({ item, disabled, customization, onDelete }) => {
                     disabled={disabled}
                     onClick={() => onDelete(item)}
                     startIcon={<IconTrash color='white' size={22} />}
-                    title='Remove attachment'
+                    title='移除附件'
                     sx={{
                         position: 'absolute',
                         top: 0,
@@ -2671,7 +2671,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                                 id='leadName'
                                                                 type='text'
                                                                 fullWidth
-                                                                placeholder='Name'
+                                                                placeholder='名称'
                                                                 name='leadName'
                                                                 value={leadName}
                                                                 // eslint-disable-next-line
@@ -2684,7 +2684,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                                 id='leadEmail'
                                                                 type='email'
                                                                 fullWidth
-                                                                placeholder='Email Address'
+                                                                placeholder='邮箱地址'
                                                                 name='leadEmail'
                                                                 value={leadEmail}
                                                                 onChange={(e) => setLeadEmail(e.target.value)}
@@ -2695,7 +2695,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                                 id='leadPhone'
                                                                 type='number'
                                                                 fullWidth
-                                                                placeholder='Phone Number'
+                                                                placeholder='电话号码'
                                                                 name='leadPhone'
                                                                 value={leadPhone}
                                                                 onChange={(e) => setLeadPhone(e.target.value)}
@@ -3002,7 +3002,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                         <IconCircleDot />
                                     </span>
                                     <Typography id='elapsed-time'>00:00</Typography>
-                                    {isLoadingRecording && <Typography ml={1.5}>Sending...</Typography>}
+                                    {isLoadingRecording && <Typography ml={1.5}>发送中...</Typography>}
                                 </div>
                                 <div className='recording-control-buttons-container'>
                                     <IconButton onClick={onRecordingCancelled} size='small'>
@@ -3223,7 +3223,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                     />
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={handleSubmitFeedback}>Cancel</Button>
+                    <Button onClick={handleSubmitFeedback}>取消</Button>
                     <Button onClick={handleSubmitFeedback} variant='contained'>
                         Submit
                     </Button>

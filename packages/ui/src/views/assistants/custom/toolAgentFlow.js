@@ -4,27 +4,27 @@ export const toolAgentFlow = {
             id: 'bufferMemory_0',
             data: {
                 id: 'bufferMemory_0',
-                label: 'Buffer Memory',
+                label: '缓存记忆',
                 version: 2,
                 name: 'bufferMemory',
                 type: 'BufferMemory',
                 baseClasses: ['BufferMemory', 'BaseChatMemory', 'BaseMemory'],
                 category: 'Memory',
-                description: 'Retrieve chat messages stored in database',
+                description: '从数据库中检索存储的聊天消息',
                 inputParams: [
                     {
-                        label: 'Session Id',
+                        label: '会话 ID',
                         name: 'sessionId',
                         type: 'string',
                         description:
-                            'If not specified, a random id will be used. Learn <a target="_blank" href="https://docs.flowiseai.com/memory#ui-and-embedded-chat">more</a>',
+                            '如果未指定，将使用随机 ID。了解更多<a target="_blank" href="https://docs.flowiseai.com/memory#ui-and-embedded-chat">此处</a>',
                         default: '',
                         additionalParams: true,
                         optional: true,
                         id: 'bufferMemory_0-input-sessionId-string'
                     },
                     {
-                        label: 'Memory Key',
+                        label: '记忆键',
                         name: 'memoryKey',
                         type: 'string',
                         default: 'chat_history',
@@ -42,7 +42,7 @@ export const toolAgentFlow = {
                         id: 'bufferMemory_0-output-bufferMemory-BufferMemory|BaseChatMemory|BaseMemory',
                         name: 'bufferMemory',
                         label: 'BufferMemory',
-                        description: 'Retrieve chat messages stored in database',
+                        description: '从数据库中检索存储的聊天消息',
                         type: 'BufferMemory | BaseChatMemory | BaseMemory'
                     }
                 ],
@@ -59,17 +59,17 @@ export const toolAgentFlow = {
                 type: 'ChatOpenAI',
                 baseClasses: ['ChatOpenAI', 'BaseChatModel', 'BaseLanguageModel', 'Runnable'],
                 category: 'Chat Models',
-                description: 'Wrapper around OpenAI large language models that use the Chat endpoint',
+                description: '使用聊天端点的 OpenAI 大语言模型的封装器',
                 inputParams: [
                     {
-                        label: 'Connect Credential',
+                        label: '连接凭据',
                         name: 'credential',
                         type: 'credential',
                         credentialNames: ['openAIApi'],
                         id: 'chatOpenAI_0-input-credential-credential'
                     },
                     {
-                        label: 'Model Name',
+                        label: '模型名称',
                         name: 'modelName',
                         type: 'asyncOptions',
                         loadMethod: 'listModels',
@@ -77,7 +77,7 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-modelName-asyncOptions'
                     },
                     {
-                        label: 'Temperature',
+                        label: '温度',
                         name: 'temperature',
                         type: 'number',
                         step: 0.1,
@@ -86,7 +86,7 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-temperature-number'
                     },
                     {
-                        label: 'Streaming',
+                        label: '流式传输',
                         name: 'streaming',
                         type: 'boolean',
                         default: true,
@@ -95,7 +95,7 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-streaming-boolean'
                     },
                     {
-                        label: 'Max Tokens',
+                        label: '最大 Token 数',
                         name: 'maxTokens',
                         type: 'number',
                         step: 1,
@@ -104,7 +104,7 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-maxTokens-number'
                     },
                     {
-                        label: 'Top Probability',
+                        label: 'Top 概率',
                         name: 'topP',
                         type: 'number',
                         step: 0.1,
@@ -113,7 +113,7 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-topP-number'
                     },
                     {
-                        label: 'Frequency Penalty',
+                        label: '频率惩罚',
                         name: 'frequencyPenalty',
                         type: 'number',
                         step: 0.1,
@@ -122,7 +122,7 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-frequencyPenalty-number'
                     },
                     {
-                        label: 'Presence Penalty',
+                        label: '存在惩罚',
                         name: 'presencePenalty',
                         type: 'number',
                         step: 0.1,
@@ -131,7 +131,7 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-presencePenalty-number'
                     },
                     {
-                        label: 'Timeout',
+                        label: '超时',
                         name: 'timeout',
                         type: 'number',
                         step: 1,
@@ -148,7 +148,7 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-basepath-string'
                     },
                     {
-                        label: 'Proxy Url',
+                        label: '代理地址',
                         name: 'proxyUrl',
                         type: 'string',
                         optional: true,
@@ -156,17 +156,17 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-proxyUrl-string'
                     },
                     {
-                        label: 'Stop Sequence',
+                        label: '停止序列',
                         name: 'stopSequence',
                         type: 'string',
                         rows: 4,
                         optional: true,
-                        description: 'List of stop words to use when generating. Use comma to separate multiple stop words.',
+                        description: '生成时使用的停止词列表。使用逗号分隔多个停止词。',
                         additionalParams: true,
                         id: 'chatOpenAI_0-input-stopSequence-string'
                     },
                     {
-                        label: 'Base Options',
+                        label: '基础选项',
                         name: 'baseOptions',
                         type: 'json',
                         optional: true,
@@ -174,11 +174,11 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-input-baseOptions-json'
                     },
                     {
-                        label: 'Allow Image Uploads',
+                        label: '允许图片上传',
                         name: 'allowImageUploads',
                         type: 'boolean',
                         description:
-                            'Allow image input. Refer to the <a href="https://docs.flowiseai.com/using-flowise/uploads#image" target="_blank">docs</a> for more details.',
+                            '允许图片输入。更多详情请参考<a href="https://docs.flowiseai.com/using-flowise/uploads#image" target="_blank">文档</a>。',
                         default: false,
                         optional: true,
                         id: 'chatOpenAI_0-input-allowImageUploads-boolean'
@@ -186,7 +186,7 @@ export const toolAgentFlow = {
                 ],
                 inputAnchors: [
                     {
-                        label: 'Cache',
+                        label: '缓存',
                         name: 'cache',
                         type: 'BaseCache',
                         optional: true,
@@ -225,27 +225,27 @@ export const toolAgentFlow = {
             id: 'toolAgent_0',
             data: {
                 id: 'toolAgent_0',
-                label: 'Tool Agent',
+                label: '工具代理',
                 version: 2,
                 name: 'toolAgent',
                 type: 'AgentExecutor',
                 baseClasses: ['AgentExecutor', 'BaseChain', 'Runnable'],
                 category: 'Agents',
-                description: 'Agent that uses Function Calling to pick the tools and args to call',
+                description: '使用函数调用来选择要调用的工具和参数的代理',
                 inputParams: [
                     {
-                        label: 'System Message',
+                        label: '系统消息',
                         name: 'systemMessage',
                         type: 'string',
                         default: 'You are a helpful AI assistant.',
-                        description: 'If Chat Prompt Template is provided, this will be ignored',
+                        description: '如果提供了聊天提示模板，此项将被忽略',
                         rows: 4,
                         optional: true,
                         additionalParams: true,
                         id: 'toolAgent_0-input-systemMessage-string'
                     },
                     {
-                        label: 'Max Iterations',
+                        label: '最大迭代次数',
                         name: 'maxIterations',
                         type: 'number',
                         optional: true,
@@ -255,37 +255,37 @@ export const toolAgentFlow = {
                 ],
                 inputAnchors: [
                     {
-                        label: 'Tools',
+                        label: '工具',
                         name: 'tools',
                         type: 'Tool',
                         list: true,
                         id: 'toolAgent_0-input-tools-Tool'
                     },
                     {
-                        label: 'Memory',
+                        label: '记忆',
                         name: 'memory',
                         type: 'BaseChatMemory',
                         id: 'toolAgent_0-input-memory-BaseChatMemory'
                     },
                     {
-                        label: 'Tool Calling Chat Model',
+                        label: '工具调用聊天模型',
                         name: 'model',
                         type: 'BaseChatModel',
                         description:
-                            'Only compatible with models that are capable of function calling: ChatOpenAI, ChatMistral, ChatAnthropic, ChatGoogleGenerativeAI, ChatVertexAI, GroqChat',
+                            '仅兼容支持函数调用的模型：ChatOpenAI、ChatMistral、ChatAnthropic、ChatGoogleGenerativeAI、ChatVertexAI、GroqChat',
                         id: 'toolAgent_0-input-model-BaseChatModel'
                     },
                     {
-                        label: 'Chat Prompt Template',
+                        label: '聊天提示模板',
                         name: 'chatPromptTemplate',
                         type: 'ChatPromptTemplate',
-                        description: 'Override existing prompt with Chat Prompt Template. Human Message must includes {input} variable',
+                        description: '使用聊天提示模板覆盖现有提示。人类消息必须包含 {input} 变量',
                         optional: true,
                         id: 'toolAgent_0-input-chatPromptTemplate-ChatPromptTemplate'
                     },
                     {
-                        label: 'Input Moderation',
-                        description: 'Detect text that could generate harmful output and prevent it from being sent to the language model',
+                        label: '输入审核',
+                        description: '检测可能生成有害输出的文本，并阻止其发送到语言模型',
                         name: 'inputModeration',
                         type: 'Moderation',
                         optional: true,
@@ -307,7 +307,7 @@ export const toolAgentFlow = {
                         id: 'toolAgent_0-output-toolAgent-AgentExecutor|BaseChain|Runnable',
                         name: 'toolAgent',
                         label: 'AgentExecutor',
-                        description: 'Agent that uses Function Calling to pick the tools and args to call',
+                        description: '使用函数调用来选择要调用的工具和参数的代理',
                         type: 'AgentExecutor | BaseChain | Runnable'
                     }
                 ],

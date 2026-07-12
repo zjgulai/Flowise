@@ -99,7 +99,7 @@ const CustomAssistantLayout = () => {
                             onSearchChange={onSearchChange}
                             search={true}
                             searchPlaceholder='Search Assistants'
-                            title='Custom Assistant'
+                            title='自定义助手'
                             description='Create custom assistants with your choice of LLMs'
                             onBack={() => navigate(-1)}
                         >

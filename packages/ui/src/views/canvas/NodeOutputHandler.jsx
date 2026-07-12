@@ -148,7 +148,7 @@ const NodeOutputHandler = ({ outputAnchor, data, disabled = false }) => {
                         </CustomWidthTooltip>
                         <div style={{ flex: 1 }}></div>
                         <Box sx={{ p: 2, textAlign: 'end' }}>
-                            <Typography>True</Typography>
+                            <Typography>是</Typography>
                         </Box>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
@@ -175,7 +175,7 @@ const NodeOutputHandler = ({ outputAnchor, data, disabled = false }) => {
                         </CustomWidthTooltip>
                         <div style={{ flex: 1 }}></div>
                         <Box sx={{ p: 2, textAlign: 'end' }}>
-                            <Typography>False</Typography>
+                            <Typography>否</Typography>
                         </Box>
                     </div>
                 </div>
