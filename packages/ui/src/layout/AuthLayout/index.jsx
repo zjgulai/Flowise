@@ -9,11 +9,17 @@ const AuthLayout = () => {
     return (
         <Box
             sx={{
-                width: '100vw',
-                height: '100vh',
+                width: '100%',
+                minHeight: '100vh',
+                boxSizing: 'border-box',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                px: 2,
+                '& > *': {
+                    width: '100%',
+                    maxWidth: '512px'
+                },
                 [theme.breakpoints.down(1367)]: {
                     alignItems: 'start',
                     overflowY: 'auto',

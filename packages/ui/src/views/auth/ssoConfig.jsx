@@ -446,7 +446,7 @@ const SSOConfigPage = () => {
                                 </Stack>
                             </div>
                         )}
-                        <Tabs value={tabValue} textColor='primary' onChange={(event, val) => setTabValue(val)} aria-label='tabs'>
+                        <Tabs value={tabValue} textColor='primary' onChange={(event, val) => setTabValue(val)} aria-label='标签页'>
                             <Tab
                                 iconPosition='start'
                                 icon={<img alt='MS_SSO' src={MicrosoftSVG} width={24} height={24} />}
@@ -651,7 +651,7 @@ const SSOConfigPage = () => {
                                             {azureCallbackURL}
                                         </Typography>
                                         <IconButton
-                                            title='Copy Callback URL'
+                                            title='复制回调 URL'
                                             color='success'
                                             onClick={(event) => {
                                                 navigator.clipboard.writeText(azureCallbackURL)
@@ -675,7 +675,7 @@ const SSOConfigPage = () => {
                                         type='string'
                                         fullWidth
                                         size='small'
-                                        placeholder='Tenant ID'
+                                        placeholder='租户 ID'
                                         name='azureTenantID'
                                         onChange={(e) => setAzureTenantID(e.target.value)}
                                         value={azureTenantID}
@@ -693,7 +693,7 @@ const SSOConfigPage = () => {
                                         type='string'
                                         fullWidth
                                         size='small'
-                                        placeholder='Client ID'
+                                        placeholder='客户端 ID'
                                         name='azureClientID'
                                         onChange={(e) => setAzureClientID(e.target.value)}
                                         value={azureClientID}
@@ -711,7 +711,7 @@ const SSOConfigPage = () => {
                                         type='password'
                                         fullWidth
                                         size='small'
-                                        placeholder='Client Secret'
+                                        placeholder='客户端密钥'
                                         name='azureClientSecret'
                                         onChange={(e) => setAzureClientSecret(e.target.value)}
                                         value={azureClientSecret}
@@ -750,7 +750,7 @@ const SSOConfigPage = () => {
                                             {googleCallbackURL}
                                         </Typography>
                                         <IconButton
-                                            title='Copy Callback URL'
+                                            title='复制回调 URL'
                                             color='success'
                                             onClick={(event) => {
                                                 navigator.clipboard.writeText(googleCallbackURL)
@@ -776,7 +776,7 @@ const SSOConfigPage = () => {
                                         type='string'
                                         fullWidth
                                         size='small'
-                                        placeholder='Client ID'
+                                        placeholder='客户端 ID'
                                         name='googleClientID'
                                         onChange={(e) => setGoogleClientID(e.target.value)}
                                         value={googleClientID}
@@ -794,7 +794,7 @@ const SSOConfigPage = () => {
                                         type='password'
                                         fullWidth
                                         size='small'
-                                        placeholder='Client Secret'
+                                        placeholder='客户端密钥'
                                         name='googleClientSecret'
                                         onChange={(e) => setGoogleClientSecret(e.target.value)}
                                         value={googleClientSecret}
@@ -833,7 +833,7 @@ const SSOConfigPage = () => {
                                             {auth0CallbackURL}
                                         </Typography>
                                         <IconButton
-                                            title='Copy Callback URL'
+                                            title='复制回调 URL'
                                             color='success'
                                             onClick={(event) => {
                                                 navigator.clipboard.writeText(auth0CallbackURL)
@@ -875,7 +875,7 @@ const SSOConfigPage = () => {
                                         type='string'
                                         fullWidth
                                         size='small'
-                                        placeholder='Client ID'
+                                        placeholder='客户端 ID'
                                         name='auth0ClientID'
                                         onChange={(e) => setAuth0ClientID(e.target.value)}
                                         value={auth0ClientID}
@@ -893,7 +893,7 @@ const SSOConfigPage = () => {
                                         type='password'
                                         fullWidth
                                         size='small'
-                                        placeholder='Client Secret'
+                                        placeholder='客户端密钥'
                                         name='auth0ClientSecret'
                                         onChange={(e) => setAuth0ClientSecret(e.target.value)}
                                         value={auth0ClientSecret}
@@ -932,7 +932,7 @@ const SSOConfigPage = () => {
                                             {githubCallbackURL}
                                         </Typography>
                                         <IconButton
-                                            title='Copy Callback URL'
+                                            title='复制回调 URL'
                                             color='success'
                                             onClick={(event) => {
                                                 navigator.clipboard.writeText(githubCallbackURL)
@@ -958,7 +958,7 @@ const SSOConfigPage = () => {
                                         type='string'
                                         fullWidth
                                         size='small'
-                                        placeholder='Client ID'
+                                        placeholder='客户端 ID'
                                         name='githubClientID'
                                         onChange={(e) => setGithubClientID(e.target.value)}
                                         value={githubClientID}
@@ -976,7 +976,7 @@ const SSOConfigPage = () => {
                                         type='password'
                                         fullWidth
                                         size='small'
-                                        placeholder='Client Secret'
+                                        placeholder='客户端密钥'
                                         name='githubClientSecret'
                                         onChange={(e) => setGithubClientSecret(e.target.value)}
                                         value={githubClientSecret}

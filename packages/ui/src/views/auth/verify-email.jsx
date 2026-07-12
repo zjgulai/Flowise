@@ -62,7 +62,7 @@ const VerifyEmail = () => {
 
     return (
         <MainCard>
-            <Stack flexDirection='column' sx={{ width: '480px', gap: 3 }}>
+            <Stack flexDirection='column' sx={{ width: '100%', maxWidth: '480px', gap: 3 }}>
                 <Stack sx={{ width: '100%', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                     <Stack sx={{ alignItems: 'center', gap: 2 }}>
                         {loading && (

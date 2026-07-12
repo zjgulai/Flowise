@@ -35,11 +35,11 @@ const RateLimitedPage = () => {
                         429 Too Many Requests
                     </Typography>
                     <Typography variant='body1' component='div' sx={{ mb: 2, textAlign: 'center' }}>
-                        {`You have made too many requests in a short period of time. Please wait ${retryAfter}s before trying again.`}
+                        {`您在短时间内发送了太多请求，请等待 ${retryAfter} 秒后再试。`}
                     </Typography>
                     <Link to='/'>
                         <Button variant='contained' color='primary'>
-                            Back to Home
+                            返回首页
                         </Button>
                     </Link>
                 </Stack>

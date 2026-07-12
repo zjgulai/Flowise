@@ -43,11 +43,11 @@ const UnauthorizedPage = () => {
                         </Typography>
                         {currentUser ? (
                             <Link to='/'>
-                                <StyledButton sx={{ px: 2, py: 1 }}>Back to Home</StyledButton>
+                                <StyledButton sx={{ px: 2, py: 1 }}>返回首页</StyledButton>
                             </Link>
                         ) : (
                             <Link to='/login'>
-                                <StyledButton sx={{ px: 2, py: 1 }}>Back to Login</StyledButton>
+                                <StyledButton sx={{ px: 2, py: 1 }}>返回登录</StyledButton>
                             </Link>
                         )}
                     </Stack>

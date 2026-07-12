@@ -44,13 +44,13 @@ const SignInPage = () => {
     const { isEnterpriseLicensed, isCloud, isOpenSource } = useConfig()
 
     const usernameInput = {
-        label: 'Username',
+        label: '邮箱',
         name: 'username',
         type: 'email',
         placeholder: 'user@company.com'
     }
     const passwordInput = {
-        label: 'Password',
+        label: '密码',
         name: 'password',
         type: 'password',
         placeholder: '********',
@@ -169,17 +169,17 @@ const SignInPage = () => {
         try {
             await resendVerificationApi.request({ email: usernameVal })
             setAuthError(undefined)
-            setSuccessMessage('Verification email has been sent successfully.')
+            setSuccessMessage('验证邮件已成功发送。')
             setShowResendButton(false)
         } catch (error) {
-            setAuthError(error.response?.data?.message || 'Failed to send verification email.')
+            setAuthError(error.response?.data?.message || '发送验证邮件失败。')
         }
     }
 
     return (
         <>
             <MainCard maxWidth='sm'>
-                <Stack flexDirection='column' sx={{ width: '480px', gap: 3 }}>
+                <Stack flexDirection='column' sx={{ width: '100%', maxWidth: '480px', gap: 3 }}>
                     {successMessage && (
                         <Alert variant='filled' severity='success' onClose={() => setSuccessMessage('')}>
                             {successMessage}
@@ -198,26 +198,26 @@ const SignInPage = () => {
                     {showResendButton && (
                         <Stack sx={{ gap: 1 }}>
                             <Button variant='text' onClick={handleResendVerification}>
-                                Resend Verification Email
+                                重新发送验证邮件
                             </Button>
                         </Stack>
                     )}
                     <Stack sx={{ gap: 1 }}>
-                        <Typography variant='h1'>Sign In</Typography>
+                        <Typography variant='h1'>登录</Typography>
                         {isCloud && (
                             <Typography variant='body2' sx={{ color: theme.palette.grey[600] }}>
-                                Don&apos;t have an account?{' '}
+                                还没有账户？{' '}
                                 <Link style={{ color: `${theme.palette.primary.main}` }} to='/register'>
-                                    Sign up for free
+                                    免费注册
                                 </Link>
                                 .
                             </Typography>
                         )}
                         {isEnterpriseLicensed && (
                             <Typography variant='body2' sx={{ color: theme.palette.grey[600] }}>
-                                Have an invite code?{' '}
+                                有邀请码？{' '}
                                 <Link style={{ color: `${theme.palette.primary.main}` }} to='/register'>
-                                    Sign up for an account
+                                    注册账户
                                 </Link>
                                 .
                             </Typography>
@@ -228,7 +228,7 @@ const SignInPage = () => {
                             <Box sx={{ p: 0 }}>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Email<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        邮箱<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <div style={{ flexGrow: 1 }}></div>
                                 </div>
@@ -242,14 +242,14 @@ const SignInPage = () => {
                             <Box sx={{ p: 0 }}>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Password<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        密码<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <div style={{ flexGrow: 1 }}></div>
                                 </div>
                                 <Input inputParam={passwordInput} onChange={(newValue) => setPasswordVal(newValue)} value={passwordVal} />
                                 <Typography variant='body2' sx={{ color: theme.palette.grey[600], mt: 1, textAlign: 'right' }}>
                                     <Link style={{ color: theme.palette.primary.main }} to='/forgot-password'>
-                                        Forgot password?
+                                        忘记密码？
                                     </Link>
                                 </Typography>
                             </Box>
@@ -259,9 +259,11 @@ const SignInPage = () => {
                                 style={{ borderRadius: 12, height: 40, marginRight: 5 }}
                                 type='submit'
                             >
-                                Login
+                                登录
                             </LoadingButton>
-                            {configuredSsoProviders && configuredSsoProviders.length > 0 && <Divider sx={{ width: '100%' }}>OR</Divider>}
+                            {configuredSsoProviders && configuredSsoProviders.length > 0 && (
+                                <Divider sx={{ width: '100%' }}>或使用</Divider>
+                            )}
                             {configuredSsoProviders &&
                                 configuredSsoProviders.map(
                                     (ssoProvider) =>
@@ -278,7 +280,7 @@ const SignInPage = () => {
                                                     </Icon>
                                                 }
                                             >
-                                                Sign In With Microsoft
+                                                使用 Microsoft 登录
                                             </Button>
                                         )
                                 )}
@@ -297,7 +299,7 @@ const SignInPage = () => {
                                                     </Icon>
                                                 }
                                             >
-                                                Sign In With Google
+                                                使用 Google 登录
                                             </Button>
                                         )
                                 )}
@@ -316,7 +318,7 @@ const SignInPage = () => {
                                                     </Icon>
                                                 }
                                             >
-                                                Sign In With Auth0 by Okta
+                                                使用 Auth0 登录
                                             </Button>
                                         )
                                 )}
@@ -335,7 +337,7 @@ const SignInPage = () => {
                                                     </Icon>
                                                 }
                                             >
-                                                Sign In With Github
+                                                使用 Github 登录
                                             </Button>
                                         )
                                 )}
