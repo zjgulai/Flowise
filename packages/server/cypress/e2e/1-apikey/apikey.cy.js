@@ -1,49 +1,53 @@
-/*
-* TODO: Disabling for now as we need to enable login first
-*
-describe('E2E suite for api/v1/apikey API endpoint', () => {
+describe('authenticated API key management', () => {
+    const runId = String(Cypress.env('runId')).slice(0, 8)
+    const keyName = `e2e-key-${runId}`
+    const updatedKeyName = `${keyName}-updated`
+
     beforeEach(() => {
-        cy.visit('http://localhost:3000/apikey')
+        cy.loginAsLocalOwner()
     })
 
-    // DEFAULT TEST ON PAGE LOAD
-    it('displays 1 api key by default', () => {
-        cy.get('table.MuiTable-root tbody tr').should('have.length', 1)
-        cy.get('table.MuiTable-root tbody tr td').first().should('have.text', 'DefaultKey')
-    })
+    it('creates, renames, and deletes an API key without revealing it', () => {
+        cy.intercept('GET', '**/api/v1/apikey*').as('loadApiKeys')
+        cy.visit('/apikey')
+        cy.wait('@loadApiKeys').its('response.statusCode').should('eq', 200)
+        cy.contains('暂无 API 密钥').should('be.visible')
 
-    // CREATE
-    it('can add new api key', () => {
-        const newApiKeyItem = 'MafiKey'
+        cy.intercept('POST', '**/api/v1/apikey').as('createApiKey')
         cy.get('#btn_createApiKey').click()
-        cy.get('#keyName').type(`${newApiKeyItem}`)
-        cy.get('#btn_confirmAddingApiKey').click()
-        cy.get('table.MuiTable-root tbody tr').should('have.length', 2)
-        cy.get('table.MuiTable-root tbody tr').last().find('td').first().should('have.text', newApiKeyItem)
-    })
+        cy.get('#keyName').type(keyName)
+        cy.contains('.permission-category h3', 'CHATFLOWS')
+            .parents('.permission-category')
+            .first()
+            .find('input[type="checkbox"]')
+            .first()
+            .check()
+        cy.get('#btn_confirmAddingApiKey').should('not.be.disabled').click()
+        cy.wait('@createApiKey').its('response.statusCode').should('eq', 200)
 
-    // READ
-    it('can retrieve all api keys', () => {
-        cy.get('table.MuiTable-root tbody tr').should('have.length', 2)
-        cy.get('table.MuiTable-root tbody tr').first().find('td').first().should('have.text', 'DefaultKey')
-        cy.get('table.MuiTable-root tbody tr').last().find('td').first().should('have.text', 'MafiKey')
-    })
+        cy.contains('table tbody tr', keyName)
+            .should('have.length', 1)
+            .within(() => {
+                cy.get('button[title="显示"]').should('exist')
+                cy.get('button[title="编辑"]').click()
+            })
 
-    // UPDATE
-    it('can update new api key', () => {
-        const UpdatedApiKeyItem = 'UpsertCloudKey'
-        cy.get('table.MuiTable-root tbody tr').last().find('td').eq(4).find('button').click()
-        cy.get('#keyName').clear().type(`${UpdatedApiKeyItem}`)
-        cy.get('#btn_confirmEditingApiKey').click()
-        cy.get('table.MuiTable-root tbody tr').should('have.length', 2)
-        cy.get('table.MuiTable-root tbody tr').last().find('td').first().should('have.text', UpdatedApiKeyItem)
-    })
+        cy.intercept('PUT', '**/api/v1/apikey/*').as('updateApiKey')
+        cy.get('#keyName').clear().type(updatedKeyName)
+        cy.get('#btn_confirmEditingApiKey').should('not.be.disabled').click()
+        cy.wait('@updateApiKey').its('response.statusCode').should('eq', 200)
+        cy.contains('table tbody tr', updatedKeyName).should('have.length', 1).find('td').first().should('have.text', updatedKeyName)
 
-    // DELETE
-    it('can delete new api key', () => {
-        cy.get('table.MuiTable-root tbody tr').last().find('td').eq(5).find('button').click()
-        cy.get('.MuiDialog-scrollPaper .MuiDialogActions-spacing button').last().click()
-        cy.get('table.MuiTable-root tbody tr').should('have.length', 1)
+        cy.intercept('DELETE', '**/api/v1/apikey/*').as('deleteApiKey')
+        cy.contains('table tbody tr', updatedKeyName).within(() => {
+            cy.get('button[title="删除"]').click()
+        })
+        cy.get('[role="dialog"]')
+            .should('be.visible')
+            .within(() => {
+                cy.contains('button', 'Delete').click()
+            })
+        cy.wait('@deleteApiKey').its('response.statusCode').should('eq', 200)
+        cy.contains('暂无 API 密钥').should('be.visible')
     })
 })
-*/

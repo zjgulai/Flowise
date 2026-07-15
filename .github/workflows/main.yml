@@ -54,6 +54,20 @@ jobs:
                   runTests: false
             - name: Cypress test
               uses: cypress-io/github-action@v7.1.5
+              env:
+                  APP_URL: http://127.0.0.1:3000
+                  CORS_ORIGINS: http://127.0.0.1:3000
+                  DATABASE_PATH: ${{ runner.temp }}/flowise-e2e
+                  DATABASE_TYPE: sqlite
+                  DISABLE_FLOWISE_TELEMETRY: 'true'
+                  FLOWISE_E2E_ARTIFACTS_PATH: ${{ runner.temp }}/flowise-cypress-artifacts
+                  FLOWISE_E2E_BASE_URL: http://127.0.0.1:3000
+                  FLOWISE_E2E_ISOLATED: '1'
+                  FLOWISE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+                  MODE: main
+                  OFFLINE: 'true'
+                  POSTHOG_PUBLIC_API_KEY: ''
+                  SECRETKEY_PATH: ${{ runner.temp }}/flowise-e2e
               with:
                   install: false
                   working-directory: packages/server
