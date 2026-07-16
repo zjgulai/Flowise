@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { describe, it } from 'node:test'
 
 import {
@@ -15,6 +17,16 @@ import {
 } from './local-authenticated-e2e.mjs'
 
 const approvedSpecs = ['cypress/e2e/1-apikey/apikey.cy.js', 'cypress/e2e/2-variables/variables.cy.js']
+
+const processGroupExists = (processGroupId) => {
+    try {
+        process.kill(-processGroupId, 0)
+        return true
+    } catch (error) {
+        if (error?.code === 'ESRCH') return false
+        throw error
+    }
+}
 
 describe('assertLoopbackHttpUrl', () => {
     it('accepts HTTP loopback origins', () => {
@@ -66,6 +78,30 @@ describe('toExitCode', () => {
 })
 
 describe('cleanup failure handling', () => {
+    it('terminates descendants after the detached wrapper has already exited', { skip: process.platform === 'win32' }, async () => {
+        const wrapper = spawn(
+            process.execPath,
+            [
+                '-e',
+                "const { spawn } = require('node:child_process'); const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' }); child.unref()"
+            ],
+            { detached: true, stdio: 'ignore' }
+        )
+
+        await once(wrapper, 'close')
+        assert.notEqual(wrapper.exitCode, null)
+        assert.equal(processGroupExists(wrapper.pid), true)
+
+        try {
+            const failures = await cleanupRunResources({ cypressChild: wrapper })
+
+            assert.deepEqual(failures, [])
+            assert.equal(processGroupExists(wrapper.pid), false)
+        } finally {
+            if (processGroupExists(wrapper.pid)) process.kill(-wrapper.pid, 'SIGKILL')
+        }
+    })
+
     it('attempts every owned cleanup and forces a failed final exit', async () => {
         const calls = []
         const cypressChild = { name: 'cypress' }

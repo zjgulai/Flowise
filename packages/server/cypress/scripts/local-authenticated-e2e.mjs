@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { once } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import os from 'node:os'
@@ -211,14 +210,37 @@ export const waitForPing = async (baseUrl, timeoutMilliseconds = STARTUP_TIMEOUT
     throw new RunnerFailure('server-startup-timeout')
 }
 
+const processGroupExists = (processGroupId) => {
+    try {
+        process.kill(-processGroupId, 0)
+        return true
+    } catch (error) {
+        if (error?.code === 'ESRCH') return false
+        if (error?.code === 'EPERM') return true
+        throw error
+    }
+}
+
+const waitForProcessGroupExit = async (processGroupId, timeoutMilliseconds = SHUTDOWN_TIMEOUT_MS) => {
+    const deadline = Date.now() + timeoutMilliseconds
+    while (Date.now() < deadline) {
+        if (!processGroupExists(processGroupId)) return true
+        await delay(50)
+    }
+    return !processGroupExists(processGroupId)
+}
+
 const terminateChildTree = async (child) => {
-    if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return
+    if (!child?.pid) return
 
     if (process.platform === 'win32') {
+        if (child.exitCode !== null || child.signalCode !== null) return
         const taskkill = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
         assertCleanupProcessSucceeded(await createChildResult(taskkill))
         return
     }
+
+    if (!processGroupExists(child.pid)) return
 
     try {
         process.kill(-child.pid, 'SIGTERM')
@@ -227,15 +249,13 @@ const terminateChildTree = async (child) => {
         return
     }
 
-    await Promise.race([once(child, 'close'), delay(SHUTDOWN_TIMEOUT_MS)])
-    if (child.exitCode === null && child.signalCode === null) {
+    if (!(await waitForProcessGroupExit(child.pid))) {
         try {
             process.kill(-child.pid, 'SIGKILL')
         } catch (error) {
             if (error?.code !== 'ESRCH') throw error
         }
-        await Promise.race([once(child, 'close'), delay(SHUTDOWN_TIMEOUT_MS)])
-        if (child.exitCode === null && child.signalCode === null) throw new Error('Cleanup process failed')
+        if (!(await waitForProcessGroupExit(child.pid))) throw new Error('Cleanup process failed')
     }
 }
 
