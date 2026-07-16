@@ -7,7 +7,23 @@ import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { emitEvent, TelemetryEventCategory, TelemetryEventResult } from '../../utils/telemetry'
 import { Organization } from '../database/entities/organization.entity'
 import { User } from '../database/entities/user.entity'
+import { resolveSecureCookie } from '../middleware/passport/authSecurityPolicy'
 import { AccountDTO, AccountService } from '../services/account.service'
+
+const AUTH_COOKIE_NAMES = ['connect.sid', 'token', 'refreshToken'] as const
+
+function clearAuthenticationCookies(res: Response): void {
+    const cookieOptions = {
+        path: '/',
+        httpOnly: true,
+        secure: resolveSecureCookie(),
+        sameSite: 'lax' as const
+    }
+
+    for (const cookieName of AUTH_COOKIE_NAMES) {
+        res.clearCookie(cookieName, cookieOptions)
+    }
+}
 
 export class AccountController {
     public async register(req: Request, res: Response, next: NextFunction) {
@@ -92,25 +108,22 @@ export class AccountController {
 
     public async logout(req: Request, res: Response, next: NextFunction) {
         try {
+            clearAuthenticationCookies(res)
             if (req.user) {
                 const accountService = new AccountService()
                 await accountService.logout(req.user)
                 if (req.isAuthenticated()) {
-                    req.logout((err) => {
-                        if (err) {
-                            return res.status(500).json({ message: 'Logout failed' })
-                        }
-                        req.session.destroy((err) => {
-                            if (err) {
-                                return res.status(500).json({ message: 'Failed to destroy session' })
-                            }
-                        })
+                    const logoutError = await new Promise<unknown>((resolve) => {
+                        req.logout((error) => resolve(error))
                     })
+                    if (logoutError) return res.status(500).json({ message: 'Logout failed' })
+
+                    const sessionDestroyError = await new Promise<unknown>((resolve) => {
+                        req.session.destroy((error) => resolve(error))
+                    })
+                    if (sessionDestroyError) return res.status(500).json({ message: 'Failed to destroy session' })
                 } else {
                     // For JWT-based users (owner, org_admin)
-                    res.clearCookie('connect.sid') // Clear the session cookie
-                    res.clearCookie('token') // Clear the JWT cookie
-                    res.clearCookie('refreshToken') // Clear the JWT cookie
                     return res.redirect('/login') // Redirect to the login page
                 }
             }
