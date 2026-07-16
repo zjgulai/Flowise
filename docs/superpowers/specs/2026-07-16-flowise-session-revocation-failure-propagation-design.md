@@ -1,10 +1,10 @@
 ---
 title: Flowise session revocation failure propagation design
 date: 2026-07-16
-status: approved_design_pending_written_spec_review
+status: written_spec_approved_for_local_implementation
 local_source_baseline: 6baadcdcacb6d949814d63180d31f87ae61d312e
 production_baseline: 61f248f499a1d5128d0db4c48314baf42bcec5ac
-authorization: owner_approved_design_option_a
+authorization: owner_approved_design_option_a_and_written_spec
 evidence_grade: L1_source_and_exact_dependency_contract
 production_write: false
 database_write: false

@@ -176,6 +176,8 @@ export class UserService {
                 newUserData.tokenExpiry = undefined
             }
 
+            const passwordChanged = !!(newUserData.oldPassword && newUserData.newPassword && newUserData.confirmPassword)
+
             const safePatch: Partial<User> = {
                 createdBy: oldUserData.createdBy // always preserve from DB
             }
@@ -193,18 +195,21 @@ export class UserService {
             }
 
             updatedUser = queryRunner.manager.merge(User, oldUserData, safePatch)
+            if (passwordChanged) {
+                await destroyAllSessionsForUser(updatedUser.id as string)
+            }
+
             await queryRunner.startTransaction()
             await this.saveUser(updatedUser, queryRunner)
             await queryRunner.commitTransaction()
 
-            const passwordChanged = !!(newUserData.oldPassword && newUserData.newPassword && newUserData.confirmPassword)
             const emailChanged = !!(updatedUser.email && updatedUser.email !== currentEmail)
 
             if (emailChanged && updatedUser.email && options?.onEmailChanged) {
                 await options.onEmailChanged(updatedUser.id as string, updatedUser.email)
             }
 
-            if (passwordChanged || emailChanged) {
+            if (emailChanged && !passwordChanged) {
                 await destroyAllSessionsForUser(updatedUser.id as string)
             }
         } catch (error) {

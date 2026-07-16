@@ -688,12 +688,11 @@ export class AccountService {
             data.user.tokenExpiry = null
             data.user.status = UserStatus.ACTIVE
 
+            await destroyAllSessionsForUser(user.id as string)
+
             await queryRunner.startTransaction()
             data.user = await this.userService.saveUser(data.user, queryRunner)
             await queryRunner.commitTransaction()
-
-            // Invalidate all sessions for this user after password reset
-            await destroyAllSessionsForUser(user.id as string)
         } catch (error) {
             if (queryRunner && queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
             throw error

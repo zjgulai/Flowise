@@ -30,7 +30,7 @@ import {
 import { decryptToken, encryptToken, generateSafeCopy } from '../../utils/tempTokenUtils'
 import { getAuthStrategy } from './AuthStrategy'
 import { enforceAuthResolvePostOnly, resolveSecureCookie } from './authSecurityPolicy'
-import { initializeDBClientAndStore, initializeRedisClientAndStore } from './SessionPersistance'
+import { initializeDBClientAndStore, initializeMemoryStore, initializeRedisClientAndStore } from './SessionPersistance'
 
 const localStrategy = require('passport-local').Strategy
 
@@ -60,8 +60,12 @@ const _initializePassportMiddleware = async (app: express.Application, secureCoo
             const dbSessionStore = initializeDBClientAndStore()
             if (dbSessionStore) {
                 options.store = dbSessionStore
+            } else {
+                options.store = initializeMemoryStore()
             }
         }
+    } else {
+        options.store = initializeMemoryStore()
     }
 
     app.use(session(options))
