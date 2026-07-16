@@ -37,6 +37,8 @@ merge: false
 -   expired row 是否仍物理存在；
 -   prune/reaper 是否完成最终清理。
 
+该 store 的 `touch` 会在 session request 后把 DB `expire` 重新推进一个 TTL，因此 production DB TTL 是 sliding server-side expiry；`rolling=false` 只表示响应不持续重发 browser cookie，并不关闭 store touch。时间加速后必须保持 D context 完全 idle，直到唯一一次最终 protected probe，避免验收请求自身先续期。
+
 普通 logout 的设计语义是 current-session termination。`destroyAllSessionsForUser` 只由 password reset 或 authenticated password/email security change 调用。双设备测试的正确成功条件不是“普通 logout 后所有设备都 401”，而是 current-session isolation 与 security-event global revocation 各自符合合同。
 
 ## 方案比较
@@ -70,17 +72,17 @@ merge: false
 
 使用唯一 `.invalid` synthetic owner、advisory lock、root-only journal 和 A/B/C/D 四个独立 Chrome contexts：
 
-| Phase              | 动作                                                                   | Browser/API 判据                                                   | DB 判据                                                       |
-| ------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------- |
-| provision          | 创建 synthetic owner/membership                                        | 无认证 Cookie                                                      | session rows=`0`                                              |
-| dual_login         | A、B 分别登录                                                          | A=`200`、B=`200`；各自 auth cookies=`3`                            | active session rows=`2`                                       |
-| current_logout     | A 执行 UI logout                                                       | A protected=`401`、A cookies=`0`；B protected=`200`、B cookies=`3` | active rows=`1`                                               |
-| second_pair        | C 使用旧密码登录                                                       | B=`200`、C=`200`                                                   | active rows=`2`                                               |
-| global_revoke      | B 通过 authenticated password-change path 修改 synthetic password      | password update=`200`；B/C protected=`401`；旧密码 login=`401`     | active rows=`0`                                               |
-| relogin            | D 使用新密码登录                                                       | D protected=`200`；auth cookies=`3`                                | active rows=`1`                                               |
-| expiry_baseline    | 不触碰 D session，仅只读 DB/JWT metadata                               | 只输出 access/refresh `exp-iat` delta，不输出 token                | DB expiry delta 接近 exact store 1 天默认值                   |
-| accelerated_expiry | 仅把 D 对应 synthetic row 的 `expire` 调整为 `now + 5s`，随后保持 idle | 超时后 D protected=`401`，JWT 本身仍在有效期                       | active rows=`0`；expired physical row 可暂存至 prune/reaper   |
-| cleanup            | finally reaper + 独立第二次 reaper                                     | credential files absent                                            | 全部 scoped residue=`0`，baseline/fingerprint/migrations 恢复 |
+| Phase              | 动作                                                                                | Browser/API 判据                                                   | DB 判据                                                       |
+| ------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------- |
+| provision          | 创建 synthetic owner/membership                                                     | 无认证 Cookie                                                      | session rows=`0`                                              |
+| dual_login         | A、B 分别登录                                                                       | A=`200`、B=`200`；各自 auth cookies=`3`                            | active session rows=`2`                                       |
+| current_logout     | A 执行 UI logout                                                                    | A protected=`401`、A cookies=`0`；B protected=`200`、B cookies=`3` | active rows=`1`                                               |
+| second_pair        | C 使用旧密码登录                                                                    | B=`200`、C=`200`                                                   | active rows=`2`                                               |
+| global_revoke      | B 通过 authenticated password-change path 修改 synthetic password                   | password update=`200`；B/C protected=`401`；旧密码 login=`401`     | active rows=`0`                                               |
+| relogin            | D 使用新密码登录                                                                    | D protected=`200`；auth cookies=`3`                                | active rows=`1`                                               |
+| expiry_baseline    | 不触碰 D session，仅只读 DB/JWT metadata                                            | 只输出 access/refresh `exp-iat` delta，不输出 token                | DB expiry delta 接近 exact store 1 天默认值                   |
+| accelerated_expiry | 仅把 D 对应 synthetic row 的 `expire` 调整为 `now + 5s`，随后保持 context 完全 idle | 超时后执行唯一一次 D protected probe=`401`，JWT 本身仍在有效期     | active rows=`0`；expired physical row 可暂存至 prune/reaper   |
+| cleanup            | finally reaper + 独立第二次 reaper                                                  | credential files absent                                            | 全部 scoped residue=`0`，baseline/fingerprint/migrations 恢复 |
 
 所有密码只存在于 `0600` credential file 和 Playwright 进程内存中，不通过 CLI argv、日志、截图、journal 或状态 JSON 输出。Session ID 与 JWT 原文也不得输出；只允许记录 count、布尔值和 expiry delta。
 
