@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 
 import {
+    APPROVED_SPECS,
     assertCleanupProcessSucceeded,
     assertLoopbackHttpUrl,
     cleanupRunResources,
@@ -16,7 +18,8 @@ import {
     waitForPing
 } from './local-authenticated-e2e.mjs'
 
-const approvedSpecs = ['cypress/e2e/1-apikey/apikey.cy.js', 'cypress/e2e/2-variables/variables.cy.js']
+const approvedSpecs = APPROVED_SPECS
+const chatflowContinuitySpec = 'cypress/e2e/3-chatflows/chatflow-continuity.cy.js'
 
 const processGroupExists = (processGroupId) => {
     try {
@@ -52,7 +55,15 @@ describe('isOwnedTempPath', () => {
 })
 
 describe('parseRunnerArgs', () => {
-    it('defaults to both approved specifications', () => {
+    it('approves the isolated Chatflow continuity specification', () => {
+        assert.ok(APPROVED_SPECS.includes(chatflowContinuitySpec))
+        assert.deepEqual(parseRunnerArgs(['--spec', chatflowContinuitySpec], APPROVED_SPECS), {
+            browser: undefined,
+            specs: [chatflowContinuitySpec]
+        })
+    })
+
+    it('defaults to all approved specifications', () => {
         assert.deepEqual(parseRunnerArgs([], approvedSpecs), { browser: undefined, specs: approvedSpecs })
     })
 
@@ -66,6 +77,22 @@ describe('parseRunnerArgs', () => {
     it('rejects unknown flags and specs outside the approved set', () => {
         assert.throws(() => parseRunnerArgs(['--headed'], approvedSpecs), /Unsupported argument/)
         assert.throws(() => parseRunnerArgs(['--spec', '../other.cy.js'], approvedSpecs), /approved authenticated spec/)
+    })
+})
+
+describe('Chatflow continuity specification contract', () => {
+    it('keeps the lifecycle run-scoped, loopback-only, provider-guarded, and failure-cleanable', async () => {
+        const source = await readFile(new URL('../e2e/3-chatflows/chatflow-continuity.cy.js', import.meta.url), 'utf8')
+
+        assert.match(source, /Cypress\.config\('baseUrl'\)/)
+        assert.match(source, /Cypress\.env\('runId'\)/)
+        assert.match(source, /afterEach\(/)
+        for (const lifecycleAlias of ['createChatflow', 'reopenChatflow', 'copyChatflow', 'deleteChatflow']) {
+            assert.match(source, new RegExp(lifecycleAlias))
+        }
+        for (const forbiddenPath of ['prediction', 'chatmessage', 'vector', 'assistant']) {
+            assert.match(source, new RegExp(forbiddenPath))
+        }
     })
 })
 

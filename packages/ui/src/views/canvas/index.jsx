@@ -274,7 +274,6 @@ const Canvas = () => {
     const onDrop = useCallback(
         (event) => {
             event.preventDefault()
-            const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect()
             let nodeData = event.dataTransfer.getData('application/reactflow')
 
             // check if the dropped element is valid
@@ -284,9 +283,9 @@ const Canvas = () => {
 
             nodeData = JSON.parse(nodeData)
 
-            const position = reactFlowInstance.project({
-                x: event.clientX - reactFlowBounds.left - 100,
-                y: event.clientY - reactFlowBounds.top - 50
+            const position = reactFlowInstance.screenToFlowPosition({
+                x: event.clientX - 100,
+                y: event.clientY - 50
             })
 
             const newNodeId = getUniqueNodeId(nodeData, reactFlowInstance.getNodes())
