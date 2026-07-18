@@ -5,7 +5,7 @@ import { createContext, useContext, useEffect, useState } from 'react'
 const ConfigContext = createContext()
 
 export const ConfigProvider = ({ children }) => {
-    const [config, setConfig] = useState({})
+    const [config, setConfig] = useState({ PUBLIC_LOGIN_ENABLED: false })
     const [loading, setLoading] = useState(true)
     const [isEnterpriseLicensed, setEnterpriseLicensed] = useState(false)
     const [isCloud, setCloudLicensed] = useState(false)

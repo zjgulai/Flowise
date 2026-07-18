@@ -4,6 +4,31 @@ import { resolve } from 'node:path'
 const read = (relativePath) => readFileSync(resolve(__dirname, relativePath), 'utf8')
 
 describe('production UI safety contracts', () => {
+    it('gates both public login routes and preserves the access-restricted route', () => {
+        const source = read('./AuthRoutes.jsx')
+        const loginRoute = source.match(/path: '\/login',[\s\S]*?\n\s*},/)?.[0] ?? ''
+        const signInRoute = source.match(/path: '\/signin',[\s\S]*?\n\s*},/)?.[0] ?? ''
+
+        expect(loginRoute).toContain('<PublicLoginRoute>')
+        expect(signInRoute).toContain('<PublicLoginRoute>')
+        expect(source).toContain("path: '/access-restricted'")
+    })
+
+    it('redirects unauthenticated protected routes to the configured public access boundary', () => {
+        const source = read('./RequireAuth.jsx')
+        expect(source).toContain("config.PUBLIC_LOGIN_ENABLED === false ? '/access-restricted' : '/login'")
+    })
+
+    it('does not render the login resolver at root when public login is disabled', () => {
+        const source = read('./DefaultRedirect.jsx')
+        expect(source).toContain('config.PUBLIC_LOGIN_ENABLED === false')
+        expect(source).toContain("<Navigate to='/access-restricted' replace />")
+    })
+
+    it('fails closed when platform settings cannot be loaded', () => {
+        expect(read('../store/context/ConfigContext.jsx')).toContain('useState({ PUBLIC_LOGIN_ENABLED: false })')
+    })
+
     it('protects the account route with RequireAuth', () => {
         const source = read('./MainRoutes.jsx')
         const accountRoute = source.match(/path: '\/account',[\s\S]*?\n\s*},/)?.[0] ?? ''

@@ -37,6 +37,7 @@ services:
             - DATABASE_PATH=/usr/src/flowise/.flowise
 
             # 认证配置
+            - PUBLIC_LOGIN_ENABLED=${PUBLIC_LOGIN_ENABLED:-false}
             - SECURE_COOKIES=${SECURE_COOKIES:-true}
             - JWT_AUTH_TOKEN_SECRET=${JWT_AUTH_TOKEN_SECRET}
             - JWT_REFRESH_TOKEN_SECRET=${JWT_REFRESH_TOKEN_SECRET}
