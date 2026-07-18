@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 // material-ui
-import { Stack, Typography, Box, useTheme, CircularProgress } from '@mui/material'
+import { Stack, Typography, Box, useTheme, CircularProgress, Button } from '@mui/material'
 
 // project imports
 import MainCard from '@/ui-component/cards/MainCard'
@@ -44,7 +44,7 @@ const VerifyEmail = () => {
     useEffect(() => {
         if (accountVerifyApi.error) {
             setLoading(false)
-            setVerificationError(accountVerifyApi.error)
+            setVerificationError('验证链接无效或已过期。')
             setVerificationSuccess(false)
         }
     }, [accountVerifyApi.error])
@@ -56,6 +56,8 @@ const VerifyEmail = () => {
             setVerificationError('')
             setVerificationSuccess(false)
             accountVerifyApi.request({ user: { tempToken: token } })
+        } else {
+            setVerificationError('验证链接缺少令牌。')
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
@@ -73,7 +75,7 @@ const VerifyEmail = () => {
                                         height: '48px'
                                     }}
                                 />
-                                <Typography variant='h1'>Verifying Email...</Typography>
+                                <Typography variant='h1'>正在验证邮箱…</Typography>
                             </>
                         )}
                         {verificationError && (
@@ -92,7 +94,13 @@ const VerifyEmail = () => {
                                 >
                                     <IconX />
                                 </Box>
-                                <Typography variant='h1'>Verification Failed.</Typography>
+                                <Typography variant='h1'>邮箱验证失败</Typography>
+                                <Typography variant='body2' color='text.secondary' sx={{ textAlign: 'center' }}>
+                                    {verificationError}
+                                </Typography>
+                                <Button variant='contained' onClick={() => navigate('/signin', { replace: true })}>
+                                    返回登录
+                                </Button>
                             </>
                         )}
                         {verificationSuccess && (
@@ -111,7 +119,7 @@ const VerifyEmail = () => {
                                 >
                                     <IconCheck />
                                 </Box>
-                                <Typography variant='h1'>Email Verified Successfully.</Typography>
+                                <Typography variant='h1'>邮箱验证成功</Typography>
                             </>
                         )}
                     </Stack>

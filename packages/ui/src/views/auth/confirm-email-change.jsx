@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 // material-ui
-import { Stack, Typography, Box, useTheme, CircularProgress } from '@mui/material'
+import { Stack, Typography, Box, useTheme, CircularProgress, Button } from '@mui/material'
 
 // project imports
 import MainCard from '@/ui-component/cards/MainCard'
@@ -42,7 +42,7 @@ const ConfirmEmailChange = () => {
     useEffect(() => {
         if (confirmApi.error) {
             setLoading(false)
-            setErrorMessage(confirmApi.error)
+            setErrorMessage('邮箱变更链接无效或已过期。')
             setSuccess(false)
         }
     }, [confirmApi.error])
@@ -54,6 +54,8 @@ const ConfirmEmailChange = () => {
             setErrorMessage('')
             setSuccess(false)
             confirmApi.request({ user: { tempToken: token } })
+        } else {
+            setErrorMessage('邮箱变更链接缺少令牌。')
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
@@ -71,7 +73,7 @@ const ConfirmEmailChange = () => {
                                         height: '48px'
                                     }}
                                 />
-                                <Typography variant='h1'>Confirming email change...</Typography>
+                                <Typography variant='h1'>正在确认邮箱变更…</Typography>
                             </>
                         )}
                         {errorMessage && (
@@ -90,10 +92,13 @@ const ConfirmEmailChange = () => {
                                 >
                                     <IconX />
                                 </Box>
-                                <Typography variant='h1'>Confirmation failed.</Typography>
+                                <Typography variant='h1'>邮箱变更失败</Typography>
                                 <Typography variant='body2' color='textSecondary' sx={{ textAlign: 'center' }}>
                                     {errorMessage}
                                 </Typography>
+                                <Button variant='contained' onClick={() => navigate('/signin', { replace: true })}>
+                                    返回登录
+                                </Button>
                             </>
                         )}
                         {success && (
@@ -112,9 +117,9 @@ const ConfirmEmailChange = () => {
                                 >
                                     <IconCheck />
                                 </Box>
-                                <Typography variant='h1'>Email updated successfully.</Typography>
+                                <Typography variant='h1'>邮箱变更成功</Typography>
                                 <Typography variant='body2' color='textSecondary' sx={{ textAlign: 'center' }}>
-                                    Please sign in with your new email address.
+                                    请使用新邮箱地址登录。
                                 </Typography>
                             </>
                         )}

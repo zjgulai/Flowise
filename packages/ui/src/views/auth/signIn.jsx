@@ -24,6 +24,7 @@ import ssoApi from '@/api/sso'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { parseSignInError } from './signInError'
 
 // store
 import { loginSuccess, logoutSuccess } from '@/store/reducers/authSlice'
@@ -108,9 +109,8 @@ const SignInPage = () => {
         // Parse the "user" query parameter from the URL
         const queryParams = new URLSearchParams(location.search)
         const errorData = queryParams.get('error')
-        if (!errorData) return
-        const parsedErrorData = JSON.parse(decodeURIComponent(errorData))
-        setAuthError(parsedErrorData.message)
+        const parsedError = parseSignInError(errorData)
+        if (parsedError) setAuthError(parsedError)
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location.search])
 

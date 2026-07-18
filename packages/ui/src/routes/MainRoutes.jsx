@@ -290,7 +290,11 @@ const MainRoutes = {
         // },
         {
             path: '/account',
-            element: <Account />
+            element: (
+                <RequireAuth>
+                    <Account />
+                </RequireAuth>
+            )
         },
         {
             path: '/users',

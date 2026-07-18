@@ -97,8 +97,11 @@ const OrganizationSetupPage = () => {
     const [successMsg, setSuccessMsg] = useState(undefined)
 
     const loginApi = useApi(authApi.login)
+    const resolveLoginApi = useApi(authApi.resolveLogin)
     const registerAccountApi = useApi(accountApi.registerAccount)
     const navigate = useNavigate()
+    const [setupAllowed, setSetupAllowed] = useState(false)
+    const [setupCheckFailed, setSetupCheckFailed] = useState(false)
 
     const getDefaultProvidersApi = useApi(loginMethodApi.getDefaultLoginMethods)
     const [configuredSsoProviders, setConfiguredSsoProviders] = useState([])
@@ -201,6 +204,43 @@ const OrganizationSetupPage = () => {
 
     const signInWithSSO = (ssoProvider) => {
         window.location.href = `/api/v1/${ssoProvider}/login`
+    }
+
+    useEffect(() => {
+        resolveLoginApi.request({})
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+    useEffect(() => {
+        const redirectUrl = resolveLoginApi.data?.redirectUrl
+        if (!redirectUrl) return
+        if (redirectUrl === '/organization-setup') {
+            setSetupAllowed(true)
+            return
+        }
+        navigate(redirectUrl, { replace: true })
+    }, [navigate, resolveLoginApi.data])
+
+    useEffect(() => {
+        if (resolveLoginApi.error) setSetupCheckFailed(true)
+    }, [resolveLoginApi.error])
+
+    if (!setupAllowed) {
+        return (
+            <Box sx={{ width: '100%', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 3 }}>
+                {setupCheckFailed ? (
+                    <Stack sx={{ maxWidth: 480, alignItems: 'center', gap: 2 }}>
+                        <Typography variant='h2'>无法确认账户设置状态</Typography>
+                        <Typography color='text.secondary'>请返回登录页后重试。</Typography>
+                        <StyledButton variant='contained' onClick={() => navigate('/signin', { replace: true })}>
+                            返回登录
+                        </StyledButton>
+                    </Stack>
+                ) : (
+                    <BackdropLoader open={true} />
+                )}
+            </Box>
+        )
     }
 
     return (
