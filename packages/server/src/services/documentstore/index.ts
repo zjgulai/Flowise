@@ -309,6 +309,7 @@ const getDocumentStoreFileChunks = async (
         }
         return response
     } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
         throw new InternalFlowiseError(
             StatusCodes.INTERNAL_SERVER_ERROR,
             `Error: documentStoreServices.getDocumentStoreFileChunks - ${getErrorMessage(error)}`
