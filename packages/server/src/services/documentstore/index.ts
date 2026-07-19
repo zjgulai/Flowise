@@ -2203,6 +2203,7 @@ const generateDocStoreToolDesc = async (docStoreId: string, selectedChatModel: I
             `Error: documentStoreServices.generateDocStoreToolDesc - Error generating tool description`
         )
     } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
         throw new InternalFlowiseError(
             StatusCodes.INTERNAL_SERVER_ERROR,
             `Error: documentStoreServices.generateDocStoreToolDesc - ${getErrorMessage(error)}`

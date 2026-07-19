@@ -9,6 +9,7 @@ import { Box, Grid, Tooltip, Typography, useTheme } from '@mui/material'
 import MainCard from '@/ui-component/cards/MainCard'
 import MoreItemsTooltip from '../tooltip/MoreItemsTooltip'
 import ScheduleStatusBadge from '@/ui-component/extended/ScheduleStatusBadge'
+import NodeIconFallback from '@/assets/images/flowise_logo.png'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -34,6 +35,13 @@ const CardWrapper = styled(MainCard)(({ theme }) => ({
 const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
+    const cardIconSrc =
+        typeof data.iconSrc === 'string' && data.iconSrc.startsWith('/') && !data.iconSrc.startsWith('//') ? data.iconSrc : NodeIconFallback
+
+    const useNodeIconFallback = (event) => {
+        event.currentTarget.onerror = null
+        event.currentTarget.src = NodeIconFallback
+    }
 
     return (
         <CardWrapper content={false} onClick={onClick} sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }}>
@@ -49,7 +57,7 @@ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
                                 overflow: 'hidden'
                             }}
                         >
-                            {data.iconSrc && (
+                            {(data.iconSrc || !data.color) && (
                                 <div
                                     style={{
                                         width: 35,
@@ -58,7 +66,7 @@ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
                                         flexShrink: 0,
                                         marginRight: 10,
                                         borderRadius: '50%',
-                                        backgroundImage: `url(${data.iconSrc})`,
+                                        backgroundImage: `url(${cardIconSrc})`,
                                         backgroundSize: 'contain',
                                         backgroundRepeat: 'no-repeat',
                                         backgroundPosition: 'center center'
@@ -149,6 +157,7 @@ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
                                                         style={{ width: '100%', height: '100%', padding: 5, objectFit: 'contain' }}
                                                         alt=''
                                                         src={item.src}
+                                                        onError={useNodeIconFallback}
                                                     />
                                                 </Box>
                                             ) : (

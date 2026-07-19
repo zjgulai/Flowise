@@ -35,6 +35,24 @@ describe('production UI safety contracts', () => {
         expect(accountRoute).toContain('<RequireAuth')
     })
 
+    it('guards both marketplace detail routes before rendering location state', () => {
+        const routes = read('./CanvasRoutes.jsx')
+        const guard = read('./MarketplaceRouteGuard.jsx')
+
+        expect(routes.match(/<MarketplaceRouteGuard>/g)).toHaveLength(2)
+        expect(guard).toContain("<Navigate to='/marketplaces' replace />")
+        expect(guard).toContain('JSON.parse(state.flowData)')
+    })
+
+    it('uses a bundled fallback when a marketplace node icon cannot load', () => {
+        const source = read('../ui-component/cards/ItemCard.jsx')
+
+        expect(source).toContain('flowise_logo.png')
+        expect(source).toContain('onError=')
+        expect(source).toContain("data.iconSrc.startsWith('/')")
+        expect(source).toContain('data.iconSrc || !data.color')
+    })
+
     it('does not fetch the GitHub star count at runtime', () => {
         expect(read('../layout/MainLayout/Header/index.jsx')).not.toContain('api.github.com')
     })

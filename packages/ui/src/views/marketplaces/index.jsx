@@ -440,8 +440,11 @@ const Marketplace = () => {
                                 tIcons[flows[i].id].push(foundIcon)
                             } else {
                                 const imageSrc = `${baseURL}/api/v1/node-icon/${nodes[j].data.name}`
-                                if (!tImages[flows[i].id].includes(imageSrc)) {
-                                    tImages[flows[i].id].push(imageSrc)
+                                if (!tImages[flows[i].id].some((img) => img.imageSrc === imageSrc)) {
+                                    tImages[flows[i].id].push({
+                                        imageSrc,
+                                        label: nodes[j].data.name
+                                    })
                                 }
                             }
                         }
