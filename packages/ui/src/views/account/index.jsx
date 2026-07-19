@@ -55,6 +55,19 @@ const calculatePercentage = (count, total) => {
     return Math.min((count / total) * 100, 100)
 }
 
+const getAccountErrorMessage = (error) => {
+    const responseData = error?.response?.data
+    if (typeof responseData === 'string' && responseData.trim()) return responseData
+    if (responseData && typeof responseData === 'object') {
+        const responseMessage = responseData.message || responseData.error
+        if (typeof responseMessage === 'string' && responseMessage.trim()) return responseMessage
+    }
+    const status = error?.response?.status
+    if (status) return `服务请求失败（${status}）`
+    if (typeof error?.message === 'string' && error.message.trim()) return error.message
+    return '未知错误'
+}
+
 const AccountSettings = () => {
     const theme = useTheme()
     const dispatch = useDispatch()
@@ -67,6 +80,7 @@ const AccountSettings = () => {
     const { isCloud } = useConfig()
 
     const [isLoading, setLoading] = useState(true)
+    const [isSavingProfile, setIsSavingProfile] = useState(false)
     const [profileName, setProfileName] = useState('')
     const [email, setEmail] = useState('')
     const [oldPassword, setOldPassword] = useState('')
@@ -224,6 +238,8 @@ const AccountSettings = () => {
     }
 
     const saveProfileData = async () => {
+        if (isSavingProfile) return
+        setIsSavingProfile(true)
         try {
             const obj = {
                 id: currentUser.id,
@@ -235,8 +251,7 @@ const AccountSettings = () => {
             if (payload?.user) {
                 store.dispatch(userProfileUpdated(payload.user))
                 const pendingMsg =
-                    payload.emailChangePending &&
-                    `Check your current email (${payload.user.email}) to confirm the change to ${payload.pendingEmail}.`
+                    payload.emailChangePending && `请在当前邮箱（${payload.user.email}）中确认变更为 ${payload.pendingEmail}。`
                 enqueueSnackbar({
                     message: pendingMsg || '个人资料已更新',
                     options: {
@@ -272,9 +287,7 @@ const AccountSettings = () => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to update profile: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `个人资料更新失败：${getAccountErrorMessage(error)}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -286,6 +299,8 @@ const AccountSettings = () => {
                     )
                 }
             })
+        } finally {
+            setIsSavingProfile(false)
         }
     }
 
@@ -349,9 +364,7 @@ const AccountSettings = () => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to update password: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `密码更新失败：${getAccountErrorMessage(error)}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -734,8 +747,21 @@ const AccountSettings = () => {
                         )}
                         <SettingsSection
                             action={
-                                <StyledButton onClick={saveProfileData} sx={{ borderRadius: 2, height: 40 }} variant='contained'>
-                                    Save
+                                <StyledButton
+                                    id='btn_saveProfile'
+                                    disabled={isSavingProfile || !profileName.trim() || !email.trim()}
+                                    onClick={saveProfileData}
+                                    sx={{ borderRadius: 2, height: 40, minWidth: 112 }}
+                                    variant='contained'
+                                >
+                                    {isSavingProfile ? (
+                                        <Stack direction='row' alignItems='center' gap={1}>
+                                            <CircularProgress size={18} color='inherit' />
+                                            正在保存…
+                                        </Stack>
+                                    ) : (
+                                        '保存'
+                                    )}
                                 </StyledButton>
                             }
                             title='个人资料'

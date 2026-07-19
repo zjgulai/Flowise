@@ -42,7 +42,7 @@ const TablePagination = ({ currentPage, limit, total, onChange }) => {
     return (
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Typography variant='body2'>Items per page:</Typography>
+                <Typography variant='body2'>每页数量：</Typography>
                 <FormControl
                     variant='outlined'
                     size='small'
@@ -66,8 +66,8 @@ const TablePagination = ({ currentPage, limit, total, onChange }) => {
             </Box>
             {totalItems > 0 && (
                 <Typography variant='body2'>
-                    Items {activePage * itemsPerPage - itemsPerPage + 1} to{' '}
-                    {activePage * itemsPerPage > totalItems ? totalItems : activePage * itemsPerPage} of {totalItems}
+                    第 {activePage * itemsPerPage - itemsPerPage + 1}–
+                    {activePage * itemsPerPage > totalItems ? totalItems : activePage * itemsPerPage} 条，共 {totalItems} 条
                 </Typography>
             )}
             <Pagination count={Math.ceil(totalItems / itemsPerPage)} onChange={handlePageChange} page={activePage} color='primary' />

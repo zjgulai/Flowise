@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url'
 export const APPROVED_SPECS = [
     'cypress/e2e/1-apikey/apikey.cy.js',
     'cypress/e2e/2-variables/variables.cy.js',
-    'cypress/e2e/3-chatflows/chatflow-continuity.cy.js'
+    'cypress/e2e/3-chatflows/chatflow-continuity.cy.js',
+    'cypress/e2e/4-pc-core/pc-core-continuity.cy.js'
 ]
 
 const STARTUP_TIMEOUT_MS = 120_000

@@ -3,7 +3,7 @@ import moment from 'moment'
 import { useSelector } from 'react-redux'
 import { Box, CircularProgress, Tooltip } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
-import { IconClock } from '@tabler/icons-react'
+import { IconAlertTriangle, IconClock } from '@tabler/icons-react'
 
 const ACTIVE = {
     light: { bg: '#dcfce7', text: '#15803d', border: '#86efac', dot: '#22c55e' },
@@ -15,6 +15,11 @@ const PAUSED = {
     dark: { bg: 'rgba(255, 255, 255, 0.06)', text: 'rgba(255, 255, 255, 0.65)', border: 'rgba(255, 255, 255, 0.18)' }
 }
 
+const ERROR = {
+    light: { bg: '#fef2f2', text: '#b91c1c', border: '#fecaca' },
+    dark: { bg: 'rgba(239, 68, 68, 0.14)', text: '#fca5a5', border: 'rgba(252, 165, 165, 0.35)' }
+}
+
 const ScheduleStatusBadge = ({ scheduleStatus, size = 'md' }) => {
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
@@ -22,12 +27,15 @@ const ScheduleStatusBadge = ({ scheduleStatus, size = 'md' }) => {
     if (!scheduleStatus?.isScheduled) return null
 
     const isLoading = scheduleStatus.loading === true
+    const hasError = !isLoading && scheduleStatus.error === true
     const isActive = !isLoading && scheduleStatus.enabled === true
     const palette = customization.isDarkMode ? 'dark' : 'light'
-    const colors = isActive ? ACTIVE[palette] : PAUSED[palette]
+    const colors = hasError ? ERROR[palette] : isActive ? ACTIVE[palette] : PAUSED[palette]
 
     const tooltipText = isLoading
         ? '正在检查调度状态…'
+        : hasError
+        ? '调度状态获取失败，请稍后刷新重试'
         : isActive
         ? scheduleStatus.nextRunAt
             ? `调度已激活 — 下次运行 ${moment(scheduleStatus.nextRunAt).format('MMM D, YYYY h:mm A')}`
@@ -65,6 +73,8 @@ const ScheduleStatusBadge = ({ scheduleStatus, size = 'md' }) => {
             >
                 {isLoading ? (
                     <CircularProgress size={dims.icon} thickness={5} sx={{ color: colors.text }} />
+                ) : hasError ? (
+                    <IconAlertTriangle size={dims.icon} stroke={2} />
                 ) : isActive ? (
                     <Box
                         component='span'
@@ -85,7 +95,7 @@ const ScheduleStatusBadge = ({ scheduleStatus, size = 'md' }) => {
                 ) : (
                     <IconClock size={dims.icon} stroke={2} />
                 )}
-                {isLoading ? '加载中…' : isActive ? '已计划' : '已暂停'}
+                {isLoading ? '加载中…' : hasError ? '状态获取失败' : isActive ? '已计划' : '已暂停'}
             </Box>
         </Tooltip>
     )
@@ -97,7 +107,8 @@ ScheduleStatusBadge.propTypes = {
         enabled: PropTypes.bool,
         nextRunAt: PropTypes.string,
         cronExpression: PropTypes.string,
-        loading: PropTypes.bool
+        loading: PropTypes.bool,
+        error: PropTypes.bool
     }),
     size: PropTypes.oneOf(['sm', 'md'])
 }

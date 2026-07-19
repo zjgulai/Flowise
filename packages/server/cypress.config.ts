@@ -43,6 +43,13 @@ export default defineConfig({
     e2e: {
         baseUrl,
         setupNodeEvents(on, config) {
+            on('before:browser:launch', (browser, launchOptions) => {
+                if (browser.family === 'chromium' && browser.name !== 'electron') {
+                    launchOptions.args.push('--disable-features=Translate,TranslateUI')
+                    launchOptions.preferences.default.translate = { enabled: false }
+                }
+                return launchOptions
+            })
             on('task', {
                 getLocalOwner() {
                     return localOwner

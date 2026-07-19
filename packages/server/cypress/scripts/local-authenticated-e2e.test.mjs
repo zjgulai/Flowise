@@ -20,6 +20,7 @@ import {
 
 const approvedSpecs = APPROVED_SPECS
 const chatflowContinuitySpec = 'cypress/e2e/3-chatflows/chatflow-continuity.cy.js'
+const pcCoreContinuitySpec = 'cypress/e2e/4-pc-core/pc-core-continuity.cy.js'
 
 const processGroupExists = (processGroupId) => {
     try {
@@ -93,6 +94,38 @@ describe('Chatflow continuity specification contract', () => {
         for (const forbiddenPath of ['prediction', 'chatmessage', 'vector', 'assistant']) {
             assert.match(source, new RegExp(forbiddenPath))
         }
+    })
+})
+
+describe('PC core continuity specification contract', () => {
+    it('keeps the four-route PC run loopback-only, provider-guarded, and failure-cleanable', async () => {
+        assert.ok(APPROVED_SPECS.includes(pcCoreContinuitySpec))
+        const source = await readFile(new URL('../e2e/4-pc-core/pc-core-continuity.cy.js', import.meta.url), 'utf8')
+
+        for (const route of ['/account', '/chatflows', '/agentflows', '/document-stores']) {
+            assert.match(source, new RegExp(route.replaceAll('/', '\\/')))
+        }
+        assert.match(source, /Cypress\.config\('baseUrl'\)/)
+        assert.match(source, /Cypress\.env\('runId'\)/)
+        assert.match(source, /isPageInitiatedRequest/)
+        assert.match(source, /request\.headers\.origin/)
+        assert.match(source, /request\.headers\.referer/)
+        assert.match(source, /afterEach\(/)
+        assert.match(source, /createdChatflowIds/)
+        assert.match(source, /createdDocumentStoreIds/)
+        for (const forbiddenPath of ['prediction', 'chatmessage', 'vector', 'assistant', 'webhook']) {
+            assert.match(source, new RegExp(forbiddenPath))
+        }
+    })
+})
+
+describe('isolated Chrome launch contract', () => {
+    it('disables browser translation traffic without weakening application origin checks', async () => {
+        const source = await readFile(new URL('../../cypress.config.ts', import.meta.url), 'utf8')
+
+        assert.match(source, /before:browser:launch/)
+        assert.match(source, /--disable-features=Translate,TranslateUI/)
+        assert.match(source, /translate = \{ enabled: false \}/)
     })
 })
 

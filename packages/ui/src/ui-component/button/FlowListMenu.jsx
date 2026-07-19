@@ -74,6 +74,19 @@ const StyledMenu = styled((props) => (
     }
 }))
 
+const getFlowListErrorMessage = (error) => {
+    const responseData = error?.response?.data
+    if (typeof responseData === 'string' && responseData.trim()) return responseData
+    if (responseData && typeof responseData === 'object') {
+        const responseMessage = responseData.message || responseData.error
+        if (typeof responseMessage === 'string' && responseMessage.trim()) return responseMessage
+    }
+    const status = error?.response?.status
+    if (status) return `服务请求失败（${status}）`
+    if (typeof error?.message === 'string' && error.message.trim()) return error.message
+    return '未知错误'
+}
+
 export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, setError, updateFlowsApi, currentPage, pageLimit }) {
     const { confirm } = useConfirm()
     const dispatch = useDispatch()
@@ -100,7 +113,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
     const [exportTemplateDialogOpen, setExportTemplateDialogOpen] = useState(false)
     const [exportTemplateDialogProps, setExportTemplateDialogProps] = useState({})
 
-    const title = isAgentCanvas ? 'Agents' : 'Chatflow'
+    const title = isAgentCanvas ? '智能体流程' : '对话流程'
 
     const refreshFlows = async () => {
         try {
@@ -136,7 +149,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
     const handleFlowStarterPrompts = () => {
         setAnchorEl(null)
         setConversationStartersDialogProps({
-            title: 'Starter Prompts - ' + chatflow.name,
+            title: '开场提示 - ' + chatflow.name,
             chatflow: chatflow
         })
         setConversationStartersDialogOpen(true)
@@ -153,7 +166,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
     const handleFlowChatFeedback = () => {
         setAnchorEl(null)
         setChatFeedbackDialogProps({
-            title: 'Chat Feedback - ' + chatflow.name,
+            title: '对话反馈 - ' + chatflow.name,
             chatflow: chatflow
         })
         setChatFeedbackDialogOpen(true)
@@ -162,7 +175,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
     const handleAllowedDomains = () => {
         setAnchorEl(null)
         setAllowedDomainsDialogProps({
-            title: 'Allowed Domains - ' + chatflow.name,
+            title: '允许的域名 - ' + chatflow.name,
             chatflow: chatflow
         })
         setAllowedDomainsDialogOpen(true)
@@ -171,7 +184,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
     const handleSpeechToText = () => {
         setAnchorEl(null)
         setSpeechToTextDialogProps({
-            title: 'Speech To Text - ' + chatflow.name,
+            title: '语音转文字 - ' + chatflow.name,
             chatflow: chatflow
         })
         setSpeechToTextDialogOpen(true)
@@ -198,7 +211,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
         } catch (error) {
             if (setError) setError(error)
             enqueueSnackbar({
-                message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                message: getFlowListErrorMessage(error),
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -245,7 +258,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
         } catch (error) {
             if (setError) setError(error)
             enqueueSnackbar({
-                message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                message: getFlowListErrorMessage(error),
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -263,10 +276,10 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
     const handleDelete = async () => {
         setAnchorEl(null)
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete ${title} ${chatflow.name}?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除',
+            description: `确定删除${title}“${chatflow.name}”吗？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -287,7 +300,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
             } catch (error) {
                 if (setError) setError(error)
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: getFlowListErrorMessage(error),
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -350,7 +363,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                 onClick={handleClick}
                 endIcon={<KeyboardArrowDownIcon />}
             >
-                Options
+                操作
             </Button>
             <StyledMenu
                 id='demo-customized-menu'
@@ -367,7 +380,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                     disableRipple
                 >
                     <EditIcon />
-                    Rename
+                    重命名
                 </PermissionMenuItem>
                 <PermissionMenuItem
                     permissionId={isAgentCanvas ? 'agentflows:duplicate' : 'chatflows:duplicate'}
@@ -375,7 +388,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                     disableRipple
                 >
                     <FileCopyIcon />
-                    Duplicate
+                    复制
                 </PermissionMenuItem>
                 <PermissionMenuItem
                     permissionId={isAgentCanvas ? 'agentflows:export' : 'chatflows:export'}
@@ -383,11 +396,11 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                     disableRipple
                 >
                     <FileDownloadIcon />
-                    Export
+                    导出
                 </PermissionMenuItem>
                 <PermissionMenuItem permissionId={'templates:flowexport'} onClick={handleExportTemplate} disableRipple>
                     <ExportTemplateOutlinedIcon />
-                    Save As Template
+                    另存为模板
                 </PermissionMenuItem>
                 <Divider sx={{ my: 0.5 }} />
                 <PermissionMenuItem
@@ -396,7 +409,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                     disableRipple
                 >
                     <PictureInPictureAltIcon />
-                    Starter Prompts
+                    开场提示
                 </PermissionMenuItem>
                 <PermissionMenuItem
                     permissionId={isAgentCanvas ? 'agentflows:config' : 'chatflows:config'}
@@ -404,7 +417,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                     disableRipple
                 >
                     <ThumbsUpDownOutlinedIcon />
-                    Chat Feedback
+                    对话反馈
                 </PermissionMenuItem>
                 <PermissionMenuItem
                     permissionId={isAgentCanvas ? 'agentflows:domains' : 'chatflows:domains'}
@@ -412,7 +425,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                     disableRipple
                 >
                     <VpnLockOutlinedIcon />
-                    Allowed Domains
+                    允许的域名
                 </PermissionMenuItem>
                 <PermissionMenuItem
                     permissionId={isAgentCanvas ? 'agentflows:config' : 'chatflows:config'}
@@ -420,7 +433,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                     disableRipple
                 >
                     <MicNoneOutlinedIcon />
-                    Speech To Text
+                    语音转文字
                 </PermissionMenuItem>
                 <PermissionMenuItem
                     permissionId={isAgentCanvas ? 'agentflows:update' : 'chatflows:update'}
@@ -428,7 +441,7 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                     disableRipple
                 >
                     <FileCategoryIcon />
-                    Update Category
+                    更新分类
                 </PermissionMenuItem>
                 <Divider sx={{ my: 0.5 }} />
                 <PermissionMenuItem
@@ -437,15 +450,15 @@ export default function FlowListMenu({ chatflow, isAgentCanvas, isAgentflowV2, s
                     disableRipple
                 >
                     <FileDeleteIcon />
-                    Delete
+                    删除
                 </PermissionMenuItem>
             </StyledMenu>
             <SaveChatflowDialog
                 show={flowDialogOpen}
                 dialogProps={{
-                    title: `Rename ${title}`,
-                    confirmButtonName: 'Rename',
-                    cancelButtonName: 'Cancel'
+                    title: `重命名${title}`,
+                    confirmButtonName: '重命名',
+                    cancelButtonName: '取消'
                 }}
                 onCancel={() => setFlowDialogOpen(false)}
                 onConfirm={saveFlowRename}

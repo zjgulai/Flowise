@@ -5,6 +5,16 @@ import PropTypes from 'prop-types'
 const DocumentStoreStatus = ({ status, isTableView }) => {
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
+    const statusLabels = {
+        STALE: '已过期',
+        EMPTY: '空库',
+        SYNCING: '同步中',
+        UPSERTING: '更新中',
+        SYNC: '已同步',
+        UPSERTED: '已更新',
+        NEW: '新建'
+    }
+    const statusLabel = statusLabels[status] || status
 
     const getColor = (status) => {
         switch (status) {
@@ -73,7 +83,7 @@ const DocumentStoreStatus = ({ status, isTableView }) => {
                             borderColor: status === 'EMPTY' ? getColor(status)[1] : 'transparent'
                         }}
                     />
-                    <span style={{ fontSize: '0.7rem', color: getColor(status)[2], marginLeft: 5 }}>{status}</span>
+                    <span style={{ fontSize: '0.7rem', color: getColor(status)[2], marginLeft: 5 }}>{statusLabel}</span>
                 </div>
             )}
             {isTableView && (
@@ -87,7 +97,7 @@ const DocumentStoreStatus = ({ status, isTableView }) => {
                         border: status === 'EMPTY' ? '3px solid' : 'none',
                         borderColor: status === 'EMPTY' ? getColor(status)[1] : 'transparent'
                     }}
-                    title={status}
+                    title={statusLabel}
                 ></div>
             )}
         </>

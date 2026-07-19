@@ -469,7 +469,7 @@ const DocumentStoreDetails = () => {
         <>
             <MainCard>
                 {error ? (
-                    <ErrorBoundary error={error} />
+                    <ErrorBoundary error={error} onBack={() => navigate('/document-stores')} backLabel='返回文档库列表' />
                 ) : (
                     <Stack flexDirection='column' sx={{ gap: 3 }}>
                         <ViewHeader

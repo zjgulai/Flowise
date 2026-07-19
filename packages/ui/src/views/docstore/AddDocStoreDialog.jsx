@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom'
 import PropTypes from 'prop-types'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useDispatch } from 'react-redux'
 import {
     HIDE_CANVAS_DIALOG,
@@ -10,7 +10,7 @@ import {
 } from '@/store/actions'
 
 // Material
-import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Box, Typography, OutlinedInput } from '@mui/material'
+import { Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, OutlinedInput, Typography } from '@mui/material'
 
 // Project imports
 import { StyledButton } from '@/ui-component/button/StyledButton'
@@ -24,6 +24,19 @@ import documentStoreApi from '@/api/documentstore'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+
+const getDocumentStoreErrorMessage = (error) => {
+    const responseData = error?.response?.data
+    if (typeof responseData === 'string' && responseData.trim()) return responseData
+    if (responseData && typeof responseData === 'object') {
+        const responseMessage = responseData.message || responseData.error
+        if (typeof responseMessage === 'string' && responseMessage.trim()) return responseMessage
+    }
+    const status = error?.response?.status
+    if (status) return `服务请求失败（${status}）`
+    if (typeof error?.message === 'string' && error.message.trim()) return error.message
+    return '未知错误'
+}
 
 const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     const portalElement = document.getElementById('portal')
@@ -41,6 +54,14 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     const [documentStoreDesc, setDocumentStoreDesc] = useState('')
     const [dialogType, setDialogType] = useState('ADD')
     const [docStoreId, setDocumentStoreId] = useState()
+    const [isSubmitting, setIsSubmitting] = useState(false)
+    const submitErrorSnackbarKey = useRef()
+
+    const dismissSubmitError = () => {
+        if (!submitErrorSnackbarKey.current) return
+        closeSnackbar(submitErrorSnackbarKey.current)
+        submitErrorSnackbarKey.current = undefined
+    }
 
     useEffect(() => {
         setDialogType(dialogProps.type)
@@ -66,6 +87,8 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     }, [show, dispatch])
 
     const createDocumentStore = async () => {
+        if (isSubmitting) return
+        setIsSubmitting(true)
         try {
             const obj = {
                 name: documentStoreName,
@@ -73,8 +96,9 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             }
             const createResp = await documentStoreApi.createDocumentStore(obj)
             if (createResp.data) {
+                dismissSubmitError()
                 enqueueSnackbar({
-                    message: 'New Document Store created.',
+                    message: '文档库已创建',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -92,12 +116,12 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 })
             }
         } catch (error) {
+            const key = new Date().getTime() + Math.random()
+            submitErrorSnackbarKey.current = key
             enqueueSnackbar({
-                message: `Failed to add new Document Store: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `新增文档库失败：${getDocumentStoreErrorMessage(error)}`,
                 options: {
-                    key: new Date().getTime() + Math.random(),
+                    key,
                     variant: 'error',
                     persist: true,
                     action: (key) => (
@@ -107,11 +131,14 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                     )
                 }
             })
-            onCancel()
+        } finally {
+            setIsSubmitting(false)
         }
     }
 
     const updateDocumentStore = async () => {
+        if (isSubmitting) return
+        setIsSubmitting(true)
         try {
             const saveObj = {
                 name: documentStoreName,
@@ -120,8 +147,9 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
 
             const saveResp = await documentStoreApi.updateDocumentStore(docStoreId, saveObj)
             if (saveResp.data) {
+                dismissSubmitError()
                 enqueueSnackbar({
-                    message: 'Document Store Updated!',
+                    message: '文档库已更新',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -139,12 +167,12 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 })
             }
         } catch (error) {
+            const key = new Date().getTime() + Math.random()
+            submitErrorSnackbarKey.current = key
             enqueueSnackbar({
-                message: `Failed to update Document Store: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `更新文档库失败：${getDocumentStoreErrorMessage(error)}`,
                 options: {
-                    key: new Date().getTime() + Math.random(),
+                    key,
                     variant: 'error',
                     persist: true,
                     action: (key) => (
@@ -154,7 +182,8 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                     )
                 }
             })
-            onCancel()
+        } finally {
+            setIsSubmitting(false)
         }
     }
 
@@ -163,7 +192,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             fullWidth
             maxWidth='sm'
             open={show}
-            onClose={onCancel}
+            onClose={isSubmitting ? undefined : onCancel}
             aria-labelledby='alert-dialog-title'
             aria-describedby='alert-dialog-description'
         >
@@ -177,12 +206,13 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 <Box sx={{ p: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
                         <Typography>
-                            Name<span style={{ color: 'red' }}>&nbsp;*</span>
+                            名称<span style={{ color: 'red' }}>&nbsp;*</span>
                         </Typography>
 
                         <div style={{ flexGrow: 1 }}></div>
                     </div>
                     <OutlinedInput
+                        id='txtInput_documentStoreName'
                         size='small'
                         sx={{ mt: 1 }}
                         type='string'
@@ -199,6 +229,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                         <div style={{ flexGrow: 1 }}></div>
                     </div>
                     <OutlinedInput
+                        id='txtInput_documentStoreDescription'
                         size='small'
                         multiline={true}
                         rows={7}
@@ -212,13 +243,23 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 </Box>
             </DialogContent>
             <DialogActions>
-                <Button onClick={() => onCancel()}>取消</Button>
+                <Button disabled={isSubmitting} onClick={() => onCancel()}>
+                    取消
+                </Button>
                 <StyledButton
-                    disabled={!documentStoreName}
+                    id='btn_submitDocumentStore'
+                    disabled={isSubmitting || !documentStoreName.trim()}
                     variant='contained'
                     onClick={() => (dialogType === 'ADD' ? createDocumentStore() : updateDocumentStore())}
                 >
-                    {dialogProps.confirmButtonName}
+                    {isSubmitting ? (
+                        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                            <CircularProgress size={18} color='inherit' />
+                            正在提交…
+                        </Box>
+                    ) : (
+                        dialogProps.confirmButtonName
+                    )}
                 </StyledButton>
             </DialogActions>
             <ConfirmDialog />

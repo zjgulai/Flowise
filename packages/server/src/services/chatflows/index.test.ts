@@ -18,6 +18,15 @@ const mockRepo = {
     createQueryBuilder: jest.fn()
 }
 
+const mockQueryBuilder = {
+    orderBy: jest.fn().mockReturnThis(),
+    addOrderBy: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    take: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    getManyAndCount: jest.fn()
+}
+
 const mockAppServer = {
     AppDataSource: {
         getRepository: jest.fn().mockReturnValue(mockRepo)
@@ -182,6 +191,8 @@ beforeEach(() => {
     jest.clearAllMocks()
     mockAppServer.AppDataSource.getRepository.mockReturnValue(mockRepo)
     mockRepo.create.mockImplementation((x: unknown) => x)
+    mockRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder)
+    mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0])
     mockRepo.save.mockResolvedValue(makeChatflow())
     mockRepo.merge.mockImplementation((_existing: any, updates: any) => ({ ...makeChatflow(), ...updates }))
     mockContainsBase64File.mockReturnValue(false)
@@ -191,6 +202,21 @@ beforeEach(() => {
     mockCanScheduleEnable.mockReturnValue(true)
     ;(ScheduleBeat.getInstance as jest.Mock).mockReturnValue({
         onScheduleChanged: jest.fn().mockResolvedValue(undefined)
+    })
+})
+
+describe('getAllChatflows', () => {
+    it('applies search before pagination so totals and pages share one filtered dataset', async () => {
+        await chatflowsService.getAllChatflows(EnumChatflowType.CHATFLOW, 'ws-1', 2, 10, 'Needle', 'name', 'asc')
+
+        expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+            `(LOWER(chat_flow.name) LIKE :search OR LOWER(COALESCE(chat_flow.category, '')) LIKE :search OR LOWER(chat_flow.id) LIKE :search)`,
+            { search: '%needle%' }
+        )
+        expect(mockQueryBuilder.skip).toHaveBeenCalledWith(10)
+        expect(mockQueryBuilder.take).toHaveBeenCalledWith(10)
+        expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith('chat_flow.name', 'ASC')
+        expect(mockQueryBuilder.addOrderBy).toHaveBeenCalledWith('chat_flow.id', 'ASC')
     })
 })
 
