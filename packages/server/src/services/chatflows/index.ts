@@ -205,8 +205,10 @@ const getAllChatflows = async (
         }
         if (workspaceId) queryBuilder.andWhere('chat_flow.workspaceId = :workspaceId', { workspaceId })
         if (search) {
+            const idSearchExpression =
+                appServer.AppDataSource.options.type === 'postgres' ? 'LOWER(CAST(chat_flow.id AS TEXT))' : 'LOWER(chat_flow.id)'
             queryBuilder.andWhere(
-                `(LOWER(chat_flow.name) LIKE :search OR LOWER(COALESCE(chat_flow.category, '')) LIKE :search OR LOWER(chat_flow.id) LIKE :search)`,
+                `(LOWER(chat_flow.name) LIKE :search OR LOWER(COALESCE(chat_flow.category, '')) LIKE :search OR ${idSearchExpression} LIKE :search)`,
                 { search: `%${search.toLowerCase()}%` }
             )
         }

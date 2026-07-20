@@ -29,6 +29,7 @@ const mockQueryBuilder = {
 
 const mockAppServer = {
     AppDataSource: {
+        options: { type: 'postgres' },
         getRepository: jest.fn().mockReturnValue(mockRepo)
     },
     telemetry: {
@@ -189,6 +190,7 @@ const SAVE_ARGS = {
 
 beforeEach(() => {
     jest.clearAllMocks()
+    mockAppServer.AppDataSource.options.type = 'postgres'
     mockAppServer.AppDataSource.getRepository.mockReturnValue(mockRepo)
     mockRepo.create.mockImplementation((x: unknown) => x)
     mockRepo.createQueryBuilder.mockReturnValue(mockQueryBuilder)
@@ -210,13 +212,24 @@ describe('getAllChatflows', () => {
         await chatflowsService.getAllChatflows(EnumChatflowType.CHATFLOW, 'ws-1', 2, 10, 'Needle', 'name', 'asc')
 
         expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-            `(LOWER(chat_flow.name) LIKE :search OR LOWER(COALESCE(chat_flow.category, '')) LIKE :search OR LOWER(chat_flow.id) LIKE :search)`,
+            `(LOWER(chat_flow.name) LIKE :search OR LOWER(COALESCE(chat_flow.category, '')) LIKE :search OR LOWER(CAST(chat_flow.id AS TEXT)) LIKE :search)`,
             { search: '%needle%' }
         )
         expect(mockQueryBuilder.skip).toHaveBeenCalledWith(10)
         expect(mockQueryBuilder.take).toHaveBeenCalledWith(10)
         expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith('chat_flow.name', 'ASC')
         expect(mockQueryBuilder.addOrderBy).toHaveBeenCalledWith('chat_flow.id', 'ASC')
+    })
+
+    it('keeps the native text id search expression for non-Postgres databases', async () => {
+        mockAppServer.AppDataSource.options.type = 'sqlite'
+
+        await chatflowsService.getAllChatflows(EnumChatflowType.AGENTFLOW, 'ws-1', 1, 12, 'Needle', 'updatedDate', 'desc')
+
+        expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+            `(LOWER(chat_flow.name) LIKE :search OR LOWER(COALESCE(chat_flow.category, '')) LIKE :search OR LOWER(chat_flow.id) LIKE :search)`,
+            { search: '%needle%' }
+        )
     })
 })
 
