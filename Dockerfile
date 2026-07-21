@@ -85,14 +85,11 @@ LABEL org.opencontainers.image.source="${BUILD_SOURCE}" \
     org.opencontainers.image.version="${BUILD_VERSION}" \
     org.opencontainers.image.created="${BUILD_CREATED}"
 
-# 安装当前运行时节点所需的系统依赖和工具
+# 安装当前运行时节点所需的系统依赖和工具；编译工具链只保留在 builder
 RUN apk update && \
     apk add --no-cache \
     libc6-compat \
     python3 \
-    make \
-    g++ \
-    build-base \
     cairo-dev \
     pango-dev \
     chromium \

@@ -35,7 +35,9 @@
         "quick": "pretty-quick --staged",
         "postinstall": "husky install",
         "release:manifest": "node scripts/release-manifest.mjs",
-        "test:release": "node --test scripts/release-manifest.test.mjs",
+        "release:baseline": "node scripts/release-baseline.mjs",
+        "release:slim-probe": "bash scripts/verify-runtime-without-compilers.sh",
+        "test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs",
         "migration:create": "pnpm typeorm migration:create",
         "changeset": "changeset",
         "changeset:version": "changeset version"
