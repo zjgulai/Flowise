@@ -14,6 +14,18 @@ describe('production UI safety contracts', () => {
         expect(source).toContain("path: '/access-restricted'")
     })
 
+    it('keeps acceptance login isolated from public-login guards and browser storage or URL input', () => {
+        const routes = read('./AuthRoutes.jsx')
+        const page = read('../views/auth/acceptanceLogin.jsx')
+
+        expect(routes).toContain("path: '/acceptance-login'")
+        expect(routes.match(/path: '\/signin',[\s\S]*?<PublicLoginRoute>/)).toBeTruthy()
+        expect(page).toContain("type='password'")
+        expect(page).toContain("autoComplete='one-time-code'")
+        expect(page).not.toMatch(/location\.(search|hash)|URLSearchParams|localStorage|sessionStorage/)
+        expect(page).not.toMatch(/name=['"](?:email|password)['"]/)
+    })
+
     it('redirects unauthenticated protected routes to the configured public access boundary', () => {
         const source = read('./RequireAuth.jsx')
         expect(source).toContain("config.PUBLIC_LOGIN_ENABLED === false ? '/access-restricted' : '/login'")

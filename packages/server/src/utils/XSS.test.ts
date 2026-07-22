@@ -24,6 +24,7 @@ describe('getCorsOptions', () => {
     const SAVED_CORS_ALLOW_CREDENTIALS = process.env.CORS_ALLOW_CREDENTIALS
     const SAVED_IFRAME_ORIGINS = process.env.IFRAME_ORIGINS
     const SAVED_NODE_ENV = process.env.NODE_ENV
+    const SAVED_APP_URL = process.env.APP_URL
 
     afterEach(() => {
         if (SAVED_CORS_ORIGINS !== undefined) process.env.CORS_ORIGINS = SAVED_CORS_ORIGINS
@@ -34,6 +35,8 @@ describe('getCorsOptions', () => {
         else delete process.env.IFRAME_ORIGINS
         if (SAVED_NODE_ENV !== undefined) process.env.NODE_ENV = SAVED_NODE_ENV
         else delete process.env.NODE_ENV
+        if (SAVED_APP_URL !== undefined) process.env.APP_URL = SAVED_APP_URL
+        else delete process.env.APP_URL
         jest.clearAllMocks()
     })
 
@@ -112,6 +115,32 @@ describe('getCorsOptions', () => {
                 'https://trusted.example',
                 undefined
             )
+        })
+    })
+
+    describe('acceptance-login session origin', () => {
+        async function getOriginDecision(origin: string): Promise<boolean | undefined> {
+            let captured: any
+            getCorsOptions()({ url: '/api/v1/auth/acceptance-login' }, (_err: any, options: any) => {
+                captured = options
+            })
+            return new Promise((resolve, reject) => {
+                captured.origin(origin, (error: Error | null, allow?: boolean) => {
+                    if (error) reject(error)
+                    else resolve(allow)
+                })
+            })
+        }
+
+        beforeEach(() => {
+            process.env.CORS_ORIGINS = '*'
+            process.env.APP_URL = 'https://flowise.example.com'
+        })
+
+        it('allows only the APP_URL origin despite the global wildcard', async () => {
+            await expect(getOriginDecision('https://flowise.example.com')).resolves.toBe(true)
+            await expect(getOriginDecision('https://evil.example.com')).resolves.toBe(false)
+            await expect(getOriginDecision('null')).resolves.toBe(false)
         })
     })
 

@@ -30,7 +30,9 @@ module.exports = {
     Unique: decorator,
     DataSource: jest.fn(),
     In: findOperator('in'),
+    IsNull: () => ({ type: 'isNull', value: undefined }),
     Between: findOperator('between'),
+    MoreThan: findOperator('moreThan'),
     MoreThanOrEqual: findOperator('moreThanOrEqual'),
     LessThanOrEqual: findOperator('lessThanOrEqual')
 }

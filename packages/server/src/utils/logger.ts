@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from 'express'
 import { StorageProviderFactory } from 'flowise-components'
 import * as fs from 'fs'
 import { createLogger, format, transports } from 'winston'
+import { ACCEPTANCE_LOGIN_PATH } from '../enterprise/utils/acceptanceLoginPolicy'
 import config from './config' // should be replaced by node-config or similar
 
 const { combine, timestamp, printf, errors } = format
@@ -90,9 +91,14 @@ function sanitizeObject(obj: any): any {
 }
 
 export function expressRequestLogger(req: Request, res: Response, next: NextFunction): void {
-    const unwantedLogURLs = ['/api/v1/node-icon/', '/api/v1/components-credentials-icon/', '/api/v1/ping']
+    const unwantedLogURLs = ['/api/v1/node-icon/', '/api/v1/components-credentials-icon/', '/api/v1/ping', ACCEPTANCE_LOGIN_PATH]
+    const requestPath = req.url.split('?')[0].toLowerCase()
+    const isUnwantedLogURL = unwantedLogURLs.some((url) => {
+        if (url === ACCEPTANCE_LOGIN_PATH) return requestPath === url
+        return new RegExp(url, 'i').test(req.url)
+    })
 
-    if (/\/api\/v1\//i.test(req.url) && !unwantedLogURLs.some((url) => new RegExp(url, 'i').test(req.url))) {
+    if (/\/api\/v1\//i.test(req.url) && !isUnwantedLogURL) {
         const isDebugLevel = logger.level === 'debug' || process.env.DEBUG === 'true'
 
         const requestMetadata: any = {

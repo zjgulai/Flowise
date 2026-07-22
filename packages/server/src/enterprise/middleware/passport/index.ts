@@ -2,24 +2,19 @@ import { HttpStatusCode } from 'axios'
 import { RedisStore } from 'connect-redis'
 import express, { NextFunction, Request, Response } from 'express'
 import session from 'express-session'
-import { StatusCodes } from 'http-status-codes'
 import jwt, { JwtPayload, sign } from 'jsonwebtoken'
 import passport from 'passport'
 import { VerifiedCallback } from 'passport-jwt'
 import { v4 as uuidv4 } from 'uuid'
-import { InternalFlowiseError } from '../../../errors/internalFlowiseError'
 import { IdentityManager } from '../../../IdentityManager'
 import { Platform } from '../../../Interface'
 import { getRunningExpressApp } from '../../../utils/getRunningExpressApp'
-import { OrganizationUserStatus } from '../../database/entities/organization-user.entity'
-import { GeneralRole } from '../../database/entities/role.entity'
-import { WorkspaceUser, WorkspaceUserStatus } from '../../database/entities/workspace-user.entity'
-import { ErrorMessage, IAssignedWorkspace, LoggedInUser } from '../../Interface.Enterprise'
+import { WorkspaceUser } from '../../database/entities/workspace-user.entity'
+import { ErrorMessage, LoggedInUser } from '../../Interface.Enterprise'
+import { AcceptanceLoginService } from '../../services/acceptanceLogin.service'
 import { AccountService } from '../../services/account.service'
-import { OrganizationUserErrorMessage, OrganizationUserService } from '../../services/organization-user.service'
+import { buildLoggedInUser } from '../../services/loggedInUserBuilder'
 import { OrganizationService } from '../../services/organization.service'
-import { RoleErrorMessage, RoleService } from '../../services/role.service'
-import { WorkspaceUserService } from '../../services/workspace-user.service'
 import {
     getExpressSessionSecret,
     getJWTAudience,
@@ -29,6 +24,7 @@ import {
 } from '../../utils/authSecrets'
 import { decryptToken, encryptToken, generateSafeCopy } from '../../utils/tempTokenUtils'
 import { getAuthStrategy } from './AuthStrategy'
+import { registerAcceptanceLoginRoute } from './acceptanceLogin'
 import { enforceAuthResolvePostOnly, resolveSecureCookie } from './authSecurityPolicy'
 import { initializeDBClientAndStore, initializeMemoryStore, initializeRedisClientAndStore } from './SessionPersistance'
 
@@ -122,63 +118,17 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
                         Array.isArray(response.workspaceDetails) && response.workspaceDetails.length > 0
                             ? response.workspaceDetails[0]
                             : (response.workspaceDetails as WorkspaceUser)
-                    const workspaceUserService = new WorkspaceUserService()
-                    workspaceUser.status = WorkspaceUserStatus.ACTIVE
-                    workspaceUser.lastLogin = new Date().toISOString()
-                    workspaceUser.updatedBy = workspaceUser.userId
-                    const organizationUserService = new OrganizationUserService()
-                    const { organizationUser } = await organizationUserService.readOrganizationUserByWorkspaceIdUserId(
-                        workspaceUser.workspaceId,
-                        workspaceUser.userId,
-                        queryRunner
-                    )
-                    if (!organizationUser)
-                        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationUserErrorMessage.ORGANIZATION_USER_NOT_FOUND)
-                    organizationUser.status = OrganizationUserStatus.ACTIVE
-                    await workspaceUserService.updateWorkspaceUser(workspaceUser, queryRunner)
-                    await organizationUserService.updateOrganizationUser(organizationUser)
-
-                    const workspaceUsers = await workspaceUserService.readWorkspaceUserByUserId(organizationUser.userId, queryRunner)
-                    const assignedWorkspaces: IAssignedWorkspace[] = workspaceUsers.map((workspaceUser) => {
-                        return {
-                            id: workspaceUser.workspace.id,
-                            name: workspaceUser.workspace.name,
-                            role: workspaceUser.role?.name,
-                            organizationId: workspaceUser.workspace.organizationId
-                        } as IAssignedWorkspace
+                    const loggedInUser = await buildLoggedInUser({
+                        user: {
+                            id: response.user.id!,
+                            email: response.user.email!,
+                            name: response.user.name ?? response.user.email!
+                        },
+                        workspaceUser,
+                        queryRunner,
+                        identityManager,
+                        mode: 'password-login'
                     })
-
-                    let roleService = new RoleService()
-                    const ownerRole = await roleService.readGeneralRoleByName(GeneralRole.OWNER, queryRunner)
-                    const role = await roleService.readRoleById(workspaceUser.roleId, queryRunner)
-                    if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
-
-                    const orgService = new OrganizationService()
-                    const organization = await orgService.readOrganizationById(organizationUser.organizationId, queryRunner)
-                    if (!organization) {
-                        return done('Organization not found')
-                    }
-                    const subscriptionId = organization.subscriptionId as string
-                    const customerId = organization.customerId as string
-                    const features = await identityManager.getFeaturesByPlan(subscriptionId)
-                    const productId = await identityManager.getProductIdFromSubscription(subscriptionId)
-
-                    const loggedInUser: LoggedInUser = {
-                        id: workspaceUser.userId,
-                        email: response.user.email!,
-                        name: response.user.name ?? response.user.email!,
-                        roleId: workspaceUser.roleId,
-                        activeOrganizationId: organization.id,
-                        activeOrganizationSubscriptionId: subscriptionId,
-                        activeOrganizationCustomerId: customerId,
-                        activeOrganizationProductId: productId,
-                        isOrganizationAdmin: workspaceUser.roleId === ownerRole.id,
-                        activeWorkspaceId: workspaceUser.workspaceId,
-                        activeWorkspace: workspaceUser.workspace.name,
-                        assignedWorkspaces,
-                        permissions: [...JSON.parse(role.permissions)],
-                        features
-                    }
                     return done(null, loggedInUser, { message: 'Logged in Successfully' })
                 } catch (error) {
                     return done(error)
@@ -188,6 +138,16 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
             }
         )
     )
+
+    const acceptanceLoginService = new AcceptanceLoginService({
+        dataSource: getRunningExpressApp().AppDataSource,
+        identityManager
+    })
+    registerAcceptanceLoginRoute(app, {
+        appUrl: process.env.APP_URL,
+        consume: (code) => acceptanceLoginService.consume(code),
+        sendAuthenticatedResponse: setTokenOrCookies
+    })
 
     app.all('/api/v1/auth/resolve', enforceAuthResolvePostOnly)
 

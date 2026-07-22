@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express'
 import { isValidUUID } from 'flowise-components'
 import sanitizeHtml from 'sanitize-html'
+import { ACCEPTANCE_LOGIN_PATH } from '../enterprise/utils/acceptanceLoginPolicy'
 import { extractChatflowId, isPublicChatflowRequest, isTTSGenerateRequest, validateChatflowDomain } from './domainValidation'
 import logger from './logger'
 
@@ -43,6 +44,7 @@ export function getAllowedAuthCorsOrigins(): string[] {
 
 // Endpoints that issue or refresh session tokens — must not accept wildcard origins
 const SESSION_ENDPOINTS = [
+    ACCEPTANCE_LOGIN_PATH,
     '/api/v1/auth/login',
     '/api/v1/auth/refreshtoken',
     '/api/v1/account/register',

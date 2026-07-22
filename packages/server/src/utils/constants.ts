@@ -2,6 +2,7 @@ import Auth0SSO from '../enterprise/sso/Auth0SSO'
 import AzureSSO from '../enterprise/sso/AzureSSO'
 import GithubSSO from '../enterprise/sso/GithubSSO'
 import GoogleSSO from '../enterprise/sso/GoogleSSO'
+import { ACCEPTANCE_LOGIN_PATH } from '../enterprise/utils/acceptanceLoginPolicy'
 
 export const WHITELIST_URLS = [
     '/api/v1/verify/apikey/',
@@ -25,6 +26,7 @@ export const WHITELIST_URLS = [
     '/api/v1/version',
     '/api/v1/attachments',
     '/api/v1/auth/resolve',
+    ACCEPTANCE_LOGIN_PATH,
     '/api/v1/auth/login',
     '/api/v1/auth/refreshToken',
     '/api/v1/settings',

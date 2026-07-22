@@ -1,6 +1,8 @@
 const mockDestroyAllSessionsForUser = jest.fn()
 const mockValidatePasswordOrThrow = jest.fn()
 const mockIsEmailChangeJwtShape = jest.fn().mockReturnValue(false)
+const mockCompareHash = jest.fn()
+const mockRecordLoginActivity = jest.fn()
 
 jest.mock('bcryptjs', () => ({
     __esModule: true,
@@ -32,6 +34,20 @@ jest.mock('../middleware/passport/SessionPersistance', () => ({
 
 jest.mock('../utils/validation.util', () => ({
     validatePasswordOrThrow: mockValidatePasswordOrThrow
+}))
+
+jest.mock('../utils/encryption.util', () => ({
+    compareHash: mockCompareHash,
+    getHash: jest.fn().mockReturnValue('replacement-derived-value'),
+    getPasswordSaltRounds: jest.fn().mockReturnValue(10),
+    hashNeedsUpgrade: jest.fn().mockReturnValue(false)
+}))
+
+jest.mock('./audit', () => ({
+    __esModule: true,
+    default: {
+        recordLoginActivity: mockRecordLoginActivity
+    }
 }))
 
 jest.mock('../utils/emailChangeJwt.util', () => ({
@@ -69,6 +85,7 @@ jest.mock('../../utils/telemetry', () => ({
 }))
 
 import { User, UserStatus } from '../database/entities/user.entity'
+import { Platform } from '../../Interface'
 import { AccountDTO, AccountService } from './account.service'
 
 type FailurePoint = 'save' | 'commit'
@@ -190,6 +207,56 @@ describe('AccountService.resetPassword session revocation ordering', () => {
         expect(mockDestroyAllSessionsForUser).toHaveBeenCalledTimes(1)
         expect(events[0]).toBe('revoke')
         expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1)
+        expect(queryRunner.release).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('AccountService.login synthetic credential boundary', () => {
+    beforeEach(() => {
+        jest.clearAllMocks()
+    })
+
+    it('rejects a credential-null synthetic user before password comparison or workspace lookup', async () => {
+        const queryRunner = {
+            connect: jest.fn().mockResolvedValue(undefined),
+            release: jest.fn().mockResolvedValue(undefined)
+        }
+        const dataSource = {
+            createQueryRunner: jest.fn().mockReturnValue(queryRunner)
+        }
+        const userService = {
+            readUserByEmail: jest.fn().mockResolvedValue({
+                id: userId,
+                email: 'flowise-acceptance+run-01@acceptance.invalid',
+                credential: null,
+                status: UserStatus.ACTIVE
+            })
+        }
+        const workspaceUserService = {
+            readWorkspaceUserByLastLogin: jest.fn()
+        }
+        const identityManager = {
+            getPlatformType: jest.fn().mockReturnValue(Platform.OPEN_SOURCE)
+        }
+
+        const service = Object.create(AccountService.prototype) as AccountService
+        ;(service as any).dataSource = dataSource
+        ;(service as any).identityManager = identityManager
+        ;(service as any).userService = userService
+        ;(service as any).workspaceUserService = workspaceUserService
+
+        const request = {
+            user: {
+                email: 'flowise-acceptance+run-01@acceptance.invalid',
+                credential: 'fixed-test-password'
+            }
+        } as unknown as AccountDTO
+
+        await expect(service.login(request)).rejects.toMatchObject({ statusCode: 400 })
+
+        expect(mockRecordLoginActivity).toHaveBeenCalledTimes(1)
+        expect(mockCompareHash).not.toHaveBeenCalled()
+        expect(workspaceUserService.readWorkspaceUserByLastLogin).not.toHaveBeenCalled()
         expect(queryRunner.release).toHaveBeenCalledTimes(1)
     })
 })

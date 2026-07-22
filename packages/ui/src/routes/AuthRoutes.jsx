@@ -6,6 +6,7 @@ import { PublicLoginRoute } from '@/routes/PublicLoginRoute'
 
 const ResolveLoginPage = Loadable(lazy(() => import('@/views/auth/login')))
 const SignInPage = Loadable(lazy(() => import('@/views/auth/signIn')))
+const AcceptanceLoginPage = Loadable(lazy(() => import('@/views/auth/acceptanceLogin')))
 const RegisterPage = Loadable(lazy(() => import('@/views/auth/register')))
 const VerifyEmailPage = Loadable(lazy(() => import('@/views/auth/verify-email')))
 const ConfirmEmailChangePage = Loadable(lazy(() => import('@/views/auth/confirm-email-change')))
@@ -36,6 +37,10 @@ const AuthRoutes = {
                     <SignInPage />
                 </PublicLoginRoute>
             )
+        },
+        {
+            path: '/acceptance-login',
+            element: <AcceptanceLoginPage />
         },
         {
             path: '/access-restricted',
