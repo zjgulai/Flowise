@@ -1,11 +1,12 @@
 ---
 title: Flowise 受控浏览器验收本地内存态 Harness 补充设计
 date: 2026-07-22
-status: written_spec_pending_owner_review
+status: approved_with_clarification_a_pending_implementation_authorization
 amends: docs/superpowers/specs/2026-07-22-flowise-controlled-browser-acceptance-login-design.md
 source_baseline: 1e8c291cbf5b43ff6a0cd6e2f8da824a03db751a
 production_baseline: d7bfcd
-authorization: owner_approved_scheme_a_and_single_file_commit
+authorization: owner_approved_scheme_a_clarification_a_and_single_file_followup_commit
+clarification_a_approved: true
 evidence_grade: L1_source_and_design_review
 local_runtime_write: false
 production_write: false
@@ -45,6 +46,21 @@ merge: false
 -   不使用独立 Playwright/Cypress 或另一个浏览器替代已批准的受控浏览器。
 -   不把本地 Harness 暴露到 LAN、容器公网接口或生产域名。
 -   不把本地 L2 结果表述为 candidate、deployment 或 production L4 证据。
+
+### 2.4 澄清 A：identity URL 边界
+
+当前未改变的产品合同要求 Account 页面通过 `GET /api/v1/user?id=<synthetic-user-id>` 读取用户，其他受保护页面也可能在既有产品 API 的 URL 或 payload 中传递 opaque synthetic user、organization、workspace 或 resource ID。因此，“所有 URL 均不得包含 identity”的绝对表述不可实现，也不能以跳过 Account 或重写 ID alias 的方式规避。
+
+本设计采用以下精确边界：
+
+-   raw code 与 digest 仍绝对禁止出现在任何 URL 的 path、query 或 fragment 中。
+-   synthetic email 仍绝对禁止出现在任何 URL、工具输出、模型上下文、日志或证据中。
+-   Harness/helper URL 绝对禁止包含 synthetic email 或 user、organization、workspace、resource ID。
+-   既有产品 API 可按当前未改变的产品合同，在浏览器与 Flowise 之间以内存态传递 opaque synthetic ID；不得为 Harness 新增 identity-bearing 产品 URL，也不得把 ID 改写成 proxy alias。
+-   Controller、模型、浏览器工具输出、helper、Flowise/proxy 日志与证据不得暴露或保存这些 ID，亦不得暴露或保存包含这些 ID 的完整产品 URL。
+-   Proxy 只在内存中流式转发既有产品 URL；不得记录 query 或 fragment，只按冻结的静态 pathname allowlist 统计非敏感计数。
+
+此澄清不是记录、输出或扩大使用 synthetic identity 的授权；它只承认真实产品页面已经存在的 opaque ID 传输合同。
 
 ## 3. 方案选择
 
@@ -89,6 +105,7 @@ merge: false
 -   Harness 响应使用 `Cache-Control: no-store`。
 -   Harness 使用逐响应 nonce 的严格 CSP；只允许同源脚本、连接和 frame，禁止外部资源、`object`、`base` 与第三方 frame。
 -   Proxy 不记录 request body、cookie、authorization header 或 response body。
+-   Proxy 不记录 query、fragment 或完整产品 URL；产品请求只按冻结的静态 pathname allowlist 计数。
 -   Helper cookie 在转发至 Flowise 前必须剥离。
 -   非白名单 method/path、畸形 body 和未知 route 必须固定响应并不泄露内部状态。
 
@@ -186,21 +203,23 @@ Helper 不得对 digest 再次 hash，也不得接收 raw code。
 
 ## 7. 禁止通道与可观察性
 
-| 通道            | 约束                                                                                                |
-| --------------- | --------------------------------------------------------------------------------------------------- |
-| Controller/模型 | 永远不接收 raw code、digest、邮箱或用户 ID                                                          |
-| 浏览器工具参数  | 只包含固定 URL、固定按钮标签和非敏感断言                                                            |
-| URL             | query、fragment、path 均不得包含 raw code、digest 或 identity                                       |
-| 日志            | Helper 和 proxy 只输出固定事件名、计数与成功/失败，不输出 body/cookie                               |
-| 持久化存储      | Harness 不使用 localStorage、sessionStorage、IndexedDB、Cache API 或文件                            |
-| Clipboard       | 完全禁止                                                                                            |
-| Raw CDP         | 完全禁止                                                                                            |
-| DOM/Snapshot    | secret 存在于 input 时禁止读取；只在生成前或产品 UI 清空后检查                                      |
-| Screenshot      | secret 存在于 input 时禁止截图                                                                      |
-| Network         | raw code 只允许出现在真实 acceptance login POST body；digest 只允许出现在 loopback helper POST body |
-| 证据文件        | 只保存固定状态、计数、端口归零结果和非敏感 artifact hash                                            |
+| 通道                 | 约束                                                                                                                                                  |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Controller/模型      | 永远不接收 raw code、digest、synthetic email 或 synthetic user/org/workspace/resource ID                                                              |
+| 浏览器工具参数与输出 | 只包含固定 helper URL、固定产品 pathname、固定按钮标签、布尔值/计数和非敏感断言；不得包含 identity-bearing 产品 URL                                   |
+| Secret URL           | 任何 path、query、fragment 均不得包含 raw code 或 digest                                                                                              |
+| Harness/helper URL   | 不得包含 synthetic email 或 user/org/workspace/resource ID                                                                                            |
+| 既有产品 API         | 可按未改变的产品合同以内存态传递 opaque synthetic ID；不得新增 identity-bearing URL、alias rewrite、工具回显或证据记录                                |
+| 日志                 | Helper、proxy 与 Flowise 只输出固定事件名、pathname allowlist 计数与成功/失败；不输出 body、cookie、query、fragment、ID 或 identity-bearing 完整 URL  |
+| 持久化存储           | Harness 不使用 localStorage、sessionStorage、IndexedDB、Cache API 或文件                                                                              |
+| Clipboard            | 完全禁止                                                                                                                                              |
+| Raw CDP              | 完全禁止                                                                                                                                              |
+| DOM/Snapshot         | secret 存在于 input 时禁止读取；只在生成前或产品 UI 清空后检查                                                                                        |
+| Screenshot           | secret 存在于 input 时禁止截图                                                                                                                        |
+| Network              | raw code 只允许出现在真实 acceptance login POST body；digest 只允许出现在 loopback helper POST body；opaque synthetic ID 只按既有产品合同在内存中转运 |
+| 证据文件             | 只保存固定状态、pathname 计数、端口归零结果和非敏感 artifact hash                                                                                     |
 
-Helper 页面源代码必须没有 secret 字面量、用户 identity、console 输出或持久化 API。浏览器不得检查 storage 内容；验证方式是静态检查 Harness 源与固定运行时事件。
+Helper 页面源代码必须没有 secret 字面量、用户 identity、console 输出或持久化 API。浏览器不得检查 storage 内容或网络 URL；验证方式是静态检查 Harness 源、只含 pathname 的 proxy 计数与固定运行时事件。进入 synthetic identity 流程前，必须先用公开、非身份 fixture 证明浏览器工具只返回固定布尔值/计数且不会自动回显 request URL；否则 fail closed。
 
 ## 8. 视口与交互矩阵
 
@@ -248,9 +267,9 @@ Helper 页面源代码必须没有 secret 字面量、用户 identity、console 
 实现计划必须至少包含以下红绿验证：
 
 1. 使用固定、非敏感 digest fixture 验证 helper 的 method/origin/cookie/body/CAS fail-closed contract。
-2. 静态检查 Harness 源没有 console、storage、clipboard、query/fragment secret 拼接或外部资源。
-3. 验证 proxy 仅监听 loopback，helper cookie 不会转发至 Flowise。
-4. 验证受控浏览器工具调用记录不含 raw code、digest 或 identity。
+2. 静态检查 Harness 源没有 console、storage、clipboard、外部资源、secret URL 拼接或 identity-bearing helper URL。
+3. 验证 proxy 仅监听 loopback，helper cookie 不会转发至 Flowise，且只记录静态 pathname allowlist 计数、不记录 query、fragment 或完整 URL。
+4. 在创建 synthetic identity 前，使用公开非身份 fixture 验证受控浏览器工具仅回传固定布尔值/计数，不自动回显 request URL；随后验证全部工具调用记录不含 raw code、digest、synthetic email、opaque synthetic ID 或 identity-bearing 产品 URL。
 5. 验证首次登录经过真实 `/acceptance-login` 与真实 session 建立。
 6. 验证 logout 后受保护页面不可访问。
 7. 验证同码 replay 被真实服务端拒绝。
@@ -284,7 +303,10 @@ Helper 页面源代码必须没有 secret 字面量、用户 identity、console 
 只有同时满足以下条件，方案 A 的本地实现才可判定为 L2 通过：
 
 -   raw code 只存在于 Harness closure、真实 masked input、真实登录 POST body、proxy 的瞬时字节流与 Flowise 请求内存中；
--   controller、模型、工具参数、URL、日志、存储、剪贴板、截图和证据文件均不含 secret；
+-   raw code 与 digest 不出现在任何 URL，synthetic email 不出现在任何 URL；
+-   Harness/helper URL 不含 synthetic email 或 user/org/workspace/resource ID；
+-   既有产品 API 只按未改变的产品合同以内存态传递 opaque synthetic ID，proxy 不记录 query/fragment/完整 URL 且不做 alias rewrite；
+-   controller、模型、工具参数与输出、日志、存储、剪贴板、截图和证据文件均不含 secret、synthetic email、opaque synthetic ID 或 identity-bearing 产品 URL；
 -   provisioning 只接收 digest，并以 exact run-owned identity 和单次 CAS 约束写入；
 -   首次登录真实成功，session 和受保护页面真实可用；
 -   logout 真实成功；
@@ -296,7 +318,7 @@ Helper 页面源代码必须没有 secret 字面量、用户 identity、console 
 
 ## 13. 后续门禁
 
-本文件落盘和单文件提交后停在书面规格复核门禁。只有 owner 复核本规格并再次授权，才可制定实现计划；只有实现计划再次获批，才可启动本地 runtime 和受控浏览器验收。
+Owner 已批准原书面规格、implementation plan 与澄清 A。本次只授权更新并单文件提交本 amendment spec；提交后仍停在实现授权门禁。只有 owner 复核更新后的规格并明确授权 implementation plan Task 0–8，才可创建 `$RUN_ROOT`、写入本地 SQLite、启动本地 runtime 或进行受控浏览器验收。
 
 以下事项仍未授权：
 
