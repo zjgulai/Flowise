@@ -33,9 +33,11 @@ import Workspaces from '@/views/workspace'
  */
 export const DefaultRedirect = () => {
     const { hasPermission, hasDisplay } = useAuth()
-    const { config, isOpenSource } = useConfig()
+    const { config, isOpenSource, loading } = useConfig()
     const isGlobal = useSelector((state) => state.auth.isGlobal)
     const isAuthenticated = useSelector((state) => state.auth.isAuthenticated)
+
+    if (loading) return null
 
     // Define the order of routes to check (based on the menu order in dashboard.js)
     const routesToCheck = [

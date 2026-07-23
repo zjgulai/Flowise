@@ -47,8 +47,10 @@ describe('production UI safety contracts', () => {
         expect(source).toContain("config.PUBLIC_LOGIN_ENABLED === false ? '/access-restricted' : '/login'")
     })
 
-    it('does not render the login resolver at root when public login is disabled', () => {
+    it('waits for production settings before resolving the unauthenticated root route', () => {
         const source = read('./DefaultRedirect.jsx')
+        expect(source).toContain('const { config, isOpenSource, loading } = useConfig()')
+        expect(source).toContain('if (loading) return null')
         expect(source).toContain('config.PUBLIC_LOGIN_ENABLED === false')
         expect(source).toContain("<Navigate to='/access-restricted' replace />")
     })
