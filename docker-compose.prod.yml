@@ -38,6 +38,7 @@ services:
 
             # 认证配置
             - PUBLIC_LOGIN_ENABLED=${PUBLIC_LOGIN_ENABLED:-false}
+            - ADMIN_ONLY_MODE=${ADMIN_ONLY_MODE:-true}
             - SECURE_COOKIES=${SECURE_COOKIES:-true}
             - JWT_AUTH_TOKEN_SECRET=${JWT_AUTH_TOKEN_SECRET}
             - JWT_REFRESH_TOKEN_SECRET=${JWT_REFRESH_TOKEN_SECRET}

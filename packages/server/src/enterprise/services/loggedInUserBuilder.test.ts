@@ -7,7 +7,8 @@ import { buildLoggedInUser, LoggedInUserBuilderDependencies } from './loggedInUs
 const user = {
     id: '00000000-0000-4000-8000-000000000001',
     email: 'owner@fixture.invalid',
-    name: 'Fixture Owner'
+    name: 'Fixture Owner',
+    status: 'active'
 }
 
 const workspaceUser = {
@@ -62,9 +63,9 @@ function createHarness() {
 }
 
 describe('buildLoggedInUser', () => {
-    it('preserves the existing user shape and login-state updates for password login', async () => {
+    it('allows an active owner password login and only updates last-login metadata', async () => {
         const harness = createHarness()
-        const mutableWorkspaceUser = { ...workspaceUser, status: WorkspaceUserStatus.DISABLE } as WorkspaceUser
+        const mutableWorkspaceUser = { ...workspaceUser } as WorkspaceUser
 
         const result = await buildLoggedInUser(
             {
@@ -72,7 +73,8 @@ describe('buildLoggedInUser', () => {
                 workspaceUser: mutableWorkspaceUser,
                 queryRunner: {} as never,
                 identityManager: harness.identityManager,
-                mode: 'password-login'
+                mode: 'password-login',
+                adminOnlyMode: true
             },
             harness.dependencies
         )
@@ -100,6 +102,69 @@ describe('buildLoggedInUser', () => {
             permissions: ['chatflows:manage'],
             features: { workspaces: '1' }
         })
+        expect(harness.updateWorkspaceUser).toHaveBeenCalledTimes(1)
+        expect(harness.updateOrganizationUser).not.toHaveBeenCalled()
+    })
+
+    type AdminBoundaryOverride = {
+        user?: typeof user
+        workspaceUser?: WorkspaceUser
+        organizationStatus?: OrganizationUserStatus
+        ownerRoleId?: string
+    }
+
+    it.each<[string, AdminBoundaryOverride]>([
+        ['user', { user: { ...user, status: 'deleted' } }],
+        ['workspace', { workspaceUser: { ...workspaceUser, status: WorkspaceUserStatus.DISABLE } }],
+        ['organization', { organizationStatus: OrganizationUserStatus.DISABLE }],
+        ['role', { ownerRoleId: '00000000-0000-4000-8000-000000000099' }]
+    ])('rejects a non-active-owner %s login without mutating membership state', async (_boundary, override) => {
+        const harness = createHarness()
+        if (override.organizationStatus) {
+            ;(harness.dependencies.organizationUserService!.readOrganizationUserByWorkspaceIdUserId as jest.Mock).mockResolvedValue({
+                organizationUser: { ...organizationUser, status: override.organizationStatus }
+            })
+        }
+        if (override.ownerRoleId) {
+            ;(harness.dependencies.roleService!.readGeneralRoleByName as jest.Mock).mockResolvedValue({ id: override.ownerRoleId })
+        }
+
+        await expect(
+            buildLoggedInUser(
+                {
+                    user: override.user ?? user,
+                    workspaceUser: (override.workspaceUser ?? workspaceUser) as WorkspaceUser,
+                    queryRunner: {} as never,
+                    identityManager: harness.identityManager,
+                    mode: 'password-login',
+                    adminOnlyMode: true
+                },
+                harness.dependencies
+            )
+        ).rejects.toThrow('Invalid administrator credentials')
+
+        expect(harness.updateWorkspaceUser).not.toHaveBeenCalled()
+        expect(harness.updateOrganizationUser).not.toHaveBeenCalled()
+    })
+
+    it('preserves the legacy member activation path only when admin-only mode is explicitly disabled', async () => {
+        const harness = createHarness()
+        const mutableWorkspaceUser = { ...workspaceUser, status: WorkspaceUserStatus.DISABLE } as WorkspaceUser
+
+        await expect(
+            buildLoggedInUser(
+                {
+                    user,
+                    workspaceUser: mutableWorkspaceUser,
+                    queryRunner: {} as never,
+                    identityManager: harness.identityManager,
+                    mode: 'password-login',
+                    adminOnlyMode: false
+                },
+                harness.dependencies
+            )
+        ).resolves.toMatchObject({ id: user.id })
+
         expect(harness.updateWorkspaceUser).toHaveBeenCalledTimes(1)
         expect(harness.updateOrganizationUser).toHaveBeenCalledTimes(1)
     })

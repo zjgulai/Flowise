@@ -26,6 +26,7 @@ import { decryptToken, encryptToken, generateSafeCopy } from '../../utils/tempTo
 import { getAuthStrategy } from './AuthStrategy'
 import { registerAcceptanceLoginRoute } from './acceptanceLogin'
 import { enforceAuthResolvePostOnly, resolveSecureCookie } from './authSecurityPolicy'
+import { isAdminOnlyModeEnabled } from '../../utils/adminOnlyPolicy'
 import { initializeDBClientAndStore, initializeMemoryStore, initializeRedisClientAndStore } from './SessionPersistance'
 
 const localStrategy = require('passport-local').Strategy
@@ -122,7 +123,8 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
                         user: {
                             id: response.user.id!,
                             email: response.user.email!,
-                            name: response.user.name ?? response.user.email!
+                            name: response.user.name ?? response.user.email!,
+                            status: response.user.status ?? ''
                         },
                         workspaceUser,
                         queryRunner,
@@ -139,15 +141,17 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
         )
     )
 
-    const acceptanceLoginService = new AcceptanceLoginService({
-        dataSource: getRunningExpressApp().AppDataSource,
-        identityManager
-    })
-    registerAcceptanceLoginRoute(app, {
-        appUrl: process.env.APP_URL,
-        consume: (code) => acceptanceLoginService.consume(code),
-        sendAuthenticatedResponse: setTokenOrCookies
-    })
+    if (!isAdminOnlyModeEnabled()) {
+        const acceptanceLoginService = new AcceptanceLoginService({
+            dataSource: getRunningExpressApp().AppDataSource,
+            identityManager
+        })
+        registerAcceptanceLoginRoute(app, {
+            appUrl: process.env.APP_URL,
+            consume: (code) => acceptanceLoginService.consume(code),
+            sendAuthenticatedResponse: setTokenOrCookies
+        })
+    }
 
     app.all('/api/v1/auth/resolve', enforceAuthResolvePostOnly)
 

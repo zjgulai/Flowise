@@ -1,4 +1,5 @@
 import { lazy } from 'react'
+import { Navigate } from 'react-router-dom'
 
 import Loadable from '@/ui-component/loading/Loadable'
 import AuthLayout from '@/layout/AuthLayout'
@@ -6,8 +7,6 @@ import { PublicLoginRoute } from '@/routes/PublicLoginRoute'
 
 const ResolveLoginPage = Loadable(lazy(() => import('@/views/auth/login')))
 const SignInPage = Loadable(lazy(() => import('@/views/auth/signIn')))
-const AcceptanceLoginPage = Loadable(lazy(() => import('@/views/auth/acceptanceLogin')))
-const RegisterPage = Loadable(lazy(() => import('@/views/auth/register')))
 const VerifyEmailPage = Loadable(lazy(() => import('@/views/auth/verify-email')))
 const ConfirmEmailChangePage = Loadable(lazy(() => import('@/views/auth/confirm-email-change')))
 const ForgotPasswordPage = Loadable(lazy(() => import('@/views/auth/forgotPassword')))
@@ -40,7 +39,7 @@ const AuthRoutes = {
         },
         {
             path: '/acceptance-login',
-            element: <AcceptanceLoginPage />
+            element: <Navigate to='/signin' replace />
         },
         {
             path: '/access-restricted',
@@ -48,7 +47,7 @@ const AuthRoutes = {
         },
         {
             path: '/register',
-            element: <RegisterPage />
+            element: <Navigate to='/signin' replace />
         },
         {
             path: '/verify',

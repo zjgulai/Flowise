@@ -2,9 +2,12 @@
 
 import { Platform } from '../../Interface'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+import { isAdminOnlyModeEnabled } from '../../enterprise/utils/adminOnlyPolicy'
 
 const getSettings = async () => {
     const publicLoginEnabled = process.env.PUBLIC_LOGIN_ENABLED !== 'false'
+    const adminOnlyMode = isAdminOnlyModeEnabled()
+    const publicSettings = { PUBLIC_LOGIN_ENABLED: publicLoginEnabled, ADMIN_ONLY_MODE: adminOnlyMode }
 
     try {
         const appServer = getRunningExpressApp()
@@ -13,20 +16,20 @@ const getSettings = async () => {
         switch (platformType) {
             case Platform.ENTERPRISE: {
                 if (!appServer.identityManager.isLicenseValid()) {
-                    return { PUBLIC_LOGIN_ENABLED: publicLoginEnabled }
+                    return publicSettings
                 } else {
-                    return { PLATFORM_TYPE: Platform.ENTERPRISE, PUBLIC_LOGIN_ENABLED: publicLoginEnabled }
+                    return { PLATFORM_TYPE: Platform.ENTERPRISE, ...publicSettings }
                 }
             }
             case Platform.CLOUD: {
-                return { PLATFORM_TYPE: Platform.CLOUD, PUBLIC_LOGIN_ENABLED: publicLoginEnabled }
+                return { PLATFORM_TYPE: Platform.CLOUD, ...publicSettings }
             }
             default: {
-                return { PLATFORM_TYPE: Platform.OPEN_SOURCE, PUBLIC_LOGIN_ENABLED: publicLoginEnabled }
+                return { PLATFORM_TYPE: Platform.OPEN_SOURCE, ...publicSettings }
             }
         }
     } catch (error) {
-        return { PUBLIC_LOGIN_ENABLED: publicLoginEnabled }
+        return publicSettings
     }
 }
 

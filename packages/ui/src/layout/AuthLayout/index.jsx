@@ -1,10 +1,12 @@
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import { Box, useTheme } from '@mui/material'
 
 // ==============================|| MINIMAL LAYOUT ||============================== //
 
 const AuthLayout = () => {
     const theme = useTheme()
+    const { pathname } = useLocation()
+    const isFullBleedAuthPage = pathname === '/signin' || pathname === '/login'
 
     return (
         <Box
@@ -15,15 +17,15 @@ const AuthLayout = () => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                px: 2,
+                px: isFullBleedAuthPage ? 0 : 2,
                 '& > *': {
                     width: '100%',
-                    maxWidth: '512px'
+                    maxWidth: isFullBleedAuthPage ? 'none' : '512px'
                 },
-                [theme.breakpoints.down(1367)]: {
+                [theme.breakpoints.between('md', 1367)]: {
                     alignItems: 'start',
                     overflowY: 'auto',
-                    py: '64px'
+                    py: isFullBleedAuthPage ? 0 : '64px'
                 }
             }}
         >

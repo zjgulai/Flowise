@@ -11,15 +11,17 @@ import { OrganizationUserErrorMessage, OrganizationUserService } from './organiz
 import { OrganizationService } from './organization.service'
 import { RoleErrorMessage, RoleService } from './role.service'
 import { WorkspaceUserService } from './workspace-user.service'
+import { assertAdminPasswordLoginAllowed, isAdminOnlyModeEnabled } from '../utils/adminOnlyPolicy'
 
 export type LoggedInUserBuildMode = 'password-login' | 'acceptance-login'
 
 export interface BuildLoggedInUserInput {
-    user: Pick<User, 'id' | 'email' | 'name'>
+    user: Pick<User, 'id' | 'email' | 'name' | 'status'>
     workspaceUser: WorkspaceUser
     queryRunner: QueryRunner
     identityManager: IdentityManager
     mode: LoggedInUserBuildMode
+    adminOnlyMode?: boolean
 }
 
 export interface LoggedInUserBuilderDependencies {
@@ -30,7 +32,7 @@ export interface LoggedInUserBuilderDependencies {
 }
 
 export async function buildLoggedInUser(
-    { user, workspaceUser, queryRunner, identityManager, mode }: BuildLoggedInUserInput,
+    { user, workspaceUser, queryRunner, identityManager, mode, adminOnlyMode = isAdminOnlyModeEnabled() }: BuildLoggedInUserInput,
     overrides: Partial<LoggedInUserBuilderDependencies> = {}
 ): Promise<LoggedInUser> {
     const workspaceUserService = overrides.workspaceUserService ?? new WorkspaceUserService()
@@ -47,10 +49,23 @@ export async function buildLoggedInUser(
         throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationUserErrorMessage.ORGANIZATION_USER_NOT_FOUND)
     }
 
+    const ownerRole = await roleService.readGeneralRoleByName(GeneralRole.OWNER, queryRunner)
+
     if (mode === 'acceptance-login') {
         if (workspaceUser.status !== WorkspaceUserStatus.ACTIVE || organizationUser.status !== OrganizationUserStatus.ACTIVE) {
             throw new Error('Inactive acceptance membership')
         }
+    } else if (adminOnlyMode) {
+        assertAdminPasswordLoginAllowed({
+            userStatus: user.status,
+            workspaceStatus: workspaceUser.status,
+            organizationStatus: organizationUser.status,
+            workspaceRoleId: workspaceUser.roleId,
+            ownerRoleId: ownerRole.id
+        })
+        workspaceUser.lastLogin = new Date().toISOString()
+        workspaceUser.updatedBy = workspaceUser.userId
+        await workspaceUserService.updateWorkspaceUser(workspaceUser, queryRunner)
     } else {
         workspaceUser.status = WorkspaceUserStatus.ACTIVE
         workspaceUser.lastLogin = new Date().toISOString()
@@ -68,7 +83,6 @@ export async function buildLoggedInUser(
         organizationId: assignedWorkspaceUser.workspace.organizationId
     })) as IAssignedWorkspace[]
 
-    const ownerRole = await roleService.readGeneralRoleByName(GeneralRole.OWNER, queryRunner)
     const role = await roleService.readRoleById(workspaceUser.roleId, queryRunner)
     if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
 

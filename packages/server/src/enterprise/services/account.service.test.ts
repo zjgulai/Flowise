@@ -3,6 +3,7 @@ const mockValidatePasswordOrThrow = jest.fn()
 const mockIsEmailChangeJwtShape = jest.fn().mockReturnValue(false)
 const mockCompareHash = jest.fn()
 const mockRecordLoginActivity = jest.fn()
+const mockHashNeedsUpgrade = jest.fn().mockReturnValue(false)
 
 jest.mock('bcryptjs', () => ({
     __esModule: true,
@@ -40,7 +41,7 @@ jest.mock('../utils/encryption.util', () => ({
     compareHash: mockCompareHash,
     getHash: jest.fn().mockReturnValue('replacement-derived-value'),
     getPasswordSaltRounds: jest.fn().mockReturnValue(10),
-    hashNeedsUpgrade: jest.fn().mockReturnValue(false)
+    hashNeedsUpgrade: mockHashNeedsUpgrade
 }))
 
 jest.mock('./audit', () => ({
@@ -214,6 +215,7 @@ describe('AccountService.resetPassword session revocation ordering', () => {
 describe('AccountService.login synthetic credential boundary', () => {
     beforeEach(() => {
         jest.clearAllMocks()
+        mockHashNeedsUpgrade.mockReturnValue(false)
     })
 
     it('rejects a credential-null synthetic user before password comparison or workspace lookup', async () => {
@@ -257,6 +259,59 @@ describe('AccountService.login synthetic credential boundary', () => {
         expect(mockRecordLoginActivity).toHaveBeenCalledTimes(1)
         expect(mockCompareHash).not.toHaveBeenCalled()
         expect(workspaceUserService.readWorkspaceUserByLastLogin).not.toHaveBeenCalled()
+        expect(queryRunner.release).toHaveBeenCalledTimes(1)
+    })
+
+    it('rejects a non-owner before password-hash upgrade or any membership write', async () => {
+        const queryRunner = {
+            connect: jest.fn().mockResolvedValue(undefined),
+            release: jest.fn().mockResolvedValue(undefined)
+        }
+        const dataSource = { createQueryRunner: jest.fn().mockReturnValue(queryRunner) }
+        const storedUser = {
+            id: userId,
+            email: 'member@example.invalid',
+            name: 'Member',
+            credential: 'stored-derived-value',
+            status: UserStatus.ACTIVE
+        } as User
+        const userService = {
+            readUserByEmail: jest.fn().mockResolvedValue(storedUser),
+            saveUser: jest.fn()
+        }
+        const workspaceUser = {
+            userId,
+            workspaceId: '00000000-0000-4000-8000-000000000010',
+            roleId: '00000000-0000-4000-8000-000000000011',
+            status: 'active'
+        }
+        const workspaceUserService = { readWorkspaceUserByLastLogin: jest.fn().mockResolvedValue(workspaceUser) }
+        const organizationUserService = {
+            readOrganizationUserByWorkspaceIdUserId: jest.fn().mockResolvedValue({
+                organizationUser: { userId, organizationId: '00000000-0000-4000-8000-000000000012', status: 'active' }
+            })
+        }
+        const roleService = {
+            readGeneralRoleByName: jest.fn().mockResolvedValue({ id: '00000000-0000-4000-8000-000000000099' })
+        }
+        const identityManager = { getPlatformType: jest.fn().mockReturnValue(Platform.OPEN_SOURCE) }
+
+        const service = Object.create(AccountService.prototype) as AccountService
+        ;(service as any).dataSource = dataSource
+        ;(service as any).identityManager = identityManager
+        ;(service as any).userService = userService
+        ;(service as any).workspaceUserService = workspaceUserService
+        ;(service as any).organizationUserService = organizationUserService
+        ;(service as any).roleService = roleService
+
+        mockCompareHash.mockReturnValue(true)
+        mockHashNeedsUpgrade.mockReturnValue(true)
+
+        await expect(
+            service.login({ user: { email: storedUser.email, credential: 'fixed-test-password' } } as unknown as AccountDTO)
+        ).rejects.toMatchObject({ statusCode: 401, message: 'Invalid administrator credentials' })
+
+        expect(userService.saveUser).not.toHaveBeenCalled()
         expect(queryRunner.release).toHaveBeenCalledTimes(1)
     })
 })

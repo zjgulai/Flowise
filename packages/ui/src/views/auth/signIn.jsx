@@ -2,350 +2,347 @@ import { useEffect, useState } from 'react'
 import { useSelector } from 'react-redux'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 
-// material-ui
-import { Stack, useTheme, Typography, Box, Alert, Button, Divider, Icon } from '@mui/material'
-import { IconExclamationCircle } from '@tabler/icons-react'
+import { Alert, Box, Chip, Stack, Typography } from '@mui/material'
 import { LoadingButton } from '@mui/lab'
+import { IconArrowRight, IconCheck, IconExclamationCircle, IconLock, IconRoute, IconShieldCheck } from '@tabler/icons-react'
 
-// project imports
-import MainCard from '@/ui-component/cards/MainCard'
 import { Input } from '@/ui-component/input/Input'
-
-// Hooks
 import useApi from '@/hooks/useApi'
-import { useConfig } from '@/store/context/ConfigContext'
 import { useError } from '@/store/context/ErrorContext'
-
-// API
 import authApi from '@/api/auth'
-import accountApi from '@/api/account.api'
-import loginMethodApi from '@/api/loginmethod'
-import ssoApi from '@/api/sso'
-
-// utils
 import useNotifier from '@/utils/useNotifier'
 import { parseSignInError } from './signInError'
-
-// store
 import { loginSuccess, logoutSuccess } from '@/store/reducers/authSlice'
 import { store } from '@/store'
 
-// icons
-import AzureSSOLoginIcon from '@/assets/images/microsoft-azure.svg'
-import GoogleSSOLoginIcon from '@/assets/images/google.svg'
-import Auth0SSOLoginIcon from '@/assets/images/auth0.svg'
-import GithubSSOLoginIcon from '@/assets/images/github.svg'
+const SAFE_LOGIN_ERROR = '无法登录，请确认管理员邮箱和密码后重试。'
 
-// ==============================|| SignInPage ||============================== //
+const assuranceItems = [
+    {
+        icon: IconRoute,
+        title: '流程集中编排',
+        description: '在一个工作台管理智能体、知识与自动化链路。'
+    },
+    {
+        icon: IconShieldCheck,
+        title: '权限边界清晰',
+        description: '当前版本仅向既有授权管理员开放。'
+    },
+    {
+        icon: IconLock,
+        title: '数据留在控制域',
+        description: '登录不会触发模型调用或创建新的业务账户。'
+    }
+]
 
 const SignInPage = () => {
-    const theme = useTheme()
     useSelector((state) => state.customization)
     useNotifier()
-    const { isEnterpriseLicensed, isCloud, isOpenSource } = useConfig()
 
     const usernameInput = {
-        label: '邮箱',
+        label: '管理员邮箱',
         name: 'username',
         type: 'email',
-        placeholder: 'user@company.com'
+        placeholder: 'admin@company.com',
+        autoComplete: 'username',
+        ariaLabel: '管理员邮箱'
     }
     const passwordInput = {
         label: '密码',
         name: 'password',
         type: 'password',
-        placeholder: '********',
-        enablePasswordToggle: true
+        placeholder: '请输入管理员密码',
+        autoComplete: 'current-password',
+        ariaLabel: '管理员密码',
+        enablePasswordToggle: true,
+        showPasswordLabel: '显示密码',
+        hidePasswordLabel: '隐藏密码'
     }
     const [usernameVal, setUsernameVal] = useState('')
     const [passwordVal, setPasswordVal] = useState('')
-    const [configuredSsoProviders, setConfiguredSsoProviders] = useState([])
     const [authError, setAuthError] = useState(undefined)
     const [loading, setLoading] = useState(false)
-    const [showResendButton, setShowResendButton] = useState(false)
-    const [successMessage, setSuccessMessage] = useState('')
-
     const { authRateLimitError, setAuthRateLimitError } = useError()
 
     const loginApi = useApi(authApi.login)
-    const ssoLoginApi = useApi(ssoApi.ssoLogin)
-    const getDefaultProvidersApi = useApi(loginMethodApi.getDefaultLoginMethods)
     const navigate = useNavigate()
     const location = useLocation()
-    const resendVerificationApi = useApi(accountApi.resendVerificationEmail)
 
     const doLogin = (event) => {
         event.preventDefault()
         setAuthRateLimitError(null)
-        setLoading(true)
-        const body = {
-            email: usernameVal,
-            password: passwordVal
+        setAuthError(undefined)
+
+        if (!usernameVal.trim() || !passwordVal) {
+            setAuthError('请输入管理员邮箱和密码。')
+            return
         }
-        loginApi.request(body)
+
+        setLoading(true)
+        loginApi.request({ email: usernameVal.trim(), password: passwordVal })
     }
 
     useEffect(() => {
-        if (loginApi.error) {
-            setLoading(false)
-            if (loginApi.error.response.status === 401 && loginApi.error.response.data.redirectUrl) {
-                window.location.href = loginApi.error.response.data.data.redirectUrl
-            } else {
-                setAuthError(loginApi.error.response.data.message)
-            }
+        if (!loginApi.error) return
+
+        setLoading(false)
+        const status = loginApi.error?.response?.status
+        const redirectUrl = loginApi.error?.response?.data?.redirectUrl
+        if (status === 401 && redirectUrl === '/license-expired') {
+            window.location.href = redirectUrl
+            return
         }
+        setAuthError(SAFE_LOGIN_ERROR)
     }, [loginApi.error])
 
     useEffect(() => {
         store.dispatch(logoutSuccess())
         setAuthRateLimitError(null)
-        if (!isOpenSource) {
-            getDefaultProvidersApi.request()
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [setAuthRateLimitError, isOpenSource])
+    }, [setAuthRateLimitError])
 
     useEffect(() => {
-        // Parse the "user" query parameter from the URL
         const queryParams = new URLSearchParams(location.search)
-        const errorData = queryParams.get('error')
-        const parsedError = parseSignInError(errorData)
-        if (parsedError) setAuthError(parsedError)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        const parsedError = parseSignInError(queryParams.get('error'))
+        if (parsedError) setAuthError(SAFE_LOGIN_ERROR)
     }, [location.search])
 
     useEffect(() => {
-        if (loginApi.data) {
-            setLoading(false)
-            store.dispatch(loginSuccess(loginApi.data))
-            navigate(location.state?.path || '/')
-            //navigate(0)
-        }
+        if (!loginApi.data) return
 
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [loginApi.data])
-
-    useEffect(() => {
-        if (ssoLoginApi.data) {
-            store.dispatch(loginSuccess(ssoLoginApi.data))
-            navigate(location.state?.path || '/')
-        }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [ssoLoginApi.data])
-
-    useEffect(() => {
-        if (ssoLoginApi.error) {
-            if (ssoLoginApi.error?.response?.status === 401 && ssoLoginApi.error?.response?.data.redirectUrl) {
-                window.location.href = ssoLoginApi.error.response.data.redirectUrl
-            } else {
-                setAuthError(ssoLoginApi.error.message)
-            }
-        }
-    }, [ssoLoginApi.error])
-
-    useEffect(() => {
-        if (getDefaultProvidersApi.data && getDefaultProvidersApi.data.providers) {
-            //data is an array of objects, store only the provider attribute
-            setConfiguredSsoProviders(getDefaultProvidersApi.data.providers.map((provider) => provider))
-        }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [getDefaultProvidersApi.data])
-
-    useEffect(() => {
-        if (authError === 'User Email Unverified') {
-            setShowResendButton(true)
-        } else {
-            setShowResendButton(false)
-        }
-    }, [authError])
-
-    const signInWithSSO = (ssoProvider) => {
-        window.location.href = `/api/v1/${ssoProvider}/login`
-    }
-
-    const handleResendVerification = async () => {
-        try {
-            await resendVerificationApi.request({ email: usernameVal })
-            setAuthError(undefined)
-            setSuccessMessage('验证邮件已成功发送。')
-            setShowResendButton(false)
-        } catch (error) {
-            setAuthError(error.response?.data?.message || '发送验证邮件失败。')
-        }
-    }
+        setLoading(false)
+        store.dispatch(loginSuccess(loginApi.data))
+        navigate(location.state?.path || '/')
+    }, [location.state?.path, loginApi.data, navigate])
 
     return (
-        <>
-            <MainCard maxWidth='sm'>
-                <Stack flexDirection='column' sx={{ width: '100%', maxWidth: '480px', gap: 3 }}>
-                    {successMessage && (
-                        <Alert variant='filled' severity='success' onClose={() => setSuccessMessage('')}>
-                            {successMessage}
-                        </Alert>
-                    )}
-                    {authRateLimitError && (
-                        <Alert icon={<IconExclamationCircle />} variant='filled' severity='error'>
-                            {authRateLimitError}
-                        </Alert>
-                    )}
-                    {authError && (
-                        <Alert icon={<IconExclamationCircle />} variant='filled' severity='error'>
-                            {authError}
-                        </Alert>
-                    )}
-                    {showResendButton && (
-                        <Stack sx={{ gap: 1 }}>
-                            <Button variant='text' onClick={handleResendVerification}>
-                                重新发送验证邮件
-                            </Button>
+        <Box
+            component='main'
+            sx={{
+                width: '100%',
+                minHeight: '100vh',
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1.08fr) minmax(480px, 0.92fr)' },
+                backgroundColor: '#F5F2EA'
+            }}
+        >
+            <Box
+                component='section'
+                aria-label='产品介绍'
+                sx={{
+                    position: 'relative',
+                    overflow: 'hidden',
+                    minHeight: { xs: 220, sm: 280, lg: '100vh' },
+                    px: { xs: 3, sm: 6, lg: 8, xl: 12 },
+                    py: { xs: 3, sm: 5, lg: 7 },
+                    color: '#F8F5EC',
+                    backgroundColor: '#0C2230',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    '&::after': {
+                        content: '""',
+                        position: 'absolute',
+                        width: { xs: 240, lg: 520 },
+                        height: { xs: 240, lg: 520 },
+                        right: { xs: -130, lg: -210 },
+                        bottom: { xs: -175, lg: -220 },
+                        border: '1px solid rgba(130, 203, 183, 0.26)',
+                        borderRadius: '50%',
+                        boxShadow: '0 0 0 72px rgba(130, 203, 183, 0.035), 0 0 0 144px rgba(130, 203, 183, 0.025)'
+                    }
+                }}
+            >
+                <Stack spacing={{ xs: 3, lg: 8 }} sx={{ position: 'relative', zIndex: 1 }}>
+                    <Stack direction='row' alignItems='center' spacing={1.5}>
+                        <Box
+                            aria-hidden='true'
+                            sx={{
+                                width: 34,
+                                height: 34,
+                                display: 'grid',
+                                placeItems: 'center',
+                                border: '1px solid rgba(248, 245, 236, 0.48)',
+                                borderRadius: '9px',
+                                transform: 'rotate(45deg)'
+                            }}
+                        >
+                            <Box sx={{ width: 10, height: 10, bgcolor: '#82CBB7', borderRadius: '2px' }} />
+                        </Box>
+                        <Typography sx={{ fontSize: 20, fontWeight: 700, letterSpacing: '0.04em' }}>FlowAgentic</Typography>
+                        <Chip
+                            label='管理控制台'
+                            size='small'
+                            sx={{ color: '#C9DED7', bgcolor: 'rgba(130, 203, 183, 0.1)', border: '1px solid rgba(130, 203, 183, 0.24)' }}
+                        />
+                    </Stack>
+
+                    <Stack spacing={2.5} sx={{ maxWidth: 680 }}>
+                        <Typography
+                            component='h1'
+                            sx={{
+                                fontSize: { xs: 32, sm: 44, lg: 58, xl: 66 },
+                                lineHeight: 1.08,
+                                fontWeight: 650,
+                                letterSpacing: '-0.045em',
+                                maxWidth: 650
+                            }}
+                        >
+                            让每一次智能流转，
+                            <Box component='span' sx={{ color: '#82CBB7' }}>
+                                都有清晰的控制边界
+                            </Box>
+                        </Typography>
+                        <Typography
+                            sx={{ color: 'rgba(237, 241, 236, 0.68)', fontSize: { xs: 15, lg: 18 }, lineHeight: 1.8, maxWidth: 570 }}
+                        >
+                            面向团队的智能体编排与知识工作台。把复杂流程收进可观察、可管理、可回退的统一控制面。
+                        </Typography>
+                    </Stack>
+
+                    <Box sx={{ display: { xs: 'none', lg: 'grid' }, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 1.5 }}>
+                        {assuranceItems.map(({ icon: AssuranceIcon, title, description }) => (
+                            <Stack
+                                key={title}
+                                spacing={1.5}
+                                sx={{
+                                    p: 2.25,
+                                    minHeight: 168,
+                                    borderTop: '1px solid rgba(248, 245, 236, 0.22)',
+                                    bgcolor: 'rgba(255,255,255,0.025)'
+                                }}
+                            >
+                                <AssuranceIcon size={22} color='#82CBB7' stroke={1.6} />
+                                <Typography sx={{ fontWeight: 650, fontSize: 15 }}>{title}</Typography>
+                                <Typography sx={{ color: 'rgba(237, 241, 236, 0.58)', fontSize: 13, lineHeight: 1.65 }}>
+                                    {description}
+                                </Typography>
+                            </Stack>
+                        ))}
+                    </Box>
+                </Stack>
+
+                <Stack direction='row' alignItems='center' spacing={1} sx={{ position: 'relative', zIndex: 1, mt: { xs: 4, lg: 8 } }}>
+                    <Box
+                        sx={{
+                            width: 7,
+                            height: 7,
+                            borderRadius: '50%',
+                            bgcolor: '#82CBB7',
+                            boxShadow: '0 0 0 5px rgba(130, 203, 183, 0.11)'
+                        }}
+                    />
+                    <Typography sx={{ color: 'rgba(237, 241, 236, 0.64)', fontSize: 13 }}>管理员专属入口 · 新用户注册已关闭</Typography>
+                </Stack>
+            </Box>
+
+            <Box
+                component='section'
+                aria-label='管理员登录'
+                sx={{
+                    px: { xs: 3, sm: 8, lg: 8, xl: 12 },
+                    py: { xs: 5, sm: 7, lg: 6 },
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minWidth: 0
+                }}
+            >
+                <Stack sx={{ width: '100%', maxWidth: 480 }} spacing={4}>
+                    <Stack spacing={1.5}>
+                        <Stack direction='row' alignItems='center' spacing={1}>
+                            <IconCheck size={17} color='#16725D' />
+                            <Typography sx={{ color: '#16725D', fontSize: 13, fontWeight: 700, letterSpacing: '0.08em' }}>
+                                仅限授权管理员
+                            </Typography>
                         </Stack>
-                    )}
-                    <Stack sx={{ gap: 1 }}>
-                        <Typography variant='h1'>登录</Typography>
-                        {isCloud && (
-                            <Typography variant='body2' sx={{ color: theme.palette.grey[600] }}>
-                                还没有账户？{' '}
-                                <Link style={{ color: `${theme.palette.primary.main}` }} to='/register'>
-                                    免费注册
-                                </Link>
-                                .
-                            </Typography>
+                        <Typography
+                            component='h2'
+                            sx={{ color: '#142833', fontSize: { xs: 32, sm: 40 }, fontWeight: 700, letterSpacing: '-0.035em' }}
+                        >
+                            管理员登录
+                        </Typography>
+                        <Typography sx={{ color: '#607079', fontSize: 15, lineHeight: 1.7 }}>
+                            使用现有管理员账号进入工作台。当前不开放新用户注册。
+                        </Typography>
+                    </Stack>
+
+                    <Stack aria-live='polite' spacing={1.5}>
+                        {authRateLimitError && (
+                            <Alert icon={<IconExclamationCircle />} severity='error'>
+                                {authRateLimitError}
+                            </Alert>
                         )}
-                        {isEnterpriseLicensed && (
-                            <Typography variant='body2' sx={{ color: theme.palette.grey[600] }}>
-                                有邀请码？{' '}
-                                <Link style={{ color: `${theme.palette.primary.main}` }} to='/register'>
-                                    注册账户
-                                </Link>
-                                .
-                            </Typography>
+                        {authError && (
+                            <Alert icon={<IconExclamationCircle />} severity='error'>
+                                {authError}
+                            </Alert>
                         )}
                     </Stack>
-                    <form onSubmit={doLogin}>
-                        <Stack sx={{ width: '100%', flexDirection: 'column', alignItems: 'left', justifyContent: 'center', gap: 2 }}>
-                            <Box sx={{ p: 0 }}>
-                                <div style={{ display: 'flex', flexDirection: 'row' }}>
-                                    <Typography>
-                                        邮箱<span style={{ color: 'red' }}>&nbsp;*</span>
-                                    </Typography>
-                                    <div style={{ flexGrow: 1 }}></div>
-                                </div>
-                                <Input
-                                    inputParam={usernameInput}
-                                    onChange={(newValue) => setUsernameVal(newValue)}
-                                    value={usernameVal}
-                                    showDialog={false}
-                                />
+
+                    <Box component='form' onSubmit={doLogin} noValidate>
+                        <Stack spacing={2.75}>
+                            <Box
+                                sx={{
+                                    '& .MuiOutlinedInput-root': { bgcolor: '#FCFBF7' },
+                                    '& .Mui-focused .MuiOutlinedInput-notchedOutline': { borderWidth: 2 }
+                                }}
+                            >
+                                <Typography component='label' htmlFor='username' sx={{ color: '#253B45', fontSize: 14, fontWeight: 650 }}>
+                                    管理员邮箱
+                                </Typography>
+                                <Input inputParam={usernameInput} onChange={setUsernameVal} value={usernameVal} />
                             </Box>
-                            <Box sx={{ p: 0 }}>
-                                <div style={{ display: 'flex', flexDirection: 'row' }}>
-                                    <Typography>
-                                        密码<span style={{ color: 'red' }}>&nbsp;*</span>
+                            <Box
+                                sx={{
+                                    '& .MuiOutlinedInput-root': { bgcolor: '#FCFBF7' },
+                                    '& .Mui-focused .MuiOutlinedInput-notchedOutline': { borderWidth: 2 }
+                                }}
+                            >
+                                <Stack direction='row' alignItems='center' justifyContent='space-between'>
+                                    <Typography
+                                        component='label'
+                                        htmlFor='password'
+                                        sx={{ color: '#253B45', fontSize: 14, fontWeight: 650 }}
+                                    >
+                                        密码
                                     </Typography>
-                                    <div style={{ flexGrow: 1 }}></div>
-                                </div>
-                                <Input inputParam={passwordInput} onChange={(newValue) => setPasswordVal(newValue)} value={passwordVal} />
-                                <Typography variant='body2' sx={{ color: theme.palette.grey[600], mt: 1, textAlign: 'right' }}>
-                                    <Link style={{ color: theme.palette.primary.main }} to='/forgot-password'>
+                                    <Link
+                                        to='/forgot-password'
+                                        style={{ color: '#16725D', fontSize: 13, fontWeight: 600, textDecoration: 'none' }}
+                                    >
                                         忘记密码？
                                     </Link>
-                                </Typography>
+                                </Stack>
+                                <Input inputParam={passwordInput} onChange={setPasswordVal} value={passwordVal} />
                             </Box>
                             <LoadingButton
                                 loading={loading}
                                 variant='contained'
-                                style={{ borderRadius: 12, height: 40, marginRight: 5 }}
                                 type='submit'
+                                endIcon={<IconArrowRight size={18} />}
+                                sx={{
+                                    minHeight: 50,
+                                    borderRadius: '8px',
+                                    bgcolor: '#0C2230',
+                                    fontSize: 15,
+                                    fontWeight: 700,
+                                    boxShadow: 'none',
+                                    '&:hover': { bgcolor: '#163747', boxShadow: '0 8px 22px rgba(12, 34, 48, 0.18)' }
+                                }}
                             >
-                                登录
+                                进入工作台
                             </LoadingButton>
-                            {configuredSsoProviders && configuredSsoProviders.length > 0 && (
-                                <Divider sx={{ width: '100%' }}>或使用</Divider>
-                            )}
-                            {configuredSsoProviders &&
-                                configuredSsoProviders.map(
-                                    (ssoProvider) =>
-                                        //https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps
-                                        ssoProvider === 'azure' && (
-                                            <Button
-                                                key={ssoProvider}
-                                                variant='outlined'
-                                                style={{ borderRadius: 12, height: 45, marginRight: 5, lineHeight: 0 }}
-                                                onClick={() => signInWithSSO(ssoProvider)}
-                                                startIcon={
-                                                    <Icon>
-                                                        <img src={AzureSSOLoginIcon} alt={'MicrosoftSSO'} width={20} height={20} />
-                                                    </Icon>
-                                                }
-                                            >
-                                                使用 Microsoft 登录
-                                            </Button>
-                                        )
-                                )}
-                            {configuredSsoProviders &&
-                                configuredSsoProviders.map(
-                                    (ssoProvider) =>
-                                        ssoProvider === 'google' && (
-                                            <Button
-                                                key={ssoProvider}
-                                                variant='outlined'
-                                                style={{ borderRadius: 12, height: 45, marginRight: 5, lineHeight: 0 }}
-                                                onClick={() => signInWithSSO(ssoProvider)}
-                                                startIcon={
-                                                    <Icon>
-                                                        <img src={GoogleSSOLoginIcon} alt={'GoogleSSO'} width={20} height={20} />
-                                                    </Icon>
-                                                }
-                                            >
-                                                使用 Google 登录
-                                            </Button>
-                                        )
-                                )}
-                            {configuredSsoProviders &&
-                                configuredSsoProviders.map(
-                                    (ssoProvider) =>
-                                        ssoProvider === 'auth0' && (
-                                            <Button
-                                                key={ssoProvider}
-                                                variant='outlined'
-                                                style={{ borderRadius: 12, height: 45, marginRight: 5, lineHeight: 0 }}
-                                                onClick={() => signInWithSSO(ssoProvider)}
-                                                startIcon={
-                                                    <Icon>
-                                                        <img src={Auth0SSOLoginIcon} alt={'Auth0SSO'} width={20} height={20} />
-                                                    </Icon>
-                                                }
-                                            >
-                                                使用 Auth0 登录
-                                            </Button>
-                                        )
-                                )}
-                            {configuredSsoProviders &&
-                                configuredSsoProviders.map(
-                                    (ssoProvider) =>
-                                        ssoProvider === 'github' && (
-                                            <Button
-                                                key={ssoProvider}
-                                                variant='outlined'
-                                                style={{ borderRadius: 12, height: 45, marginRight: 5, lineHeight: 0 }}
-                                                onClick={() => signInWithSSO(ssoProvider)}
-                                                startIcon={
-                                                    <Icon>
-                                                        <img src={GithubSSOLoginIcon} alt={'GithubSSO'} width={20} height={20} />
-                                                    </Icon>
-                                                }
-                                            >
-                                                使用 Github 登录
-                                            </Button>
-                                        )
-                                )}
                         </Stack>
-                    </form>
+                    </Box>
+
+                    <Box sx={{ pt: 2.5, borderTop: '1px solid #D9D6CD' }}>
+                        <Typography sx={{ color: '#78858A', fontSize: 12.5, lineHeight: 1.7 }}>
+                            登录即表示你正在访问受保护的管理区域。系统会记录必要的安全活动，但不会在登录阶段调用外部模型服务。
+                        </Typography>
+                    </Box>
                 </Stack>
-            </MainCard>
-        </>
+            </Box>
+        </Box>
     )
 }
 

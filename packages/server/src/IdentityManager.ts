@@ -18,6 +18,7 @@ import jwt from 'jsonwebtoken'
 import path from 'path'
 import Stripe from 'stripe'
 import { LoginMethodStatus } from './enterprise/database/entities/login-method.entity'
+import { isAdminOnlyModeEnabled } from './enterprise/utils/adminOnlyPolicy'
 import { ErrorMessage, LoggedInUser } from './enterprise/Interface.Enterprise'
 import { Permissions } from './enterprise/rbac/Permissions'
 import { LoginMethodService } from './enterprise/services/login-method.service'
@@ -157,6 +158,10 @@ export class IdentityManager {
     }
 
     public initializeSSO = async (app: express.Application) => {
+        if (isAdminOnlyModeEnabled()) {
+            this.initializeEmptySSO(app)
+            return
+        }
         if (this.getPlatformType() === Platform.CLOUD || this.getPlatformType() === Platform.ENTERPRISE) {
             const loginMethodService = new LoginMethodService()
             let queryRunner
@@ -200,6 +205,7 @@ export class IdentityManager {
     }
 
     initializeSsoProvider(app: Application, providerName: string, providerConfig: any) {
+        if (isAdminOnlyModeEnabled()) providerConfig = undefined
         if (this.ssoProviders.has(providerName)) {
             const provider = this.ssoProviders.get(providerName)
             if (provider) {

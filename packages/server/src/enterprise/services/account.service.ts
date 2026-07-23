@@ -55,6 +55,7 @@ import {
 import { generateTempToken } from '../utils/tempTokenUtils'
 import { getSecureAppUrl, getSecureTokenLink } from '../utils/url.util'
 import { validatePasswordOrThrow } from '../utils/validation.util'
+import { ADMIN_ONLY_ERROR_MESSAGE, assertAdminPasswordLoginAllowed, isAdminOnlyModeEnabled } from '../utils/adminOnlyPolicy'
 import auditService from './audit'
 import { OrganizationUserErrorMessage, OrganizationUserService } from './organization-user.service'
 import { OrganizationErrorMessage, OrganizationService } from './organization.service'
@@ -558,17 +559,10 @@ export class AccountService {
                 throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, UserErrorMessage.INCORRECT_USER_EMAIL_OR_CREDENTIALS)
             }
 
-            // If the stored hash was created with fewer salt rounds than the current minimum
-            // (e.g. 5 before we increased to 10), rehash with the current rounds on successful login.
-            if (hashNeedsUpgrade(user.credential!, getPasswordSaltRounds())) {
-                try {
-                    const newHash = getHash(data.user.credential!)
-                    await this.userService.saveUser({ ...user, credential: newHash }, queryRunner)
-                } catch (upgradeError) {
-                    logger.warn(`Failed to upgrade password hash for user ${user.email}`, upgradeError)
-                }
+            const adminOnlyMode = isAdminOnlyModeEnabled()
+            if (adminOnlyMode && user.status !== UserStatus.ACTIVE) {
+                throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, ADMIN_ONLY_ERROR_MESSAGE)
             }
-
             if (user.status === UserStatus.UNVERIFIED) {
                 await auditService.recordLoginActivity(data.user.email || '', LoginActivityCode.REGISTRATION_PENDING, 'Login Failed')
                 throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, UserErrorMessage.USER_EMAIL_UNVERIFIED)
@@ -582,6 +576,34 @@ export class AccountService {
                     throw new InternalFlowiseError(StatusCodes.NOT_FOUND, WorkspaceUserErrorMessage.WORKSPACE_USER_NOT_FOUND)
                 }
             }
+
+            if (adminOnlyMode) {
+                const { organizationUser } = await this.organizationUserService.readOrganizationUserByWorkspaceIdUserId(
+                    wsUserOrUsers.workspaceId,
+                    user.id,
+                    queryRunner
+                )
+                const ownerRole = await this.roleService.readGeneralRoleByName(GeneralRole.OWNER, queryRunner)
+                assertAdminPasswordLoginAllowed({
+                    userStatus: user.status,
+                    workspaceStatus: wsUserOrUsers.status,
+                    organizationStatus: organizationUser?.status,
+                    workspaceRoleId: wsUserOrUsers.roleId,
+                    ownerRoleId: ownerRole.id
+                })
+            }
+
+            // If the stored hash was created with fewer salt rounds than the current minimum
+            // (e.g. 5 before we increased to 10), rehash with the current rounds on successful login.
+            if (hashNeedsUpgrade(user.credential!, getPasswordSaltRounds())) {
+                try {
+                    const newHash = getHash(data.user.credential!)
+                    await this.userService.saveUser({ ...user, credential: newHash }, queryRunner)
+                } catch (upgradeError) {
+                    logger.warn(`Failed to upgrade password hash for user ${user.email}`, upgradeError)
+                }
+            }
+
             if (platform === Platform.ENTERPRISE) {
                 await auditService.recordLoginActivity(user.email, LoginActivityCode.LOGIN_SUCCESS, 'Login Success')
             }

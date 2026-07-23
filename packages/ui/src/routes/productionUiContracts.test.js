@@ -14,16 +14,32 @@ describe('production UI safety contracts', () => {
         expect(source).toContain("path: '/access-restricted'")
     })
 
-    it('keeps acceptance login isolated from public-login guards and browser storage or URL input', () => {
+    it('removes public registration and acceptance-login forms from the admin-only route surface', () => {
         const routes = read('./AuthRoutes.jsx')
-        const page = read('../views/auth/acceptanceLogin.jsx')
 
+        expect(routes).toContain("path: '/register'")
         expect(routes).toContain("path: '/acceptance-login'")
-        expect(routes.match(/path: '\/signin',[\s\S]*?<PublicLoginRoute>/)).toBeTruthy()
-        expect(page).toContain("type='password'")
-        expect(page).toContain("autoComplete='one-time-code'")
-        expect(page).not.toMatch(/location\.(search|hash)|URLSearchParams|localStorage|sessionStorage/)
-        expect(page).not.toMatch(/name=['"](?:email|password)['"]/)
+        expect(routes.match(/path: '\/register',[\s\S]*?<Navigate to='\/signin' replace \/>/)).toBeTruthy()
+        expect(routes.match(/path: '\/acceptance-login',[\s\S]*?<Navigate to='\/signin' replace \/>/)).toBeTruthy()
+        expect(routes).not.toContain('AcceptanceLoginPage')
+        expect(routes).not.toContain('RegisterPage')
+    })
+
+    it('renders a PC-first administrator cover without registration or SSO calls', () => {
+        const signIn = read('../views/auth/signIn.jsx')
+        const layout = read('../layout/AuthLayout/index.jsx')
+
+        expect(signIn).toContain('管理员登录')
+        expect(signIn).toContain('让每一次智能流转')
+        expect(signIn).toContain('仅限授权管理员')
+        expect(signIn).toContain("gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1.08fr) minmax(480px, 0.92fr)' }")
+        expect(signIn).toContain("aria-live='polite'")
+        expect(signIn).toContain("autoComplete: 'username'")
+        expect(signIn).not.toContain("to='/register'")
+        expect(signIn).not.toContain('getDefaultProvidersApi.request()')
+        expect(signIn).not.toContain('signInWithSSO')
+        expect(layout).toContain('isFullBleedAuthPage')
+        expect(layout).toContain("pathname === '/signin' || pathname === '/login'")
     })
 
     it('redirects unauthenticated protected routes to the configured public access boundary', () => {
@@ -38,7 +54,7 @@ describe('production UI safety contracts', () => {
     })
 
     it('fails closed when platform settings cannot be loaded', () => {
-        expect(read('../store/context/ConfigContext.jsx')).toContain('useState({ PUBLIC_LOGIN_ENABLED: false })')
+        expect(read('../store/context/ConfigContext.jsx')).toContain('useState({ PUBLIC_LOGIN_ENABLED: false, ADMIN_ONLY_MODE: true })')
     })
 
     it('protects the account route with RequireAuth', () => {

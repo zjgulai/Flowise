@@ -14,6 +14,7 @@ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { StatusCodes } from 'http-status-codes'
 import { Platform } from '../../Interface'
 import { UserStatus } from '../database/entities/user.entity'
+import { ADMIN_ONLY_ERROR_MESSAGE, isAdminOnlyModeEnabled } from '../utils/adminOnlyPolicy'
 
 abstract class SSOBase {
     protected app: express.Application
@@ -46,6 +47,9 @@ abstract class SSOBase {
         let queryRunner
         const ssoProviderName = this.getProviderName()
         try {
+            if (isAdminOnlyModeEnabled()) {
+                throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, ADMIN_ONLY_ERROR_MESSAGE)
+            }
             queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
             await queryRunner.connect()
 

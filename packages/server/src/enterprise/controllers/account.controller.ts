@@ -9,6 +9,7 @@ import { Organization } from '../database/entities/organization.entity'
 import { User } from '../database/entities/user.entity'
 import { resolveSecureCookie } from '../middleware/passport/authSecurityPolicy'
 import { AccountDTO, AccountService } from '../services/account.service'
+import { assertAccountProvisioningAllowed } from '../utils/adminOnlyPolicy'
 
 const AUTH_COOKIE_NAMES = ['connect.sid', 'token', 'refreshToken'] as const
 
@@ -28,6 +29,7 @@ function clearAuthenticationCookies(res: Response): void {
 export class AccountController {
     public async register(req: Request, res: Response, next: NextFunction) {
         try {
+            assertAccountProvisioningAllowed()
             const accountService = new AccountService()
             const sanitizedBody = sanitizeRegistrationDTO(req.body)
             const data = await accountService.register(sanitizedBody)
@@ -39,6 +41,7 @@ export class AccountController {
 
     public async invite(req: Request, res: Response, next: NextFunction) {
         try {
+            assertAccountProvisioningAllowed()
             const accountService = new AccountService()
             const data = await accountService.invite(req.body, req.user)
             return res.status(StatusCodes.CREATED).json(data)
