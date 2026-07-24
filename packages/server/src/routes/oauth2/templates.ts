@@ -5,12 +5,26 @@
  * The templates provide consistent styling and behavior for success and error pages.
  */
 
+import { getSecureAppUrl } from '../../enterprise/utils/url.util'
+
 /**
  * Escapes HTML special characters to prevent XSS attacks
  */
 const escapeHtml = (unsafe: string): string => {
     return unsafe.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;')
 }
+
+const serializeForInlineScript = (value: unknown): string =>
+    JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, (character) => {
+        const replacements: Record<string, string> = {
+            '<': '\\u003c',
+            '>': '\\u003e',
+            '&': '\\u0026',
+            '\u2028': '\\u2028',
+            '\u2029': '\\u2029'
+        }
+        return replacements[character]
+    })
 
 export interface OAuth2PageOptions {
     title: string
@@ -33,6 +47,8 @@ export const generateOAuth2ResponsePage = (options: OAuth2PageOptions): string =
     const safeStatusText = escapeHtml(statusText)
     const safeMessage = escapeHtml(message)
     const safeDetails = details ? escapeHtml(details) : undefined
+    const postMessagePayload = serializeForInlineScript({ type: postMessageType, ...postMessageData })
+    const postMessageOrigin = serializeForInlineScript(new URL(getSecureAppUrl()).origin)
 
     return `
         <!DOCTYPE html>
@@ -87,10 +103,7 @@ export const generateOAuth2ResponsePage = (options: OAuth2PageOptions): string =
                 // Notify parent window
                 try {
                     if (window.opener) {
-                        window.opener.postMessage(${JSON.stringify({
-                            type: postMessageType,
-                            ...postMessageData
-                        })}, '*');
+                        window.opener.postMessage(${postMessagePayload}, ${postMessageOrigin});
                     }
                 } catch (error) {
                     console.log('Could not notify parent window:', error);
