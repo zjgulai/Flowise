@@ -27,6 +27,8 @@
 !**/examples/package-lock.json
 **/yarn.lock
 .pnpm-store/
+**/.ruff_cache/
+**/*.baiduyun.uploading.cfg
 **/api.json
 **/uploads
 **/*.tgz

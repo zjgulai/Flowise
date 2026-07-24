@@ -139,6 +139,9 @@ context_git_patterns=(
     '**/yarn.lock'
     '**/logs'
     '.pnpm-store/'
+    '**/.ruff_cache/'
+    '**/*.baiduyun.uploading.cfg'
+    '**/*.baiduyun.uploading.cfg'
     '**/tmp'
     '**/temp'
     '**/coverage'
@@ -178,6 +181,9 @@ context_docker_patterns=(
     '**/yarn.lock'
     '**/logs'
     '.pnpm-store/'
+    '**/.ruff_cache/'
+    '**/*.baiduyun.uploading.cfg'
+    '**/*.baiduyun.uploading.cfg'
     '**/tmp'
     '**/temp'
     '**/coverage'
@@ -217,6 +223,9 @@ context_probe_paths=(
     'packages/server/yarn.lock'
     'packages/server/logs/server.txt'
     '.pnpm-store/cache/index'
+    '.ruff_cache/CACHEDIR.TAG'
+    '.release-source-probe.baiduyun.uploading.cfg'
+    'scripts/.release-source-probe.baiduyun.uploading.cfg'
     'packages/server/tmp/local.txt'
     'packages/server/temp/local.txt'
     'packages/server/coverage/lcov.info'
@@ -478,6 +487,12 @@ while IFS= read -r -d '' path; do
         printf '%s\n' "$path"
         status=1
     fi
+    case "$path" in
+        .ruff_cache/*|*/.ruff_cache/*|*.baiduyun.uploading.cfg)
+            printf '%s\n' "$path"
+            status=1
+            ;;
+    esac
 done <"$tracked_paths"
 
 if [[ "$git_error" -ne 0 ]]; then

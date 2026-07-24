@@ -15,6 +15,10 @@
 ## pnpm
 .pnpm-store/
 
+## local tool and upload state
+**/.ruff_cache/
+**/*.baiduyun.uploading.cfg
+
 ## build
 **/dist
 **/build
