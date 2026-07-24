@@ -90,6 +90,28 @@ file_not_contains_regex() {
     fi
 }
 
+workflow_actions_commit_pinned() {
+    local file=$1
+    local label=$2
+    if awk '
+        /^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*/ {
+            ref = $0
+            sub(/^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*/, "", ref)
+            sub(/[[:space:]#].*$/, "", ref)
+            if (ref ~ /^\.\//) next
+            separator = index(ref, "@")
+            digest = separator == 0 ? "" : substr(ref, separator + 1)
+            if (separator == 0 || length(digest) != 40 || digest !~ /^[0-9a-f]+$/) invalid = 1
+            external += 1
+        }
+        END { exit invalid || external == 0 }
+    ' "$REPO_ROOT/$file"; then
+        pass "$label"
+    else
+        fail "$label"
+    fi
+}
+
 file_contains_in_order() {
     local file=$1
     local first=$2
@@ -428,8 +450,15 @@ file_contains ".npmrc" "engine-strict = true" ".npmrc enforces package engines"
 file_contains "package.json" '"packageManager": "pnpm@10.26.0"' "package.json pins the pnpm package manager"
 file_contains "package.json" '"node": "24.18.0"' "package.json pins the Node engine"
 file_contains "package.json" '"pnpm": "10.26.0"' "package.json pins the pnpm engine"
+file_contains "package.json" '"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"' "Root override pins the reviewed SheetJS CDN tarball"
+file_contains "packages/components/package.json" '"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"' "Components pins the reviewed SheetJS CDN tarball"
+file_contains "pnpm-lock.yaml" 'resolution: {integrity: sha512-oLDq3jw7AcLqKWH2AhCpVTZl8mf6X2YReP+Neh0SJUzV/BdZYjth94tG5toiMB1PPrYtxOCfaoUCkvtuH+3AJA==, tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}' "Lockfile binds SheetJS URL to the reviewed SHA-512 integrity"
+file_contains "package.json" '"dompurify": "3.4.12"' "Root override pins DOMPurify"
+file_contains "packages/ui/package.json" '"dompurify": "3.4.12"' "UI pins DOMPurify"
+file_contains "packages/agentflow/package.json" '"dompurify": "3.4.12"' "Agentflow pins DOMPurify"
+file_contains "packages/components/package.json" '"mammoth": "1.11.0"' "Components pins the remediated Mammoth release"
 file_contains "package.json" '"release:manifest": "node scripts/release-manifest.mjs"' "package.json exposes the release manifest CLI"
-file_contains "package.json" '"test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs"' "package.json exposes release contract tests"
+file_contains "package.json" '"test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs scripts/publish-verified-image.test.mjs"' "package.json exposes release contract tests"
 file_fixed_count "Dockerfile" "FROM docker.io/library/node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd" 2 "Dockerfile pins both Node stages to the reviewed registry index digest"
 file_not_contains_regex "Dockerfile" '^FROM[[:space:]]+node:' "Dockerfile has no floating Node base"
 file_contains "Dockerfile" "COPY package.json pnpm-workspace.yaml .npmrc ./" "Dockerfile applies the pnpm workspace config before install"
@@ -508,6 +537,8 @@ file_contains "packages/server/src/utils/csp.ts" "CSP_REPORT_ONLY_MODE must be s
 file_contains "packages/server/src/utils/csp.ts" "resolveReportingEndpoint(env.APP_URL)" "Reporting API endpoint is derived from canonical APP_URL"
 file_contains "packages/server/src/index.ts" "validateCspReportTrustProxy(trustProxy, cspReportOnlyEnabled)" "CSP reporting rejects unrestricted proxy trust"
 file_contains "packages/server/src/index.ts" "import './globalAgent'" "Server initializes the controlled global proxy bootstrap first"
+file_contains "packages/server/src/index.ts" "if (this.AppDataSource.isInitialized) await this.AppDataSource.destroy()" "Failed initialization closes the database connection"
+file_contains_in_order "packages/server/src/index.ts" "Error during Data Source initialization" "throw error" "Failed initialization is rethrown before the server can listen"
 file_not_contains_regex "packages/server/src/index.ts" "global-agent/bootstrap" "Server does not use the forceful global-agent bootstrap"
 file_contains "packages/server/src/globalAgent.ts" "forceGlobalAgent: false" "Global proxy bootstrap preserves explicit security agents"
 file_not_contains_regex "packages/server/src/index.ts" "existingCsp|baseCspDirectives" "Server has no hand-written CSP merge"
@@ -518,7 +549,7 @@ file_exists "scripts/release-baseline.mjs" "Local release baseline reporter exis
 file_exists "scripts/release-baseline.test.mjs" "Local release baseline tests exist"
 file_exists "scripts/verify-runtime-without-compilers.sh" "Throwaway compiler-removal probe exists"
 file_contains "package.json" '"release:baseline": "node scripts/release-baseline.mjs"' "package.json exposes the local release baseline CLI"
-file_contains "package.json" '"test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs"' "Release tests include the baseline contract"
+file_contains "package.json" '"test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs scripts/publish-verified-image.test.mjs"' "Release tests include the baseline and publisher contracts"
 file_contains "scripts/release-baseline.mjs" "'--network'" "Release baseline runtime probe has no external network"
 file_contains "scripts/release-baseline.mjs" "'--read-only'" "Release baseline runtime probe uses a read-only root filesystem"
 file_contains "scripts/release-baseline.mjs" "'--cap-drop'" "Release baseline runtime probe drops capabilities"
@@ -536,9 +567,82 @@ file_contains ".github/workflows/main.yml" "bash scripts/verify-release-source.s
 file_contains ".github/workflows/main.yml" "bash scripts/verify-security.sh" "Main CI runs the static security gate"
 file_contains ".github/workflows/test_docker_build.yml" "node-version: '24.18.0'" "Docker test CI uses Node 24.18.0"
 file_contains ".github/workflows/test_docker_build.yml" "pnpm install --frozen-lockfile" "Docker test CI uses a frozen root install"
+file_contains ".github/workflows/test_docker_build.yml" "pnpm audit --prod --audit-level critical" "Docker test CI fails closed on critical production advisories"
+file_not_contains_regex ".github/workflows/test_docker_build.yml" "pnpm audit.*\\|\\||pnpm audit.*;[[:space:]]*true" "Docker test CI does not bypass audit failures"
 file_contains ".github/workflows/test_docker_build.yml" "file: Dockerfile" "Docker test CI builds the fork root Dockerfile"
 file_contains ".github/workflows/test_docker_build.yml" "push: false" "Docker test CI never pushes"
 file_contains ".github/workflows/test_docker_build.yml" "BUILD_REVISION=" "Docker test CI injects OCI provenance"
+file_contains ".github/workflows/test_docker_build.yml" "concurrency:" "Docker test CI cancels superseded builds"
+file_contains ".github/workflows/test_docker_build.yml" "load: true" "Docker test CI loads the single-platform image for inspection"
+file_contains ".github/workflows/test_docker_build.yml" "provenance: false" "Docker test CI exports a classic offline-loadable image"
+file_contains ".github/workflows/test_docker_build.yml" "git ls-files --error-unmatch" "Docker test CI requires release automation to be tracked"
+file_exists "scripts/verify-release-candidate.sh" "Reusable release candidate verifier exists"
+file_contains ".github/workflows/test_docker_build.yml" "bash scripts/verify-release-candidate.sh" "Docker test CI uses the reusable release candidate verifier"
+file_contains "scripts/verify-release-candidate.sh" "node scripts/release-manifest.mjs generate" "Release candidate verifier creates the canonical manifest"
+file_fixed_count "scripts/verify-release-candidate.sh" '--manifest "$MANIFEST_PATH"' 2 "Release candidate verifier checks the manifest before and after reload"
+file_contains "scripts/verify-release-candidate.sh" "node scripts/release-manifest.mjs verify-archive" "Release candidate verifier derives and validates archive identity independently"
+file_not_contains_regex "scripts/verify-release-candidate.sh" "config_digest=.*docker image inspect.*\\.Id" "Docker store identity is never mislabeled as the archive config digest"
+file_contains "scripts/verify-release-candidate.sh" "docker image rm" "Release candidate verifier removes the original image tag before reload"
+file_contains "scripts/verify-release-candidate.sh" "gzip -dc" "Release candidate verifier reloads only from the offline archive"
+file_contains "scripts/verify-release-candidate.sh" "--network none" "Release candidate smoke has no external network"
+file_contains "scripts/verify-release-candidate.sh" "--read-only" "Release candidate smoke uses a read-only root filesystem"
+file_contains "scripts/verify-release-candidate.sh" "--cap-drop ALL" "Release candidate smoke drops all capabilities"
+file_contains "scripts/verify-release-candidate.sh" "no-new-privileges" "Release candidate smoke forbids privilege escalation"
+file_contains ".github/workflows/test_docker_build.yml" "actions/upload-artifact@" "Docker test CI uploads the verified offline artifact"
+file_contains ".github/workflows/test_docker_build.yml" '${{ github.run_id }}' "Offline artifact identity includes the workflow run"
+file_contains ".github/workflows/test_docker_build.yml" '${{ github.run_attempt }}' "Offline artifact identity includes the workflow attempt"
+file_fixed_count ".github/workflows/test_docker_build.yml" "if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'" 2 "Large artifacts and readiness run only on approved manual main runs"
+file_contains ".github/workflows/test_docker_build.yml" "retention-days: 3" "Docker test CI keeps the large artifact only briefly"
+file_contains ".github/workflows/test_docker_build.yml" "github.ref == 'refs/heads/main'" "Release readiness is restricted to the main branch"
+file_contains ".github/workflows/test_docker_build.yml" "name: release-readiness" "Release readiness uses the protected environment hook"
+file_contains ".github/workflows/test_docker_build.yml" "actions/download-artifact@" "Release readiness reconsumes the same-run artifact"
+file_contains ".github/workflows/test_docker_build.yml" 'expected_tag="flowise-ci:git-${GITHUB_SHA}"' "Release readiness derives the expected tag from GitHub SHA"
+file_contains ".github/workflows/test_docker_build.yml" 'expected_source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"' "Release readiness derives the expected source independently"
+file_contains ".github/workflows/test_docker_build.yml" "node scripts/release-manifest.mjs verify-archive" "Release readiness parses the Docker archive independently"
+file_contains ".github/workflows/test_docker_build.yml" 'docker image load --input "$ARCHIVE_PATH"' "Release readiness proves the downloaded archive is loadable"
+file_contains ".github/workflows/test_docker_build.yml" 'docker image rm "$expected_tag"' "Release readiness removes its local image after verification"
+file_not_contains_regex ".github/workflows/test_docker_build.yml" "manifest\\.image\\.(tag|config_digest)" "Release readiness trusts no identity value supplied by the manifest"
+file_not_contains_regex ".github/workflows/test_docker_build.yml" "docker/login-action|push:[[:space:]]*true|secrets\\." "Build-only release CI has no registry login, push, or secret reference"
+file_not_contains_regex "scripts/verify-release-candidate.sh" "docker/login-action|docker[[:space:]]+push|secrets\\." "Release candidate verifier has no registry login, push, or secret reference"
+workflow_actions_commit_pinned ".github/workflows/test_docker_build.yml" "Docker test CI pins every external action to a commit"
+file_exists ".github/workflows/production-readonly-monitor.yml" "Public production read-only monitor exists"
+file_contains ".github/workflows/production-readonly-monitor.yml" "schedule:" "Public monitor has a scheduled trigger"
+file_contains ".github/workflows/production-readonly-monitor.yml" "bash scripts/verify-production-edge.sh https://flowise.lute-tlz-dddd.top" "Public monitor runs the existing edge contract"
+file_contains ".github/workflows/production-readonly-monitor.yml" "openssl x509 -checkend" "Public monitor checks the TLS expiry threshold"
+file_not_contains_regex ".github/workflows/production-readonly-monitor.yml" "secrets\\.|(^|[^[:alnum:]_])ssh([^[:alnum:]_]|$)|provider|smtp|/prediction" "Public monitor contains no secret, remote shell, provider, mail, or prediction lane"
+workflow_actions_commit_pinned ".github/workflows/production-readonly-monitor.yml" "Public monitor pins every external action to a commit"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "TAG_VERSION: \${{ inputs.tag_version }}" "Docker Hub input reaches shell only through an environment variable"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "if: github.ref == 'refs/heads/main'" "Docker Hub publication is restricted to main"
+file_contains ".github/workflows/docker-image-dockerhub.yml" '[[ ${#TAG_VERSION} -le 128 ]]' "Docker Hub release tag respects the registry length limit"
+file_contains ".github/workflows/docker-image-dockerhub.yml" '[[ "$TAG_VERSION" =~' "Docker Hub release validates the requested tag"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "name: dockerhub-release" "Docker Hub credentials are behind a protected environment"
+file_contains ".github/workflows/docker-image-dockerhub.yml" 'PUBLISH_ENABLED: ${{ vars.DOCKERHUB_RELEASE_ENABLED }}' "Docker Hub publication requires explicit control-plane enablement"
+file_contains ".github/workflows/docker-image-dockerhub.yml" 'PUBLISH_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}' "Docker Hub target comes from protected repository configuration"
+file_contains ".github/workflows/docker-image-dockerhub.yml" 'test "$PUBLISH_ENABLED" = '\''true'\''' "Docker Hub publication fails closed when enablement is absent"
+file_contains ".github/workflows/docker-image-dockerhub.yml" '[[ "$PUBLISH_IMAGE" != flowiseai/* ]]' "Fork release cannot target the upstream Flowise namespace"
+file_contains ".github/workflows/docker-image-dockerhub.yml" 'test "${PUBLISH_IMAGE%%/*}" = "$registry_username"' "Docker Hub namespace is bound to the protected login identity"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "file: Dockerfile" "Docker Hub release builds the canonical root Dockerfile"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "platforms: linux/amd64" "Docker Hub release is restricted to the reviewed architecture"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "git ls-files --error-unmatch" "Docker Hub release requires its automation to be tracked"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "load: true" "Docker Hub release loads the candidate for verification"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "push: false" "Docker Hub build action cannot push an unverified image"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "bash scripts/verify-release-candidate.sh" "Docker Hub release verifies the exact offline candidate"
+file_contains_in_order ".github/workflows/docker-image-dockerhub.yml" "bash scripts/verify-release-candidate.sh" "docker/login-action@" "Docker Hub candidate verification precedes registry credentials"
+file_contains ".github/workflows/docker-image-dockerhub.yml" 'git tag --format=' "Docker Hub release alias must identify the checked-out revision"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "pnpm audit --prod --audit-level high" "Docker Hub release fails closed on high and critical production advisories"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "bash scripts/publish-verified-image.sh" "Docker Hub publication uses the immutable tag guard"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "https://hub.docker.com/v2/auth/token" "Docker Hub policy check uses the documented token API"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "jq -er '.access_token'" "Docker Hub policy check parses the documented token field"
+file_not_contains_regex ".github/workflows/docker-image-dockerhub.yml" "/v2/users/login/" "Docker Hub policy check does not use the legacy login API"
+file_contains ".github/workflows/docker-image-dockerhub.yml" "node scripts/verify-dockerhub-immutability.mjs" "Docker Hub publication proves server-side immutable-tag enforcement"
+file_contains "scripts/verify-dockerhub-immutability.mjs" "immutable_tags_settings" "Docker Hub policy verifier consumes repository policy evidence"
+file_not_contains_regex "scripts/verify-dockerhub-immutability.mjs" "new RegExp\\(" "Docker Hub policy verifier does not reinterpret RE2 rules with JavaScript regex"
+file_contains ".github/workflows/docker-image-dockerhub.yml" '--immutability-settings "$IMMUTABILITY_SETTINGS_PATH"' "Docker Hub publisher receives the verified policy evidence"
+file_not_contains_regex ".github/workflows/docker-image-dockerhub.yml" "docker[[:space:]]+push" "Docker Hub workflow delegates registry writes to the tested immutable publisher"
+file_not_contains_regex ".github/workflows/docker-image-dockerhub.yml" "default:[[:space:]]*['\"]?latest|docker/Dockerfile|docker/worker/Dockerfile|npm install -g flowise|push:[[:space:]]*true" "Docker Hub release has no floating package, legacy Dockerfile, or direct build push lane"
+file_fixed_count ".github/workflows/docker-image-dockerhub.yml" '${{ inputs.tag_version }}' 1 "Docker Hub input is interpolated exactly once into the environment boundary"
+file_not_contains_regex ".github/workflows/docker-image-dockerhub.yml" "pnpm audit.*\\|\\||pnpm audit.*;[[:space:]]*true" "Docker Hub release does not bypass audit failures"
+workflow_actions_commit_pinned ".github/workflows/docker-image-dockerhub.yml" "Docker Hub release pins every external action to a commit"
 file_fixed_count ".github/workflows/publish-package.yml" "node-version: '24.18.0'" 2 "Package workflows use Node 24.18.0"
 file_not_contains_regex ".github/workflows/publish-package.yml" "node-version:[[:space:]]*'20" "Package workflows contain no Node 20 install"
 file_fixed_count ".github/workflows/publish-package.yml" "pnpm install --frozen-lockfile" 2 "Package workflows keep frozen root installs"

@@ -17,6 +17,7 @@ const INPUT_FILES = Object.freeze([
     'docker-compose.prod.yml',
     'package.json',
     'pnpm-lock.yaml',
+    'scripts/publish-verified-image.sh',
     'scripts/release-manifest.mjs',
     'scripts/verify-release-source.sh',
     'scripts/verify-security.sh'
@@ -214,6 +215,121 @@ const readTextFile = (filePath, label) => {
         return readFileSync(filePath, 'utf8')
     } catch {
         throw new Error(`${label} is unreadable`)
+    }
+}
+
+const readDockerArchiveMember = (archivePath, memberPath) => {
+    try {
+        return execFileSync('tar', ['-xOzf', resolve(archivePath), memberPath], {
+            encoding: null,
+            maxBuffer: 16 * 1024 * 1024,
+            stdio: ['ignore', 'pipe', 'pipe']
+        })
+    } catch {
+        throw new Error(`Docker archive member is unavailable: ${memberPath}`)
+    }
+}
+
+const listDockerArchiveMembers = (archivePath) => {
+    assertRegularFile(archivePath, 'Docker archive')
+    let listing
+    try {
+        listing = execFileSync('tar', ['-tzf', resolve(archivePath)], {
+            encoding: 'utf8',
+            maxBuffer: 16 * 1024 * 1024,
+            stdio: ['ignore', 'pipe', 'pipe']
+        })
+    } catch {
+        throw new Error('Docker archive is not a readable gzip-compressed tar file')
+    }
+    const members = listing.split('\n').filter(Boolean)
+    if (members.length === 0 || members.some((member) => /[\r\0]/.test(member))) {
+        throw new Error('Docker archive member list is invalid')
+    }
+    return members
+}
+
+const parseArchiveJson = (contents, label) => {
+    try {
+        return JSON.parse(contents.toString('utf8'))
+    } catch {
+        throw new Error(`${label} is not valid JSON`)
+    }
+}
+
+export const verifyDockerArchive = ({ archivePath, imageTag, revision, source, version, created, platform }) => {
+    validateRevision(revision)
+    if (version !== `git-${revision}`) throw new Error('Docker archive version must match the exact Git revision')
+    validateImageTag(imageTag, version)
+    if (sanitizeRepositoryUrl(source) !== source) throw new Error('Docker archive source must be normalized')
+    if (typeof created !== 'string' || created.length > 128 || /[\r\n\0]/.test(created) || Number.isNaN(Date.parse(created))) {
+        throw new Error('Docker archive creation time is invalid')
+    }
+    if (platform !== 'linux/amd64') throw new Error('Docker archive platform must be linux/amd64')
+
+    const members = listDockerArchiveMembers(archivePath)
+    if (members.filter((member) => member === 'manifest.json').length !== 1) {
+        throw new Error('Docker archive must contain exactly one manifest.json')
+    }
+    const archiveManifest = parseArchiveJson(readDockerArchiveMember(archivePath, 'manifest.json'), 'Docker archive manifest')
+    if (!Array.isArray(archiveManifest) || archiveManifest.length !== 1) {
+        throw new Error('Docker archive must contain exactly one image')
+    }
+
+    const entry = archiveManifest[0]
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Docker archive image entry is invalid')
+    if (!Array.isArray(entry.RepoTags) || entry.RepoTags.length !== 1 || entry.RepoTags[0] !== imageTag) {
+        throw new Error('Docker archive tag mismatch')
+    }
+    const configMatch = /^(?:blobs\/sha256\/)?([0-9a-f]{64})(?:\.json)?$/.exec(entry.Config)
+    if (!configMatch) throw new Error('Docker archive config path is invalid')
+    const configPath = entry.Config
+    validateRelativePath(configPath)
+    if (members.filter((member) => member === configPath).length !== 1) {
+        throw new Error('Docker archive must contain exactly one image config')
+    }
+    if (!Array.isArray(entry.Layers) || entry.Layers.length === 0 || new Set(entry.Layers).size !== entry.Layers.length) {
+        throw new Error('Docker archive layer list is invalid')
+    }
+    for (const layerPath of entry.Layers) {
+        validateRelativePath(layerPath)
+        if (members.filter((member) => member === layerPath).length !== 1) {
+            throw new Error('Docker archive layer is unavailable')
+        }
+    }
+
+    const configContents = readDockerArchiveMember(archivePath, configPath)
+    const actualConfigHex = createHash('sha256').update(configContents).digest('hex')
+    if (actualConfigHex !== configMatch[1]) throw new Error('Docker archive config content hash mismatch')
+    const imageConfig = parseArchiveJson(configContents, 'Docker archive image config')
+    if (!imageConfig || typeof imageConfig !== 'object' || Array.isArray(imageConfig)) {
+        throw new Error('Docker archive image config is invalid')
+    }
+    if (`${imageConfig.os}/${imageConfig.architecture}` !== platform) throw new Error('Docker archive platform mismatch')
+
+    const runtime = imageConfig.config
+    if (!runtime || typeof runtime !== 'object' || Array.isArray(runtime)) throw new Error('Docker archive runtime config is invalid')
+    if (runtime.User !== 'node') throw new Error('Docker archive runtime user mismatch')
+    if (runtime.WorkingDir !== '/usr/src/flowise') throw new Error('Docker archive working directory mismatch')
+    if (canonicalStringify(runtime.Cmd) !== canonicalStringify(['node', 'packages/server/bin/run', 'start'])) {
+        throw new Error('Docker archive command mismatch')
+    }
+    const labels = runtime.Labels
+    if (!labels || typeof labels !== 'object' || Array.isArray(labels)) throw new Error('Docker archive OCI labels are unavailable')
+    const expectedLabels = {
+        'org.opencontainers.image.source': source,
+        'org.opencontainers.image.revision': revision,
+        'org.opencontainers.image.version': version,
+        'org.opencontainers.image.created': created
+    }
+    for (const [key, expectedValue] of Object.entries(expectedLabels)) {
+        if (labels[key] !== expectedValue) throw new Error(`Docker archive ${key.slice('org.opencontainers.image.'.length)} label mismatch`)
+    }
+
+    return {
+        imageConfigDigest: `sha256:${actualConfigHex}`,
+        imageTag,
+        platform
     }
 }
 
@@ -595,12 +711,15 @@ export const verifyManifestFile = ({ manifestPath, ...options }) => {
 }
 
 const parseCommandArgs = (argv, command) => {
-    const booleanFlags = command === 'generate' ? new Set(['--allow-dirty']) : new Set(['--require-clean'])
+    const booleanFlags =
+        command === 'generate' ? new Set(['--allow-dirty']) : command === 'verify' ? new Set(['--require-clean']) : new Set()
     const repeatableFlags = command === 'generate' ? new Set(['--untracked-input']) : new Set()
     const allowedValueFlags =
         command === 'generate'
             ? new Set(['--distribution', '--image-tag', '--image-config-digest', '--archive', '--platform', '--out', '--untracked-input'])
-            : new Set(['--manifest', '--image-tag', '--image-config-digest', '--archive'])
+            : command === 'verify'
+            ? new Set(['--manifest', '--image-tag', '--image-config-digest', '--archive'])
+            : new Set(['--archive', '--image-tag', '--revision', '--source', '--version', '--created', '--platform'])
     const parsed = { untrackedInputs: [] }
 
     for (let index = 0; index < argv.length; index += 1) {
@@ -631,9 +750,27 @@ const requireFlags = (parsed, flags) => {
 
 const runCli = (argv) => {
     const [command, ...rest] = argv
-    if (!['generate', 'verify'].includes(command)) throw new Error('Expected generate or verify command')
+    if (!['generate', 'verify', 'verify-archive'].includes(command)) {
+        throw new Error('Expected generate, verify or verify-archive command')
+    }
     const parsed = parseCommandArgs(rest, command)
     const repoRoot = process.cwd()
+
+    if (command === 'verify-archive') {
+        requireFlags(parsed, ['--archive', '--image-tag', '--revision', '--source', '--version', '--created', '--platform'])
+        const result = verifyDockerArchive({
+            archivePath: parsed['--archive'],
+            imageTag: parsed['--image-tag'],
+            revision: parsed['--revision'],
+            source: parsed['--source'],
+            version: parsed['--version'],
+            created: parsed['--created'],
+            platform: parsed['--platform']
+        })
+        process.stdout.write(`${result.imageConfigDigest}\n`)
+        return
+    }
+
     const toolchain = detectToolchain(repoRoot)
 
     if (command === 'generate') {

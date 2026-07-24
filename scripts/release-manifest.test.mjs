@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -15,6 +16,7 @@ import {
     validateImageTag,
     validateManifest,
     validateRevision,
+    verifyDockerArchive,
     verifyManifest,
     verifyManifestFile,
     writeManifestAtomic
@@ -23,6 +25,11 @@ import {
 const MODULE_PATH = fileURLToPath(new URL('./release-manifest.mjs', import.meta.url))
 const EDGE_SCRIPT_PATH = fileURLToPath(new URL('./verify-production-edge.sh', import.meta.url))
 const SECURITY_SCRIPT_PATH = fileURLToPath(new URL('./verify-security.sh', import.meta.url))
+const RELEASE_CANDIDATE_SCRIPT_PATH = fileURLToPath(new URL('./verify-release-candidate.sh', import.meta.url))
+const PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH = fileURLToPath(new URL('./publish-verified-image.sh', import.meta.url))
+const DOCKER_BUILD_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/test_docker_build.yml', import.meta.url))
+const DOCKERHUB_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-dockerhub.yml', import.meta.url))
+const READONLY_MONITOR_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/production-readonly-monitor.yml', import.meta.url))
 const EXPECTED_TOOLCHAIN = Object.freeze({ node: 'v24.18.0', pnpm: '10.26.0', package_manager: 'pnpm@10.26.0' })
 const CONFIG_DIGEST = `sha256:${'a'.repeat(64)}`
 const OTHER_CONFIG_DIGEST = `sha256:${'b'.repeat(64)}`
@@ -72,6 +79,7 @@ const createFixture = ({ credentialRemote = false } = {}) => {
     write(repoRoot, 'docker-compose.prod.yml', 'services: {}\n')
     write(repoRoot, 'scripts/verify-release-source.sh', '#!/usr/bin/env bash\nexit 0\n')
     write(repoRoot, 'scripts/verify-security.sh', '#!/usr/bin/env bash\nexit 0\n')
+    copyFileSync(PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH, join(repoRoot, 'scripts/publish-verified-image.sh'))
     mkdirSync(join(repoRoot, 'scripts'), { recursive: true })
     copyFileSync(MODULE_PATH, join(repoRoot, 'scripts/release-manifest.mjs'))
     write(repoRoot, '.env.production.template', `ZETA=one\nSECRET_KEY=${ENV_VALUE_SENTINEL}\nALPHA=two\n# COMMENTED_SECRET=ignored\n`)
@@ -110,6 +118,95 @@ const manifestOptions = (fixture, overrides = {}) => ({
     ...overrides
 })
 
+const createDockerArchiveFixture = ({
+    revision = '1'.repeat(40),
+    tag = `flowise-ci:git-${revision}`,
+    source = 'https://github.com/example/flowise',
+    version = `git-${revision}`,
+    created = '2026-07-12T00:00:00+00:00',
+    architecture = 'amd64',
+    repoTags,
+    labelOverrides = {},
+    configPathDigest
+} = {}) => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'flowise-docker-archive-test-'))
+    const archiveRoot = join(fixtureRoot, 'archive')
+    const archivePath = join(fixtureRoot, 'flowise-image.tar.gz')
+    mkdirSync(archiveRoot, { recursive: true })
+
+    const config = {
+        architecture,
+        os: 'linux',
+        config: {
+            User: 'node',
+            WorkingDir: '/usr/src/flowise',
+            Cmd: ['node', 'packages/server/bin/run', 'start'],
+            Labels: {
+                'org.opencontainers.image.source': source,
+                'org.opencontainers.image.revision': revision,
+                'org.opencontainers.image.version': version,
+                'org.opencontainers.image.created': created,
+                ...labelOverrides
+            }
+        }
+    }
+    const configBytes = Buffer.from(`${JSON.stringify(config)}\n`)
+    const actualConfigDigest = createHash('sha256').update(configBytes).digest('hex')
+    const configPath = `${configPathDigest ?? actualConfigDigest}.json`
+    writeFileSync(join(archiveRoot, configPath), configBytes)
+    writeFileSync(join(archiveRoot, 'layer.tar'), 'deterministic layer fixture\n')
+    writeFileSync(
+        join(archiveRoot, 'manifest.json'),
+        `${JSON.stringify([{ Config: configPath, RepoTags: repoTags ?? [tag], Layers: ['layer.tar'] }])}\n`
+    )
+    execFileSync('tar', ['-czf', archivePath, '-C', archiveRoot, 'manifest.json', configPath, 'layer.tar'])
+
+    return {
+        archivePath,
+        created,
+        revision,
+        source,
+        tag,
+        version,
+        actualConfigDigest: `sha256:${actualConfigDigest}`,
+        cleanup: () => rmSync(fixtureRoot, { recursive: true, force: true })
+    }
+}
+
+const assertExternalActionsAreCommitPinned = (workflow, label) => {
+    const uses = [...workflow.matchAll(/^\s*(?:-\s+)?uses:\s*([^\s#]+).*$/gm)].map((match) => match[1])
+    assert.ok(uses.length > 0, `${label} must use at least one external action`)
+    for (const action of uses) {
+        if (action.startsWith('./')) continue
+        assert.match(action, /^[^@\s]+@[0-9a-f]{40}$/, `${label} action is not commit-pinned: ${action}`)
+    }
+}
+
+test('action pin validation covers uses beneath named workflow steps', () => {
+    assert.throws(
+        () => assertExternalActionsAreCommitPinned(`steps:\n  - name: Checkout\n    uses: actions/checkout@v4\n`, 'named-step fixture'),
+        /not commit-pinned/
+    )
+    assert.doesNotThrow(() =>
+        assertExternalActionsAreCommitPinned(
+            `steps:\n  - name: Checkout\n    uses: actions/checkout@${'a'.repeat(40)}\n`,
+            'named-step fixture'
+        )
+    )
+})
+
+test('server startup fails closed when any initialization stage throws', () => {
+    const serverSource = readFileSync(fileURLToPath(new URL('../packages/server/src/index.ts', import.meta.url)), 'utf8')
+    const initializationCatch = serverSource.match(
+        /catch \(error\) \{\s*logger\.error\('❌ \[server\]: Error during Data Source initialization:', error\)([\s\S]*?)\n\s*\}/
+    )
+
+    assert.ok(initializationCatch, 'initialization failure handler must remain explicit')
+    assert.match(initializationCatch[1], /await this\.stopApp\(\)/)
+    assert.match(initializationCatch[1], /await this\.AppDataSource\.destroy\(\)/)
+    assert.match(initializationCatch[1], /throw error/)
+})
+
 test('canonical JSON recursively sorts object keys and rejects unsupported values', () => {
     assert.equal(
         canonicalStringify({ z: 1, a: { z: 2, a: 1 }, list: [{ z: 2, a: 1 }] }),
@@ -138,6 +235,141 @@ test('revision and image tags must be exact immutable Git-derived identities', (
         `flowise:git-${'2'.repeat(40)}`
     ]) {
         assert.throws(() => validateImageTag(invalid, `git-${revision}`), /immutable Git-derived tag/)
+    }
+})
+
+test('Docker archive verification derives config identity and binds tag, platform, runtime and OCI labels', () => {
+    const fixture = createDockerArchiveFixture()
+    try {
+        const result = verifyDockerArchive({
+            archivePath: fixture.archivePath,
+            imageTag: fixture.tag,
+            revision: fixture.revision,
+            source: fixture.source,
+            version: fixture.version,
+            created: fixture.created,
+            platform: 'linux/amd64'
+        })
+        assert.equal(result.imageConfigDigest, fixture.actualConfigDigest)
+        assert.equal(result.imageTag, fixture.tag)
+        assert.equal(result.platform, 'linux/amd64')
+    } finally {
+        fixture.cleanup()
+    }
+})
+
+test('Docker archive verification rejects a manifest-supplied tag or revision that is not in the archive', () => {
+    const wrongTag = createDockerArchiveFixture({ repoTags: ['flowise-ci:git-2222222222222222222222222222222222222222'] })
+    try {
+        assert.throws(
+            () =>
+                verifyDockerArchive({
+                    archivePath: wrongTag.archivePath,
+                    imageTag: wrongTag.tag,
+                    revision: wrongTag.revision,
+                    source: wrongTag.source,
+                    version: wrongTag.version,
+                    created: wrongTag.created,
+                    platform: 'linux/amd64'
+                }),
+            /archive tag mismatch/
+        )
+    } finally {
+        wrongTag.cleanup()
+    }
+
+    const wrongRevision = createDockerArchiveFixture({
+        labelOverrides: { 'org.opencontainers.image.revision': '2'.repeat(40) }
+    })
+    try {
+        assert.throws(
+            () =>
+                verifyDockerArchive({
+                    archivePath: wrongRevision.archivePath,
+                    imageTag: wrongRevision.tag,
+                    revision: wrongRevision.revision,
+                    source: wrongRevision.source,
+                    version: wrongRevision.version,
+                    created: wrongRevision.created,
+                    platform: 'linux/amd64'
+                }),
+            /revision label mismatch/
+        )
+    } finally {
+        wrongRevision.cleanup()
+    }
+})
+
+test('Docker archive verification rejects a mismatched config digest and platform', () => {
+    const wrongDigest = createDockerArchiveFixture({ configPathDigest: 'f'.repeat(64) })
+    try {
+        assert.throws(
+            () =>
+                verifyDockerArchive({
+                    archivePath: wrongDigest.archivePath,
+                    imageTag: wrongDigest.tag,
+                    revision: wrongDigest.revision,
+                    source: wrongDigest.source,
+                    version: wrongDigest.version,
+                    created: wrongDigest.created,
+                    platform: 'linux/amd64'
+                }),
+            /config content hash mismatch/
+        )
+    } finally {
+        wrongDigest.cleanup()
+    }
+
+    const wrongPlatform = createDockerArchiveFixture({ architecture: 'arm64' })
+    try {
+        assert.throws(
+            () =>
+                verifyDockerArchive({
+                    archivePath: wrongPlatform.archivePath,
+                    imageTag: wrongPlatform.tag,
+                    revision: wrongPlatform.revision,
+                    source: wrongPlatform.source,
+                    version: wrongPlatform.version,
+                    created: wrongPlatform.created,
+                    platform: 'linux/amd64'
+                }),
+            /platform mismatch/
+        )
+    } finally {
+        wrongPlatform.cleanup()
+    }
+})
+
+test('verify-archive CLI emits only the independently derived config digest', () => {
+    const fixture = createDockerArchiveFixture()
+    try {
+        const result = spawnSync(
+            process.execPath,
+            [
+                MODULE_PATH,
+                'verify-archive',
+                '--archive',
+                fixture.archivePath,
+                '--image-tag',
+                fixture.tag,
+                '--revision',
+                fixture.revision,
+                '--source',
+                fixture.source,
+                '--version',
+                fixture.version,
+                '--created',
+                fixture.created,
+                '--platform',
+                'linux/amd64'
+            ],
+            { encoding: 'utf8' }
+        )
+        assert.equal(result.status, 0, result.stderr)
+        assert.equal(result.stdout, `${fixture.actualConfigDigest}\n`)
+        assert.equal(result.stderr, '')
+    } finally {
+        fixture.cleanup()
     }
 })
 
@@ -630,4 +862,153 @@ test('dirty manifest is rejected by require-clean verification', () => {
     } finally {
         fixture.cleanup()
     }
+})
+
+test('build-only Docker CI produces and reconsumes a canonical offline release artifact without registry side effects', () => {
+    const workflow = readFileSync(DOCKER_BUILD_WORKFLOW_PATH, 'utf8')
+    const candidateScript = readFileSync(RELEASE_CANDIDATE_SCRIPT_PATH, 'utf8')
+
+    for (const required of [
+        'permissions:',
+        'contents: read',
+        'concurrency:',
+        'timeout-minutes:',
+        'platforms: linux/amd64',
+        'load: true',
+        'push: false',
+        'provenance: false',
+        'git ls-files --error-unmatch',
+        'pnpm audit --prod --audit-level critical',
+        'bash scripts/verify-release-candidate.sh',
+        'actions/upload-artifact@',
+        "if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+        '${{ github.run_id }}',
+        '${{ github.run_attempt }}',
+        'retention-days: 3',
+        'if-no-files-found: error'
+    ]) {
+        assert.equal(workflow.includes(required), true, `missing build-only workflow contract: ${required}`)
+    }
+
+    for (const required of [
+        'flowise-ci:git-',
+        'node scripts/release-manifest.mjs generate',
+        'node scripts/release-manifest.mjs verify',
+        'node scripts/release-manifest.mjs verify-archive',
+        '--require-clean',
+        'docker image rm',
+        '--network none',
+        '--read-only',
+        '--cap-drop ALL',
+        'no-new-privileges',
+        '--user 1000:1000',
+        '/api/v1/ping'
+    ]) {
+        assert.equal(candidateScript.includes(required), true, `missing release candidate script contract: ${required}`)
+    }
+
+    const combined = `${workflow}\n${candidateScript}`
+    assert.doesNotMatch(combined, /docker\/login-action|push:\s*true|secrets\./)
+    assert.doesNotMatch(candidateScript, /config_digest=.*docker image inspect --format '\{\{\.Id\}\}'/)
+    assert.doesNotMatch(workflow, /pnpm audit[^\n]*(?:\|\||;\s*true)/)
+    assertExternalActionsAreCommitPinned(workflow, 'build-only release workflow')
+})
+
+test('manual release-readiness verification is main-only, environment-gated and read-only', () => {
+    const workflow = readFileSync(DOCKER_BUILD_WORKFLOW_PATH, 'utf8')
+
+    for (const required of [
+        "github.event_name == 'workflow_dispatch'",
+        "github.ref == 'refs/heads/main'",
+        'name: release-readiness',
+        'actions/download-artifact@',
+        'expected_tag="flowise-ci:git-${GITHUB_SHA}"',
+        'expected_source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"',
+        'expected_version="git-${GITHUB_SHA}"',
+        'expected_created="$(git show -s --format=%cI "$GITHUB_SHA")"',
+        'node scripts/release-manifest.mjs verify-archive',
+        'node scripts/release-manifest.mjs verify',
+        'docker image load --input "$ARCHIVE_PATH"',
+        'docker image rm "$expected_tag"',
+        '--require-clean'
+    ]) {
+        assert.equal(workflow.includes(required), true, `missing release-readiness contract: ${required}`)
+    }
+
+    assert.doesNotMatch(workflow, /deploy|docker\/login-action|push:\s*true|secrets\./i)
+    assert.doesNotMatch(workflow, /manifest\.image\.(?:tag|config_digest)/)
+})
+
+test('Docker Hub publishing validates a reviewed alias before credentials and builds only the canonical root Dockerfile', () => {
+    const workflow = readFileSync(DOCKERHUB_WORKFLOW_PATH, 'utf8')
+
+    for (const required of [
+        'type: string',
+        'environment:',
+        'name: dockerhub-release',
+        'PUBLISH_ENABLED: ${{ vars.DOCKERHUB_RELEASE_ENABLED }}',
+        'PUBLISH_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}',
+        'test "$PUBLISH_ENABLED" = \'true\'',
+        'TAG_VERSION: ${{ inputs.tag_version }}',
+        "if: github.ref == 'refs/heads/main'",
+        '[[ ${#TAG_VERSION} -le 128 ]]',
+        '[[ "$TAG_VERSION" =~',
+        'file: Dockerfile',
+        'platforms: linux/amd64',
+        'pnpm audit --prod --audit-level high',
+        'git ls-files --error-unmatch',
+        'load: true',
+        'push: false',
+        'bash scripts/verify-release-candidate.sh',
+        'git tag --format=',
+        'BUILD_REVISION=${{ github.sha }}',
+        'BUILD_VERSION=git-${{ github.sha }}',
+        'docker/login-action@',
+        'https://hub.docker.com/v2/auth/token',
+        "jq -er '.access_token'",
+        'node scripts/verify-dockerhub-immutability.mjs',
+        'https://hub.docker.com/v2/namespaces/${namespace}/repositories/${repository}',
+        'bash scripts/publish-verified-image.sh',
+        '--manifest "$MANIFEST_PATH"',
+        '--immutability-settings "$IMMUTABILITY_SETTINGS_PATH"'
+    ]) {
+        assert.equal(workflow.includes(required), true, `missing hardened Docker Hub contract: ${required}`)
+    }
+
+    assert.doesNotMatch(
+        workflow,
+        /default:\s*['"]?latest|docker\/Dockerfile|docker\/worker\/Dockerfile|npm install -g flowise|push:\s*true/
+    )
+    assert.doesNotMatch(workflow, /PUBLISH_IMAGE:\s*flowiseai\/flowise/)
+    assert.doesNotMatch(workflow, /\/v2\/users\/login\//)
+    assert.match(workflow, /\[\[ "\$PUBLISH_IMAGE" != flowiseai\/\* \]\]/)
+    assert.match(workflow, /test "\$\{PUBLISH_IMAGE%%\/\*\}" = "\$registry_username"/)
+    assert.doesNotMatch(workflow, /docker push/)
+    assert.doesNotMatch(workflow, /pnpm audit[^\n]*(?:\|\||;\s*true)/)
+    assert.equal((workflow.match(/\$\{\{ inputs\.tag_version \}\}/g) ?? []).length, 1)
+    assert.ok(workflow.indexOf('bash scripts/verify-release-candidate.sh') < workflow.indexOf('docker/login-action@'))
+    assert.ok(workflow.indexOf('node scripts/verify-dockerhub-immutability.mjs') < workflow.indexOf('docker/login-action@'))
+    assertExternalActionsAreCommitPinned(workflow, 'Docker Hub publishing workflow')
+})
+
+test('scheduled production monitor performs only public edge and TLS expiry checks', () => {
+    const workflow = readFileSync(READONLY_MONITOR_WORKFLOW_PATH, 'utf8')
+
+    for (const required of [
+        'schedule:',
+        'workflow_dispatch:',
+        'permissions:',
+        'contents: read',
+        'concurrency:',
+        'timeout-minutes:',
+        'bash scripts/verify-production-edge.sh https://flowise.lute-tlz-dddd.top',
+        'openssl s_client',
+        'openssl x509',
+        '-checkend'
+    ]) {
+        assert.equal(workflow.includes(required), true, `missing public monitor contract: ${required}`)
+    }
+
+    assert.doesNotMatch(workflow, /secrets\.|\bssh\b|provider|smtp|\/prediction/i)
+    assertExternalActionsAreCommitPinned(workflow, 'production read-only monitor')
 })

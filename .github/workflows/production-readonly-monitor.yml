@@ -1,0 +1,37 @@
+name: Production Public Read-only Monitor
+
+on:
+    schedule:
+        - cron: '17 */6 * * *'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: flowise-production-public-readonly
+    cancel-in-progress: true
+
+jobs:
+    public_contract:
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - name: Verify the public edge contract
+              run: bash scripts/verify-production-edge.sh https://flowise.lute-tlz-dddd.top
+            - name: Verify the TLS certificate remains valid beyond 21 days
+              run: |
+                  set -euo pipefail
+                  host=flowise.lute-tlz-dddd.top
+                  certificate="${RUNNER_TEMP}/flowise-leaf.pem"
+                  openssl s_client \
+                      -connect "${host}:443" \
+                      -servername "$host" \
+                      -verify_hostname "$host" \
+                      -verify_return_error \
+                      </dev/null 2>/dev/null \
+                      | openssl x509 -outform PEM -out "$certificate"
+                  test -s "$certificate"
+                  openssl x509 -checkend "$((21 * 24 * 60 * 60))" -noout -in "$certificate"
+                  openssl x509 -enddate -noout -in "$certificate"
