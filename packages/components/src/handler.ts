@@ -8,13 +8,16 @@ import { RunTree, RunTreeConfig, Client as LangsmithClient } from 'langsmith'
 import { Langfuse, LangfuseTraceClient, LangfuseSpanClient, LangfuseGenerationClient } from 'langfuse'
 import { LangChainInstrumentation } from '@arizeai/openinference-instrumentation-langchain'
 import { Metadata } from '@grpc/grpc-js'
-import opentelemetry, { Span, SpanStatusCode } from '@opentelemetry/api'
+import opentelemetry, { Span, SpanStatusCode, TextMapPropagator } from '@opentelemetry/api'
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
+import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from '@opentelemetry/core'
 import { OTLPTraceExporter as GrpcOTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc'
 import { OTLPTraceExporter as ProtoOTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import { registerInstrumentations } from '@opentelemetry/instrumentation'
+import { B3InjectEncoding, B3Propagator } from '@opentelemetry/propagator-b3'
+import { JaegerPropagator } from '@opentelemetry/propagator-jaeger'
 import { Resource } from '@opentelemetry/resources'
-import { SimpleSpanProcessor, Tracer } from '@opentelemetry/sdk-trace-base'
-import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
+import { BasicTracerProvider, SimpleSpanProcessor, Tracer } from '@opentelemetry/sdk-trace-base'
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions'
 import { BaseCallbackHandler, NewTokenIndices, HandleLLMNewTokenCallbackFields } from '@langchain/core/callbacks/base'
 import * as CallbackManagerModule from '@langchain/core/callbacks/manager'
@@ -34,6 +37,51 @@ import { DataSource } from 'typeorm'
 import { ChatGenerationChunk } from '@langchain/core/outputs'
 import { AIMessageChunk, BaseMessageLike } from '@langchain/core/messages'
 import { Serialized } from '@langchain/core/load/serializable'
+
+const DEFAULT_TRACE_PROPAGATORS = 'tracecontext,baggage'
+
+export function createTracePropagator(configuredPropagators = process.env.OTEL_PROPAGATORS): TextMapPropagator {
+    const names = (configuredPropagators?.trim() || DEFAULT_TRACE_PROPAGATORS)
+        .split(',')
+        .map((name) => name.trim().toLowerCase())
+        .filter(Boolean)
+
+    // The OpenTelemetry `none` value is exclusive. Fail closed if it is mixed
+    // with another value instead of silently enabling propagation.
+    if (names.includes('none')) return new CompositePropagator({ propagators: [] })
+
+    const propagators: TextMapPropagator[] = []
+    const configured = new Set<string>()
+    for (const name of names) {
+        if (configured.has(name)) continue
+        configured.add(name)
+        switch (name) {
+            case 'tracecontext':
+                propagators.push(new W3CTraceContextPropagator())
+                break
+            case 'baggage':
+                propagators.push(new W3CBaggagePropagator())
+                break
+            case 'b3':
+                propagators.push(new B3Propagator({ injectEncoding: B3InjectEncoding.SINGLE_HEADER }))
+                break
+            case 'b3multi':
+                propagators.push(new B3Propagator({ injectEncoding: B3InjectEncoding.MULTI_HEADER }))
+                break
+            case 'jaeger':
+                propagators.push(new JaegerPropagator())
+                break
+        }
+    }
+    return new CompositePropagator({ propagators })
+}
+
+function registerTracerProvider(tracerProvider: BasicTracerProvider): void {
+    tracerProvider.register({
+        contextManager: new AsyncLocalStorageContextManager().enable(),
+        propagator: createTracePropagator()
+    })
+}
 
 export interface AgentRun extends Run {
     actions: AgentAction[]
@@ -59,7 +107,7 @@ function getArizeTracer(options: ArizeTracerOptions): Tracer | undefined {
             url: `${options.baseUrl}/v1`,
             metadata
         })
-        const tracerProvider = new NodeTracerProvider({
+        const tracerProvider = new BasicTracerProvider({
             resource: new Resource({
                 [ATTR_SERVICE_NAME]: options.projectName,
                 [ATTR_SERVICE_VERSION]: '1.0.0',
@@ -74,7 +122,7 @@ function getArizeTracer(options: ArizeTracerOptions): Tracer | undefined {
             })
             const lcInstrumentation = new LangChainInstrumentation()
             lcInstrumentation.manuallyInstrument(CallbackManagerModule)
-            tracerProvider.register()
+            registerTracerProvider(tracerProvider)
         }
         return tracerProvider.getTracer(`arize-tracer-${uuidv4().toString()}`)
     } catch (err) {
@@ -114,7 +162,7 @@ export function getPhoenixTracer(options: PhoenixTracerOptions): Tracer | undefi
             url: exporterUrl,
             headers: exporterHeaders
         })
-        const tracerProvider = new NodeTracerProvider({
+        const tracerProvider = new BasicTracerProvider({
             resource: new Resource({
                 [ATTR_SERVICE_NAME]: options.projectName,
                 [ATTR_SERVICE_VERSION]: '1.0.0',
@@ -128,7 +176,7 @@ export function getPhoenixTracer(options: PhoenixTracerOptions): Tracer | undefi
             })
             const lcInstrumentation = new LangChainInstrumentation()
             lcInstrumentation.manuallyInstrument(CallbackManagerModule)
-            tracerProvider.register()
+            registerTracerProvider(tracerProvider)
         }
         return tracerProvider.getTracer(`phoenix-tracer-${uuidv4().toString()}`)
     } catch (err) {
@@ -158,7 +206,7 @@ function getOpikTracer(options: OpikTracerOptions): Tracer | undefined {
                 'Comet-Workspace': options.workspace
             }
         })
-        const tracerProvider = new NodeTracerProvider({
+        const tracerProvider = new BasicTracerProvider({
             resource: new Resource({
                 [ATTR_SERVICE_NAME]: options.projectName,
                 [ATTR_SERVICE_VERSION]: '1.0.0',
@@ -172,7 +220,7 @@ function getOpikTracer(options: OpikTracerOptions): Tracer | undefined {
             })
             const lcInstrumentation = new LangChainInstrumentation()
             lcInstrumentation.manuallyInstrument(CallbackManagerModule)
-            tracerProvider.register()
+            registerTracerProvider(tracerProvider)
         }
         return tracerProvider.getTracer(`opik-tracer-${uuidv4().toString()}`)
     } catch (err) {

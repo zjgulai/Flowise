@@ -67,7 +67,7 @@
     "dependencies": {
         "@mui/x-tree-view": "^7.25.0",
         "@tabler/icons-react": "^3.7.0",
-        "axios": "1.15.0",
+        "axios": "1.18.1",
         "date-fns": "^3.6.0",
         "flowise-react-json-view": "^1.21.7",
         "lodash": "^4.17.21",
