@@ -61,6 +61,7 @@ export async function buildLoggedInUser(
             workspaceStatus: workspaceUser.status,
             organizationStatus: organizationUser.status,
             workspaceRoleId: workspaceUser.roleId,
+            organizationRoleId: organizationUser.roleId,
             ownerRoleId: ownerRole.id
         })
         workspaceUser.lastLogin = new Date().toISOString()
@@ -103,7 +104,7 @@ export async function buildLoggedInUser(
         activeOrganizationSubscriptionId: subscriptionId,
         activeOrganizationCustomerId: customerId,
         activeOrganizationProductId: productId,
-        isOrganizationAdmin: workspaceUser.roleId === ownerRole.id,
+        isOrganizationAdmin: organizationUser.roleId === ownerRole.id,
         activeWorkspaceId: workspaceUser.workspaceId,
         activeWorkspace: workspaceUser.workspace.name,
         assignedWorkspaces,

@@ -20,7 +20,7 @@ import { UpsertHistory } from '../../database/entities/UpsertHistory'
 import { Variable } from '../../database/entities/Variable'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { generateId } from '../../utils'
-import { GeneralSuccessMessage } from '../../utils/constants'
+import { GeneralErrorMessage, GeneralSuccessMessage } from '../../utils/constants'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { WorkspaceShared } from '../database/entities/EnterpriseEntities'
 import { GeneralRole } from '../database/entities/role.entity'
@@ -223,10 +223,11 @@ export class WorkspaceService {
         return workspace
     }
 
-    public async getSharedWorkspacesForItem(itemId: string) {
+    public async getSharedWorkspacesForItem(itemId: string, itemType: 'credential' | 'custom_template', organizationId: string) {
         const sharedWorkspaces = await this.dataSource.getRepository(WorkspaceShared).find({
             where: {
-                sharedItemId: itemId
+                sharedItemId: itemId,
+                itemType
             }
         })
         if (sharedWorkspaces.length === 0) {
@@ -236,17 +237,20 @@ export class WorkspaceService {
         const workspaceIds = sharedWorkspaces.map((ws) => ws.workspaceId)
         const workspaces = await this.dataSource.getRepository(Workspace).find({
             select: ['id', 'name'],
-            where: { id: In(workspaceIds) }
+            where: { id: In(workspaceIds), organizationId }
         })
 
-        return sharedWorkspaces.map((sw) => {
+        return sharedWorkspaces.flatMap((sw) => {
             const workspace = workspaces.find((w) => w.id === sw.workspaceId)
-            return {
-                workspaceId: sw.workspaceId,
-                workspaceName: workspace?.name,
-                sharedItemId: sw.sharedItemId,
-                itemType: sw.itemType
-            }
+            if (!workspace) return []
+            return [
+                {
+                    workspaceId: sw.workspaceId,
+                    workspaceName: workspace.name,
+                    sharedItemId: sw.sharedItemId,
+                    itemType: sw.itemType
+                }
+            ]
         })
     }
 
@@ -275,24 +279,50 @@ export class WorkspaceService {
         return []
     }
 
-    public async setSharedWorkspacesForItem(itemId: string, body: { itemType: string; workspaceIds: string[] }) {
+    public async setSharedWorkspacesForItem(
+        itemId: string,
+        body: { itemType: 'credential' | 'custom_template'; workspaceIds: string[] },
+        scope: { sourceWorkspaceId: string; organizationId: string }
+    ) {
         const { itemType, workspaceIds } = body
 
         await this.dataSource.transaction(async (transactionalEntityManager: EntityManager) => {
+            const source =
+                itemType === 'credential'
+                    ? await transactionalEntityManager
+                          .getRepository(Credential)
+                          .findOneBy({ id: itemId, workspaceId: scope.sourceWorkspaceId })
+                    : await transactionalEntityManager
+                          .getRepository(CustomTemplate)
+                          .findOneBy({ id: itemId, workspaceId: scope.sourceWorkspaceId })
+            if (!source) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+
+            const uniqueWorkspaceIds = [...new Set(workspaceIds)]
+            const targetWorkspaces = uniqueWorkspaceIds.length
+                ? await transactionalEntityManager.getRepository(Workspace).findBy({ id: In(uniqueWorkspaceIds) })
+                : []
+            if (
+                targetWorkspaces.length !== uniqueWorkspaceIds.length ||
+                targetWorkspaces.some((workspace) => workspace.organizationId !== scope.organizationId)
+            ) {
+                throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+            }
+
             // Delete existing shared workspaces for the item
             await transactionalEntityManager.getRepository(WorkspaceShared).delete({
-                sharedItemId: itemId
+                sharedItemId: itemId,
+                itemType
             })
 
             // Add new shared workspaces
-            const sharedWorkspaces = workspaceIds.map((workspaceId) =>
+            const sharedWorkspaces = uniqueWorkspaceIds.map((workspaceId) =>
                 transactionalEntityManager.getRepository(WorkspaceShared).create({
                     workspaceId,
                     sharedItemId: itemId,
                     itemType
                 })
             )
-            await transactionalEntityManager.getRepository(WorkspaceShared).save(sharedWorkspaces)
+            if (sharedWorkspaces.length) await transactionalEntityManager.getRepository(WorkspaceShared).save(sharedWorkspaces)
         })
 
         return { message: GeneralSuccessMessage.UPDATED }

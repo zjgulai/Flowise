@@ -22,13 +22,15 @@ export function assertAdminPasswordLoginAllowed(input: {
     workspaceStatus?: string
     organizationStatus?: string
     workspaceRoleId: string
+    organizationRoleId?: string
     ownerRoleId: string
 }): void {
     if (
         input.userStatus !== UserStatus.ACTIVE ||
         input.workspaceStatus !== WorkspaceUserStatus.ACTIVE ||
         input.organizationStatus !== OrganizationUserStatus.ACTIVE ||
-        input.workspaceRoleId !== input.ownerRoleId
+        input.workspaceRoleId !== input.ownerRoleId ||
+        input.organizationRoleId !== input.ownerRoleId
     ) {
         throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, ADMIN_ONLY_ERROR_MESSAGE)
     }

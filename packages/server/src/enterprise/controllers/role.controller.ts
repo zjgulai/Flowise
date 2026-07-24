@@ -12,9 +12,17 @@ export class RoleController {
         try {
             const user = getLoggedInUser(req)
             assertQueryOrganizationMatchesActiveOrg(user, req.body.organizationId)
+            const roleData: Partial<Role> = {
+                organizationId: user.activeOrganizationId,
+                name: req.body.name,
+                description: req.body.description,
+                permissions: req.body.permissions,
+                createdBy: user.id,
+                updatedBy: user.id
+            }
 
             const roleService = new RoleService()
-            const newRole = await roleService.createRole(req.body)
+            const newRole = await roleService.createRole(roleData)
             return res.status(StatusCodes.CREATED).json(newRole)
         } catch (error) {
             next(error)
@@ -63,9 +71,17 @@ export class RoleController {
         try {
             const user = getLoggedInUser(req)
             assertQueryOrganizationMatchesActiveOrg(user, req.body.organizationId)
+            const roleData: Partial<Role> = {
+                id: req.body.id,
+                organizationId: user.activeOrganizationId,
+                name: req.body.name,
+                description: req.body.description,
+                permissions: req.body.permissions,
+                updatedBy: user.id
+            }
 
             const roleService = new RoleService()
-            const role = await roleService.updateRole(req.body)
+            const role = await roleService.updateRole(roleData, user.activeOrganizationId)
             return res.status(StatusCodes.OK).json(role)
         } catch (error) {
             next(error)
@@ -74,15 +90,14 @@ export class RoleController {
 
     public async delete(req: Request, res: Response, next: NextFunction) {
         try {
+            const user = getLoggedInUser(req)
             const query = req.query as Partial<Role>
             if (!query.id) {
                 throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Role ID is required')
             }
-            if (!query.organizationId) {
-                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Organization ID is required')
-            }
+            assertQueryOrganizationMatchesActiveOrg(user, query.organizationId)
             const roleService = new RoleService()
-            const role = await roleService.deleteRole(query.organizationId, query.id)
+            const role = await roleService.deleteRole(user.activeOrganizationId, query.id)
             return res.status(StatusCodes.OK).json(role)
         } catch (error) {
             next(error)

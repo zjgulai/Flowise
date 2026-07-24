@@ -4,7 +4,7 @@ import passport from 'passport'
 import { Profile, Strategy as OpenIDConnectStrategy, VerifyCallback } from 'passport-openidconnect'
 import auditService from '../services/audit'
 import { ErrorMessage, LoggedInUser, LoginActivityCode } from '../Interface.Enterprise'
-import { setTokenOrCookies } from '../middleware/passport'
+import { setTokenOrCookies } from '../middleware/passport/tokenResponse'
 import axios from 'axios'
 
 class GoogleSSO extends SSOBase {

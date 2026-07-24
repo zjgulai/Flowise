@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express'
 import { StatusCodes } from 'http-status-codes'
+import { QueryRunner } from 'typeorm'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { Platform } from '../../Interface'
 import { GeneralErrorMessage } from '../../utils/constants'
@@ -11,8 +12,16 @@ import Auth0SSO from '../sso/Auth0SSO'
 import AzureSSO from '../sso/AzureSSO'
 import GithubSSO from '../sso/GithubSSO'
 import GoogleSSO from '../sso/GoogleSSO'
+import { isSupportedSSOProvider } from '../sso/supportedProviders'
 import { decrypt } from '../utils/encryption.util'
 import { assertQueryOrganizationMatchesActiveOrg, getLoggedInUser } from '../utils/tenantRequestGuards'
+
+type LoginMethodProviderInput = {
+    providerName: string
+    config: Record<string, unknown>
+    status?: string
+    [key: string]: unknown
+}
 
 export class LoginMethodController {
     constructor() {
@@ -35,18 +44,65 @@ export class LoginMethodController {
         return safe
     }
 
+    private async assertSingleEnterpriseOrganization(activeOrganizationId: string, queryRunner: QueryRunner): Promise<void> {
+        const organizationService = new OrganizationService()
+        const organizations = await organizationService.readOrganization(queryRunner)
+        if (organizations.length !== 1 || organizations[0].id !== activeOrganizationId) {
+            throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+        }
+    }
+
+    private parseProviderInputs(value: unknown, requireProvider = false): LoginMethodProviderInput[] {
+        if (!Array.isArray(value) || (requireProvider && value.length === 0)) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, LoginMethodErrorMessage.INVALID_LOGIN_METHOD_CONFIG)
+        }
+        for (const provider of value) {
+            const candidate = provider as Record<string, unknown> | null
+            if (
+                !candidate ||
+                typeof candidate !== 'object' ||
+                Array.isArray(candidate) ||
+                typeof candidate.providerName !== 'string' ||
+                !isSupportedSSOProvider(candidate.providerName) ||
+                !candidate.config ||
+                typeof candidate.config !== 'object' ||
+                Array.isArray(candidate.config)
+            ) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, LoginMethodErrorMessage.INVALID_LOGIN_METHOD_CONFIG)
+            }
+        }
+        return value as LoginMethodProviderInput[]
+    }
+
     public async create(req: Request, res: Response, next: NextFunction) {
+        let queryRunner
         try {
             this.assertEnterprisePlatform()
+            if (!isSupportedSSOProvider(req.body.name)) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, LoginMethodErrorMessage.INVALID_LOGIN_METHOD_CONFIG)
+            }
 
             const user = getLoggedInUser(req)
             assertQueryOrganizationMatchesActiveOrg(user, req.body.organizationId)
+            queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
+            await queryRunner.connect()
+            await this.assertSingleEnterpriseOrganization(user.activeOrganizationId, queryRunner)
+            const loginMethodData: Partial<LoginMethod> = {
+                organizationId: user.activeOrganizationId,
+                name: req.body.name,
+                config: req.body.config,
+                status: req.body.status,
+                createdBy: user.id,
+                updatedBy: user.id
+            }
 
             const loginMethodService = new LoginMethodService()
-            const loginMethod = await loginMethodService.createLoginMethod(req.body)
+            const loginMethod = await loginMethodService.createLoginMethod(loginMethodData)
             return res.status(StatusCodes.CREATED).json(loginMethod)
         } catch (error) {
             next(error)
+        } finally {
+            if (queryRunner) await queryRunner.release()
         }
     }
 
@@ -61,7 +117,7 @@ export class LoginMethodController {
             } else if (getRunningExpressApp().identityManager.getPlatformType() === Platform.ENTERPRISE) {
                 const organizationService = new OrganizationService()
                 const organizations = await organizationService.readOrganization(queryRunner)
-                if (organizations.length > 0) {
+                if (organizations.length === 1) {
                     organizationId = organizations[0].id
                 } else {
                     return res.status(StatusCodes.OK).json({})
@@ -76,7 +132,7 @@ export class LoginMethodController {
             let loginMethod = await loginMethodService.readLoginMethodByOrganizationId(organizationId, queryRunner)
             if (loginMethod) {
                 for (let method of loginMethod) {
-                    if (method.status === LoginMethodStatus.ENABLE) providers.push(method.name)
+                    if (method.status === LoginMethodStatus.ENABLE && isSupportedSSOProvider(method.name)) providers.push(method.name)
                 }
             }
             return res.status(StatusCodes.OK).json({ providers: providers })
@@ -135,44 +191,71 @@ export class LoginMethodController {
         }
     }
     public async update(req: Request, res: Response, next: NextFunction) {
+        let queryRunner
         try {
             this.assertEnterprisePlatform()
 
             const user = getLoggedInUser(req)
             assertQueryOrganizationMatchesActiveOrg(user, req.body.organizationId)
+            const providers = this.parseProviderInputs(req.body.providers)
+            queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
+            await queryRunner.connect()
+            await this.assertSingleEnterpriseOrganization(user.activeOrganizationId, queryRunner)
+            const updateData = {
+                organizationId: user.activeOrganizationId,
+                userId: user.id,
+                providers
+            }
 
             const loginMethodService = new LoginMethodService()
-            const loginMethod = await loginMethodService.createOrUpdateConfig(req.body)
+            const loginMethod = await loginMethodService.createOrUpdateConfig(updateData)
             if (loginMethod?.status === 'OK' && loginMethod?.organizationId) {
                 const appServer = getRunningExpressApp()
-                let providers: any[] = req.body.providers
                 providers.map((provider: any) => {
                     const identityManager = appServer.identityManager
-                    if (provider.config.clientID) {
-                        provider.config.configEnabled = provider.status === LoginMethodStatus.ENABLE
-                        identityManager.initializeSsoProvider(appServer.app, provider.providerName, provider.config)
+                    if (provider.config.clientID || provider.status !== LoginMethodStatus.ENABLE) {
+                        const providerConfig = {
+                            ...provider.config,
+                            configEnabled: provider.status === LoginMethodStatus.ENABLE,
+                            organizationId: user.activeOrganizationId
+                        }
+                        identityManager.initializeSsoProvider(appServer.app, provider.providerName, providerConfig)
                     }
                 })
             }
             return res.status(StatusCodes.OK).json(loginMethod)
         } catch (error) {
             next(error)
+        } finally {
+            if (queryRunner) await queryRunner.release()
         }
     }
     public async testConfig(req: Request, res: Response, next: NextFunction) {
         let queryRunner
         try {
-            const providers = req.body.providers as { config: Record<string, unknown> }[]
-            const providerName = req.body.providerName as string
-            const organizationId = req.body.organizationId as string | undefined
-            let config = providers[0]?.config ?? {}
-
-            if (organizationId) {
-                queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
-                await queryRunner.connect()
-                const loginMethodService = new LoginMethodService()
-                config = await loginMethodService.getConfigWithSecrets(organizationId, providerName, config, queryRunner)
+            this.assertEnterprisePlatform()
+            const user = getLoggedInUser(req)
+            if (!user.isOrganizationAdmin) {
+                throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
             }
+            assertQueryOrganizationMatchesActiveOrg(user, req.body.organizationId)
+
+            const providers = this.parseProviderInputs(req.body.providers, true)
+            const providerName = req.body.providerName
+            if (!isSupportedSSOProvider(providerName)) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, LoginMethodErrorMessage.INVALID_LOGIN_METHOD_CONFIG)
+            }
+            const requestedProvider = providers.find((provider) => provider.providerName === providerName)
+            if (!requestedProvider) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, LoginMethodErrorMessage.INVALID_LOGIN_METHOD_CONFIG)
+            }
+            let config = requestedProvider.config
+
+            queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
+            await queryRunner.connect()
+            await this.assertSingleEnterpriseOrganization(user.activeOrganizationId, queryRunner)
+            const loginMethodService = new LoginMethodService()
+            config = await loginMethodService.getConfigWithSecrets(user.activeOrganizationId, providerName, config, queryRunner)
 
             if (providerName === 'azure') {
                 const response = await AzureSSO.testSetup(config)
@@ -186,8 +269,6 @@ export class LoginMethodController {
             } else if (providerName === 'github') {
                 const response = await GithubSSO.testSetup(config)
                 return res.json(response)
-            } else {
-                return res.json({ error: 'Provider not supported' })
             }
         } catch (error) {
             next(error)

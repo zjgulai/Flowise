@@ -7,13 +7,14 @@ import { Organization } from '../database/entities/organization.entity'
 import { GeneralErrorMessage } from '../../utils/constants'
 import { OrganizationUserService } from '../services/organization-user.service'
 import { getCurrentUsage } from '../../utils/quotaUsage'
-import { assertStripeIdMatchesSession } from '../utils/tenantRequestGuards'
+import { assertStripeIdMatchesSession, getLoggedInUser } from '../utils/tenantRequestGuards'
 
 export class OrganizationController {
     public async create(req: Request, res: Response, next: NextFunction) {
         try {
+            const user = getLoggedInUser(req)
             const organizationUserService = new OrganizationUserService()
-            const newOrganization = await organizationUserService.createOrganization(req.body)
+            const newOrganization = await organizationUserService.createOrganization({ name: req.body?.name }, user.id)
             return res.status(StatusCodes.CREATED).json(newOrganization)
         } catch (error) {
             next(error)
@@ -49,8 +50,13 @@ export class OrganizationController {
 
     public async update(req: Request, res: Response, next: NextFunction) {
         try {
+            const user = getLoggedInUser(req)
             const organizationService = new OrganizationService()
-            const organization = await organizationService.updateOrganization(req.body)
+            const organization = await organizationService.updateOrganization(
+                { id: req.body?.id, name: req.body?.name },
+                user.id,
+                user.activeOrganizationId
+            )
             return res.status(StatusCodes.OK).json(organization)
         } catch (error) {
             next(error)

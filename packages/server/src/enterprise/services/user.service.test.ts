@@ -66,6 +66,10 @@ const createHarness = (failurePoint?: FailurePoint) => {
         }),
         manager: {
             merge: jest.fn().mockImplementation((_entity, current, patch) => ({ ...current, ...patch })),
+            update: jest.fn().mockImplementation(async () => {
+                events.push('update')
+                return { affected: 1 }
+            }),
             save: jest.fn().mockImplementation(async (_entity, user) => {
                 events.push('save')
                 if (failurePoint === 'save') throw new Error('save-failure')
@@ -114,21 +118,21 @@ describe('UserService.updateUser session revocation ordering', () => {
         mockCompareHash.mockReturnValue(true)
     })
 
-    it('does not start or persist a password transaction when session revocation fails', async () => {
+    it('keeps the committed replacement credential when post-commit session cleanup fails', async () => {
         const { service, queryRunner } = createHarness()
         const revocationError = new Error('revocation-failure')
         mockDestroyAllSessionsForUser.mockRejectedValue(revocationError)
 
         await expect(service.updateUser(passwordPatch())).rejects.toBe(revocationError)
 
-        expect(queryRunner.startTransaction).not.toHaveBeenCalled()
-        expect(queryRunner.manager.save).not.toHaveBeenCalled()
-        expect(queryRunner.commitTransaction).not.toHaveBeenCalled()
+        expect(queryRunner.startTransaction).toHaveBeenCalledTimes(1)
+        expect(queryRunner.manager.save).toHaveBeenCalledTimes(1)
+        expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1)
         expect(queryRunner.rollbackTransaction).not.toHaveBeenCalled()
         expect(queryRunner.release).toHaveBeenCalledTimes(1)
     })
 
-    it('revokes sessions before starting and committing a password transaction', async () => {
+    it('commits the replacement credential before revoking sessions', async () => {
         const { service, events } = createHarness()
         mockDestroyAllSessionsForUser.mockImplementation(async () => {
             events.push('revoke')
@@ -136,11 +140,11 @@ describe('UserService.updateUser session revocation ordering', () => {
 
         await service.updateUser(passwordPatch())
 
-        expect(events).toEqual(['revoke', 'start', 'save', 'commit', 'release'])
+        expect(events).toEqual(['start', 'save', 'commit', 'revoke', 'release'])
         expect(mockDestroyAllSessionsForUser).toHaveBeenCalledWith(userId)
     })
 
-    it.each(['save', 'commit'] as FailurePoint[])('revokes once and rolls back when %s fails', async (failurePoint) => {
+    it.each(['save', 'commit'] as FailurePoint[])('does not revoke sessions when %s fails', async (failurePoint) => {
         const { service, queryRunner, events } = createHarness(failurePoint)
         mockDestroyAllSessionsForUser.mockImplementation(async () => {
             events.push('revoke')
@@ -148,8 +152,7 @@ describe('UserService.updateUser session revocation ordering', () => {
 
         await expect(service.updateUser(passwordPatch())).rejects.toThrow(`${failurePoint}-failure`)
 
-        expect(mockDestroyAllSessionsForUser).toHaveBeenCalledTimes(1)
-        expect(events[0]).toBe('revoke')
+        expect(mockDestroyAllSessionsForUser).not.toHaveBeenCalled()
         expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1)
         expect(queryRunner.release).toHaveBeenCalledTimes(1)
     })
@@ -161,5 +164,54 @@ describe('UserService.updateUser session revocation ordering', () => {
 
         expect(mockDestroyAllSessionsForUser).not.toHaveBeenCalled()
         expect(events).toEqual(['start', 'save', 'commit', 'release'])
+    })
+})
+
+describe('UserService.confirmEmailChange', () => {
+    beforeEach(() => jest.clearAllMocks())
+
+    it('atomically consumes the expected token, changes the email and revokes sessions', async () => {
+        const { service, queryRunner, events } = createHarness()
+        jest.spyOn(service, 'readUserById').mockResolvedValue({
+            id: userId,
+            email: 'old@example.invalid',
+            tempToken: 'one-time-token'
+        } as User)
+        jest.spyOn(service, 'readUserByEmail').mockResolvedValue(null)
+        mockDestroyAllSessionsForUser.mockImplementation(async () => events.push('revoke'))
+        const onEmailChanged = jest.fn().mockImplementation(async () => events.push('external-sync'))
+
+        await service.confirmEmailChange(userId, 'new@example.invalid', 'one-time-token', onEmailChanged)
+
+        expect(queryRunner.manager.update).toHaveBeenCalledWith(
+            User,
+            { id: userId, tempToken: 'one-time-token' },
+            {
+                email: 'new@example.invalid',
+                tempToken: null,
+                tokenExpiry: null,
+                updatedBy: userId
+            }
+        )
+        expect(events).toEqual(['start', 'update', 'commit', 'revoke', 'external-sync', 'release'])
+    })
+
+    it('rejects a replay when the conditional token consume affects no row', async () => {
+        const { service, queryRunner } = createHarness()
+        jest.spyOn(service, 'readUserById').mockResolvedValue({
+            id: userId,
+            email: 'old@example.invalid',
+            tempToken: 'one-time-token'
+        } as User)
+        jest.spyOn(service, 'readUserByEmail').mockResolvedValue(null)
+        queryRunner.manager.update.mockResolvedValueOnce({ affected: 0 })
+
+        await expect(service.confirmEmailChange(userId, 'new@example.invalid', 'one-time-token')).rejects.toMatchObject({
+            statusCode: 400,
+            message: 'Invalid Temporary Token'
+        })
+
+        expect(queryRunner.rollbackTransaction).toHaveBeenCalledTimes(1)
+        expect(mockDestroyAllSessionsForUser).not.toHaveBeenCalled()
     })
 })

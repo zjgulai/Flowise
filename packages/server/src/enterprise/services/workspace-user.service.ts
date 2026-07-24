@@ -3,8 +3,8 @@ import { DataSource, QueryRunner } from 'typeorm'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { GeneralErrorMessage, GeneralSuccessMessage } from '../../utils/constants'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
-import { OrganizationUser } from '../database/entities/organization-user.entity'
-import { GeneralRole } from '../database/entities/role.entity'
+import { OrganizationUser, OrganizationUserStatus } from '../database/entities/organization-user.entity'
+import { GeneralRole, Role } from '../database/entities/role.entity'
 import { WorkspaceUser, WorkspaceUserStatus } from '../database/entities/workspace-user.entity'
 import { Workspace } from '../database/entities/workspace.entity'
 import { isInvalidDateTime } from '../utils/validation.util'
@@ -13,12 +13,46 @@ import { OrganizationErrorMessage, OrganizationService } from './organization.se
 import { RoleErrorMessage, RoleService } from './role.service'
 import { UserErrorMessage, UserService } from './user.service'
 import { WorkspaceErrorMessage, WorkspaceService } from './workspace.service'
+import { destroyAllSessionsForUser } from '../middleware/passport/SessionPersistance'
 
 export const enum WorkspaceUserErrorMessage {
     INVALID_WORKSPACE_USER_SATUS = 'Invalid Workspace User Status',
     INVALID_WORKSPACE_USER_LASTLOGIN = 'Invalid Workspace User LastLogin',
     WORKSPACE_USER_ALREADY_EXISTS = 'Workspace User Already Exists',
     WORKSPACE_USER_NOT_FOUND = 'Workspace User Not Found'
+}
+
+function parseRolePermissions(role: Role): string[] {
+    let permissions: unknown
+    try {
+        permissions = JSON.parse(role.permissions)
+    } catch {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, RoleErrorMessage.INVALID_ROLE_PERMISSIONS)
+    }
+    if (!Array.isArray(permissions) || permissions.some((permission) => typeof permission !== 'string')) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, RoleErrorMessage.INVALID_ROLE_PERMISSIONS)
+    }
+    return permissions
+}
+
+export function assertWorkspaceRoleAssignmentAllowed(actorRole: Role, assignedRole: Role): void {
+    const actorPermissions = new Set(parseRolePermissions(actorRole))
+    const assignedPermissions = parseRolePermissions(assignedRole)
+    if (assignedPermissions.some((permission) => !actorPermissions.has(permission))) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+    }
+}
+
+export function assertWorkspaceOwnerMutationAllowed(input: {
+    actorOrganizationRoleId?: string
+    targetWorkspaceRoleId?: string
+    requestedWorkspaceRoleId?: string
+    ownerRoleId: string
+}): void {
+    const ownerBoundaryTouched = input.targetWorkspaceRoleId === input.ownerRoleId || input.requestedWorkspaceRoleId === input.ownerRoleId
+    if (ownerBoundaryTouched && input.actorOrganizationRoleId !== input.ownerRoleId) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+    }
 }
 
 export class WorkspaceUserService {
@@ -222,16 +256,109 @@ export class WorkspaceUserService {
         return await queryRunner.manager.save(WorkspaceUser, data)
     }
 
+    private async readAssignableWorkspaceRole(
+        workspace: Workspace,
+        userId: string | undefined,
+        roleId: string | undefined,
+        queryRunner: QueryRunner
+    ) {
+        if (!userId) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationUserErrorMessage.ORGANIZATION_USER_NOT_FOUND)
+        if (!roleId) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
+        const organizationUser = await queryRunner.manager.findOneBy(OrganizationUser, {
+            organizationId: workspace.organizationId,
+            userId
+        })
+        if (!organizationUser) {
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationUserErrorMessage.ORGANIZATION_USER_NOT_FOUND)
+        }
+
+        const role = await this.roleService.readRoleById(roleId, queryRunner)
+        if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
+
+        const isOrganizationScopedRole = role.organizationId === workspace.organizationId
+        const isMatchingGeneralMembershipRole = !role.organizationId && role.id === organizationUser.roleId
+        if (!isOrganizationScopedRole && !isMatchingGeneralMembershipRole) {
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
+        }
+
+        return role
+    }
+
+    private async readActiveActorOrganizationMembership(workspace: Workspace, actorUserId: string | undefined, queryRunner: QueryRunner) {
+        if (!actorUserId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+
+        const actorOrganizationMembership = await queryRunner.manager.findOneBy(OrganizationUser, {
+            organizationId: workspace.organizationId,
+            userId: actorUserId
+        })
+        if (!actorOrganizationMembership || actorOrganizationMembership.status !== OrganizationUserStatus.ACTIVE) {
+            throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+        }
+
+        const ownerRole = await this.roleService.readGeneralRoleByName(GeneralRole.OWNER, queryRunner)
+        return { actorOrganizationMembership, ownerRole }
+    }
+
+    private async assertActorMayAssignWorkspaceRole(
+        workspace: Workspace,
+        actorUserId: string | undefined,
+        assignedRole: Role,
+        queryRunner: QueryRunner,
+        targetWorkspaceRoleId?: string
+    ): Promise<void> {
+        const { actorOrganizationMembership, ownerRole } = await this.readActiveActorOrganizationMembership(
+            workspace,
+            actorUserId,
+            queryRunner
+        )
+        assertWorkspaceOwnerMutationAllowed({
+            actorOrganizationRoleId: actorOrganizationMembership.roleId,
+            targetWorkspaceRoleId,
+            requestedWorkspaceRoleId: assignedRole.id,
+            ownerRoleId: ownerRole.id
+        })
+        if (actorOrganizationMembership.roleId === ownerRole.id) return
+
+        const actorWorkspaceMembership = await queryRunner.manager.findOneBy(WorkspaceUser, {
+            workspaceId: workspace.id,
+            userId: actorUserId
+        })
+        if (!actorWorkspaceMembership || actorWorkspaceMembership.status !== WorkspaceUserStatus.ACTIVE) {
+            throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+        }
+        const actorRole = await this.roleService.readRoleById(actorWorkspaceMembership.roleId, queryRunner)
+        if (!actorRole) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
+        assertWorkspaceRoleAssignmentAllowed(actorRole, assignedRole)
+    }
+
+    private async assertActorMayMutateWorkspaceOwner(
+        workspace: Workspace,
+        actorUserId: string | undefined,
+        targetWorkspaceRoleId: string,
+        queryRunner: QueryRunner
+    ): Promise<void> {
+        const { actorOrganizationMembership, ownerRole } = await this.readActiveActorOrganizationMembership(
+            workspace,
+            actorUserId,
+            queryRunner
+        )
+        assertWorkspaceOwnerMutationAllowed({
+            actorOrganizationRoleId: actorOrganizationMembership.roleId,
+            targetWorkspaceRoleId,
+            ownerRoleId: ownerRole.id
+        })
+    }
+
     public async createWorkspaceUser(data: Partial<WorkspaceUser>) {
         const queryRunner = this.dataSource.createQueryRunner()
         await queryRunner.connect()
 
         const { workspace, workspaceUser } = await this.readWorkspaceUserByWorkspaceIdUserId(data.workspaceId, data.userId, queryRunner)
         if (workspaceUser) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, WorkspaceUserErrorMessage.WORKSPACE_USER_ALREADY_EXISTS)
-        const role = await this.roleService.readRoleById(data.roleId, queryRunner)
-        if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
+        const assignedRole = await this.readAssignableWorkspaceRole(workspace, data.userId, data.roleId, queryRunner)
         const createdBy = await this.userService.readUserById(data.createdBy, queryRunner)
         if (!createdBy) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
+        await this.assertActorMayAssignWorkspaceRole(workspace, createdBy.id, assignedRole, queryRunner)
 
         let newWorkspaceUser = this.createNewWorkspaceUser(data, queryRunner)
         workspace.updatedBy = data.createdBy
@@ -239,7 +366,6 @@ export class WorkspaceUserService {
             await queryRunner.startTransaction()
             newWorkspaceUser = await this.saveWorkspaceUser(newWorkspaceUser, queryRunner)
             await this.workspaceService.saveWorkspace(workspace, queryRunner)
-            await this.roleService.saveRole(role, queryRunner)
             await queryRunner.commitTransaction()
         } catch (error) {
             await queryRunner.rollbackTransaction()
@@ -331,21 +457,30 @@ export class WorkspaceUserService {
     }
 
     public async updateWorkspaceUser(newWorkspaserUser: Partial<WorkspaceUser>, queryRunner: QueryRunner) {
-        const { workspaceUser } = await this.readWorkspaceUserByWorkspaceIdUserId(
+        const { workspace, workspaceUser } = await this.readWorkspaceUserByWorkspaceIdUserId(
             newWorkspaserUser.workspaceId,
             newWorkspaserUser.userId,
             queryRunner
         )
         if (!workspaceUser) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, WorkspaceUserErrorMessage.WORKSPACE_USER_NOT_FOUND)
-        if (newWorkspaserUser.roleId && workspaceUser.role) {
-            const role = await this.roleService.readRoleById(newWorkspaserUser.roleId, queryRunner)
-            if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
-            // check if the role is from the same organization
-            if (role.organizationId !== workspaceUser.role.organizationId) {
-                throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
-            }
+        if (newWorkspaserUser.roleId) {
+            const assignedRole = await this.readAssignableWorkspaceRole(
+                workspace,
+                newWorkspaserUser.userId,
+                newWorkspaserUser.roleId,
+                queryRunner
+            )
+            await this.assertActorMayAssignWorkspaceRole(
+                workspace,
+                newWorkspaserUser.updatedBy,
+                assignedRole,
+                queryRunner,
+                workspaceUser.roleId
+            )
             // delete role, the new role will be created again, with the new roleId (newWorkspaserUser.roleId)
             if (workspaceUser.role) delete workspaceUser.role
+        } else if (newWorkspaserUser.status !== undefined) {
+            await this.assertActorMayMutateWorkspaceOwner(workspace, newWorkspaserUser.updatedBy, workspaceUser.roleId, queryRunner)
         }
         const updatedBy = await this.userService.readUserById(newWorkspaserUser.updatedBy, queryRunner)
         if (!updatedBy) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
@@ -353,8 +488,16 @@ export class WorkspaceUserService {
         if (newWorkspaserUser.lastLogin) this.validateWorkspaceUserLastLogin(newWorkspaserUser.lastLogin)
         newWorkspaserUser.createdBy = workspaceUser.createdBy
 
+        const authorizationChanged =
+            (newWorkspaserUser.roleId !== undefined && newWorkspaserUser.roleId !== workspaceUser.roleId) ||
+            (newWorkspaserUser.status !== undefined && newWorkspaserUser.status !== workspaceUser.status)
+
         let updataWorkspaceUser = queryRunner.manager.merge(WorkspaceUser, workspaceUser, newWorkspaserUser)
         updataWorkspaceUser = await this.saveWorkspaceUser(updataWorkspaceUser, queryRunner)
+
+        if (authorizationChanged && updataWorkspaceUser.userId) {
+            await destroyAllSessionsForUser(updataWorkspaceUser.userId)
+        }
 
         return updataWorkspaceUser
     }
@@ -377,6 +520,8 @@ export class WorkspaceUserService {
             await this.workspaceService.saveWorkspace(workspace, queryRunner)
 
             await queryRunner.commitTransaction()
+
+            await destroyAllSessionsForUser(userId as string)
 
             return { message: GeneralSuccessMessage.DELETED }
         } catch (error) {

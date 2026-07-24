@@ -27,6 +27,7 @@ const workspaceUser = {
 const organizationUser = {
     userId: user.id,
     organizationId: workspaceUser.workspace.organizationId,
+    roleId: workspaceUser.roleId,
     status: OrganizationUserStatus.ACTIVE
 }
 
@@ -110,6 +111,7 @@ describe('buildLoggedInUser', () => {
         user?: typeof user
         workspaceUser?: WorkspaceUser
         organizationStatus?: OrganizationUserStatus
+        organizationRoleId?: string
         ownerRoleId?: string
     }
 
@@ -117,12 +119,17 @@ describe('buildLoggedInUser', () => {
         ['user', { user: { ...user, status: 'deleted' } }],
         ['workspace', { workspaceUser: { ...workspaceUser, status: WorkspaceUserStatus.DISABLE } }],
         ['organization', { organizationStatus: OrganizationUserStatus.DISABLE }],
+        ['organization role', { organizationRoleId: '00000000-0000-4000-8000-000000000098' }],
         ['role', { ownerRoleId: '00000000-0000-4000-8000-000000000099' }]
     ])('rejects a non-active-owner %s login without mutating membership state', async (_boundary, override) => {
         const harness = createHarness()
-        if (override.organizationStatus) {
+        if (override.organizationStatus || override.organizationRoleId) {
             ;(harness.dependencies.organizationUserService!.readOrganizationUserByWorkspaceIdUserId as jest.Mock).mockResolvedValue({
-                organizationUser: { ...organizationUser, status: override.organizationStatus }
+                organizationUser: {
+                    ...organizationUser,
+                    status: override.organizationStatus ?? organizationUser.status,
+                    roleId: override.organizationRoleId ?? organizationUser.roleId
+                }
             })
         }
         if (override.ownerRoleId) {

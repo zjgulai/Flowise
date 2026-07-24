@@ -105,7 +105,7 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) => 
             getWorkspacesByOrganizationIdUserIdApi.request(user.activeOrganizationId, user.id)
         }
         setName(dialogProps.data.name)
-        getSharedWorkspacesForItemApi.request(dialogProps.data.id)
+        getSharedWorkspacesForItemApi.request(dialogProps.data.id, dialogProps.data.itemType)
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dialogProps, user])

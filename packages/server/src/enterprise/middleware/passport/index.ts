@@ -2,10 +2,9 @@ import { HttpStatusCode } from 'axios'
 import { RedisStore } from 'connect-redis'
 import express, { NextFunction, Request, Response } from 'express'
 import session from 'express-session'
-import jwt, { JwtPayload, sign } from 'jsonwebtoken'
+import jwt from 'jsonwebtoken'
 import passport from 'passport'
 import { VerifiedCallback } from 'passport-jwt'
-import { v4 as uuidv4 } from 'uuid'
 import { IdentityManager } from '../../../IdentityManager'
 import { Platform } from '../../../Interface'
 import { getRunningExpressApp } from '../../../utils/getRunningExpressApp'
@@ -22,12 +21,16 @@ import {
     getJWTIssuer,
     getJWTRefreshTokenSecret
 } from '../../utils/authSecrets'
-import { decryptToken, encryptToken, generateSafeCopy } from '../../utils/tempTokenUtils'
-import { getAuthStrategy } from './AuthStrategy'
+import { decryptToken } from '../../utils/tempTokenUtils'
+import { getAuthStrategy, isTokenBoundToSession, reloadSessionAuthorization } from './AuthStrategy'
 import { registerAcceptanceLoginRoute } from './acceptanceLogin'
+import { adminLoginRateLimiter } from './authRateLimit'
 import { enforceAuthResolvePostOnly, resolveSecureCookie } from './authSecurityPolicy'
 import { isAdminOnlyModeEnabled } from '../../utils/adminOnlyPolicy'
 import { initializeDBClientAndStore, initializeMemoryStore, initializeRedisClientAndStore } from './SessionPersistance'
+import { setTokenOrCookies } from './tokenResponse'
+
+export { generateJwtAuthToken, generateJwtRefreshToken, setTokenOrCookies } from './tokenResponse'
 
 const localStrategy = require('passport-local').Strategy
 
@@ -131,7 +134,9 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
                         identityManager,
                         mode: 'password-login'
                     })
-                    return done(null, loggedInUser, { message: 'Logged in Successfully' })
+                    const authVersion = (response.user as typeof response.user & { authVersion?: string }).authVersion
+                    if (!authVersion) throw new Error('Unable to establish credential version')
+                    return done(null, { ...loggedInUser, authVersion }, { message: 'Logged in Successfully' })
                 } catch (error) {
                     return done(error)
                 } finally {
@@ -194,40 +199,48 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
         const refreshToken = req.cookies.refreshToken
         if (!refreshToken) return res.sendStatus(401)
 
-        jwt.verify(refreshToken, getJWTRefreshTokenSecret(), async (err: any, payload: any) => {
-            if (err || !payload) return res.status(401).json({ message: ErrorMessage.REFRESH_TOKEN_EXPIRED })
-            // @ts-ignore
-            const loggedInUser = req.user as LoggedInUser
-            let isSSO = false
-            let newTokenResponse: any = {}
-            if (loggedInUser && loggedInUser.ssoRefreshToken) {
+        jwt.verify(
+            refreshToken,
+            getJWTRefreshTokenSecret(),
+            { algorithms: ['HS256'], audience: getJWTAudience(), issuer: getJWTIssuer() },
+            async (err: any, payload: any) => {
                 try {
-                    newTokenResponse = await identityManager.getRefreshToken(loggedInUser.ssoProvider, loggedInUser.ssoRefreshToken)
-                    if (newTokenResponse.error) {
+                    if (err || !payload) return res.status(401).json({ message: ErrorMessage.REFRESH_TOKEN_EXPIRED })
+                    // @ts-ignore
+                    const serializedUser = req.user as LoggedInUser
+                    if (!serializedUser) return res.status(401).json({ message: ErrorMessage.REFRESH_TOKEN_EXPIRED })
+                    const meta = decryptToken(payload.meta)
+                    if (!meta || !isTokenBoundToSession(payload, meta, serializedUser)) {
                         return res.status(401).json({ message: ErrorMessage.REFRESH_TOKEN_EXPIRED })
                     }
-                    isSSO = true
-                } catch (error) {
-                    return res.status(401).json({ message: ErrorMessage.REFRESH_TOKEN_EXPIRED })
+                    const loggedInUser = await reloadSessionAuthorization(serializedUser)
+                    if (!loggedInUser) return res.status(401).json({ message: ErrorMessage.REFRESH_TOKEN_EXPIRED })
+                    let isSSO = false
+                    let newTokenResponse: any = {}
+                    if (loggedInUser.ssoRefreshToken) {
+                        newTokenResponse = await identityManager.getRefreshToken(loggedInUser.ssoProvider, loggedInUser.ssoRefreshToken)
+                        if (newTokenResponse.error) {
+                            return res.status(401).json({ message: ErrorMessage.REFRESH_TOKEN_EXPIRED })
+                        }
+                        isSSO = true
+                    }
+                    if (isSSO) {
+                        loggedInUser.ssoToken = newTokenResponse.access_token
+                        if (newTokenResponse.refresh_token) {
+                            loggedInUser.ssoRefreshToken = newTokenResponse.refresh_token
+                        }
+                        return setTokenOrCookies(res, loggedInUser, false, req, false, true)
+                    } else {
+                        return setTokenOrCookies(res, loggedInUser, false, req)
+                    }
+                } catch {
+                    if (!res.headersSent) return res.status(401).json({ message: ErrorMessage.REFRESH_TOKEN_EXPIRED })
                 }
             }
-            const meta = decryptToken(payload.meta)
-            if (!meta) {
-                return res.status(401).json({ message: ErrorMessage.REFRESH_TOKEN_EXPIRED })
-            }
-            if (isSSO) {
-                loggedInUser.ssoToken = newTokenResponse.access_token
-                if (newTokenResponse.refresh_token) {
-                    loggedInUser.ssoRefreshToken = newTokenResponse.refresh_token
-                }
-                return setTokenOrCookies(res, loggedInUser, false, req, false, true)
-            } else {
-                return setTokenOrCookies(res, loggedInUser, false, req)
-            }
-        })
+        )
     })
 
-    app.post('/api/v1/auth/login', (req, res, next?) => {
+    app.post('/api/v1/auth/login', adminLoginRateLimiter, (req: Request, res: Response, next: NextFunction) => {
         passport.authenticate('login', async (err: any, user: LoggedInUser) => {
             try {
                 if (err || !user) {
@@ -237,12 +250,12 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
                     return res.status(401).json({ redirectUrl: '/license-expired' })
                 }
 
-                req.session.regenerate((regenerateErr) => {
+                req.session.regenerate((regenerateErr?: unknown) => {
                     if (regenerateErr) {
                         return next ? next(regenerateErr) : res.status(500).json({ message: 'Session regeneration failed' })
                     }
 
-                    req.login(user, { session: true }, async (error) => {
+                    req.login(user, { session: true }, async (error?: unknown) => {
                         if (error) {
                             return next ? next(error) : res.status(401).json(error)
                         }
@@ -253,115 +266,6 @@ export const initializeJwtCookieMiddleware = async (app: express.Application, id
                 return next ? next(error) : res.status(401).json(error)
             }
         })(req, res, next)
-    })
-}
-
-export const setTokenOrCookies = (
-    res: Response,
-    user: any,
-    regenerateRefreshToken: boolean,
-    req?: Request,
-    redirect?: boolean,
-    isSSO?: boolean
-) => {
-    const secureCookie = resolveSecureCookie()
-    const token = generateJwtAuthToken(user)
-    let refreshToken: string = ''
-    if (regenerateRefreshToken) {
-        refreshToken = generateJwtRefreshToken(user)
-    } else {
-        refreshToken = req?.cookies?.refreshToken
-    }
-    const returnUser = generateSafeCopy(user)
-    returnUser.isSSO = !isSSO ? false : isSSO
-
-    if (redirect) {
-        // 1. Generate a random token
-        const ssoToken = uuidv4()
-
-        // 2. Store returnUser in your session store, keyed by ssoToken, with a short expiry
-        storeSSOUserPayload(ssoToken, returnUser)
-        // 3. Redirect with token only
-        const dashboardUrl = `/sso-success?token=${ssoToken}`
-
-        // Return the token as a cookie in our response.
-        let resWithCookies = res
-            .cookie('token', token, {
-                httpOnly: true,
-                secure: secureCookie,
-                sameSite: 'lax'
-            })
-            .cookie('refreshToken', refreshToken, {
-                httpOnly: true,
-                secure: secureCookie,
-                sameSite: 'lax'
-            })
-        resWithCookies.redirect(dashboardUrl)
-    } else {
-        // Return the token as a cookie in our response.
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: secureCookie,
-            sameSite: 'lax'
-        })
-            .cookie('refreshToken', refreshToken, {
-                httpOnly: true,
-                secure: secureCookie,
-                sameSite: 'lax'
-            })
-            .type('json')
-            .send({ ...returnUser })
-    }
-}
-
-export const generateJwtAuthToken = (user: any) => {
-    let expiryInMinutes = -1
-    if (user?.ssoToken) {
-        const jwtHeader = jwt.decode(user.ssoToken, { complete: true })
-        if (jwtHeader) {
-            const utcSeconds = (jwtHeader.payload as any).exp
-            let d = new Date(0) // The 0 there is the key, which sets the date to the epoch
-            d.setUTCSeconds(utcSeconds)
-            // get the minutes difference from current time
-            expiryInMinutes = Math.abs(d.getTime() - new Date().getTime()) / 60000
-        }
-    }
-    if (expiryInMinutes === -1) {
-        expiryInMinutes = process.env.JWT_TOKEN_EXPIRY_IN_MINUTES ? parseInt(process.env.JWT_TOKEN_EXPIRY_IN_MINUTES) : 60
-    }
-    return _generateJwtToken(user, expiryInMinutes, getJWTAuthTokenSecret())
-}
-
-export const generateJwtRefreshToken = (user: any) => {
-    let expiryInMinutes = -1
-    if (user.ssoRefreshToken) {
-        const jwtHeader = jwt.decode(user.ssoRefreshToken, { complete: false })
-        if (jwtHeader && typeof jwtHeader !== 'string') {
-            const utcSeconds = (jwtHeader as JwtPayload).exp
-            if (utcSeconds) {
-                let d = new Date(0) // The 0 there is the key, which sets the date to the epoch
-                d.setUTCSeconds(utcSeconds)
-                // get the minutes difference from current time
-                expiryInMinutes = Math.abs(d.getTime() - new Date().getTime()) / 60000
-            }
-        }
-    }
-    if (expiryInMinutes === -1) {
-        expiryInMinutes = process.env.JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES
-            ? parseInt(process.env.JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES)
-            : 129600 // 90 days
-    }
-    return _generateJwtToken(user, expiryInMinutes, getJWTRefreshTokenSecret())
-}
-
-const _generateJwtToken = (user: Partial<LoggedInUser>, expiryInMinutes: number, secret: string) => {
-    const encryptedUserInfo = encryptToken(user?.id + ':' + user?.activeWorkspaceId)
-    return sign({ id: user?.id, username: user?.name, meta: encryptedUserInfo }, secret, {
-        expiresIn: expiryInMinutes + 'm', // Expiry in minutes
-        notBefore: '0', // Cannot use before now, can be configured to be deferred.
-        algorithm: 'HS256', // HMAC using SHA-256 hash algorithm
-        audience: getJWTAudience(),
-        issuer: getJWTIssuer()
     })
 }
 
@@ -389,6 +293,8 @@ export const verifyToken = (req: Request, res: Response, next: NextFunction) => 
         }
 
         req.user = user
+        const passportSession = (req.session as any)?.passport
+        if (passportSession) passportSession.user = user
         next()
     })(req, res, next)
 }
@@ -419,9 +325,4 @@ export const verifyTokenForBullMQDashboard = (req: Request, res: Response, next:
         req.user = user
         next()
     })(req, res, next)
-}
-
-const storeSSOUserPayload = (ssoToken: string, returnUser: any) => {
-    const app = getRunningExpressApp()
-    app.cachePool.addSSOTokenCache(ssoToken, returnUser)
 }

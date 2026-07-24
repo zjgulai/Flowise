@@ -174,6 +174,9 @@ export class App {
             logger.info('🎉 [server]: All initialization steps completed successfully!')
         } catch (error) {
             logger.error('❌ [server]: Error during Data Source initialization:', error)
+            await this.stopApp()
+            if (this.AppDataSource.isInitialized) await this.AppDataSource.destroy()
+            throw error
         }
     }
 

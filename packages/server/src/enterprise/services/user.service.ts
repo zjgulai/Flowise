@@ -159,6 +159,9 @@ export class UserService {
             if (newUserData.name) {
                 this.validateUserName(newUserData.name)
             }
+            if (newUserData.email !== undefined) {
+                this.validateUserEmail(newUserData.email)
+            }
 
             if (newUserData.oldPassword && newUserData.newPassword && newUserData.confirmPassword) {
                 if (!oldUserData.credential) {
@@ -185,6 +188,9 @@ export class UserService {
             if (newUserData.name) {
                 safePatch.name = newUserData.name
             }
+            if (newUserData.email !== undefined) {
+                safePatch.email = newUserData.email.trim()
+            }
 
             safePatch.updatedBy = newUserData.updatedBy // always set (controller forces req.user.id)
             if (newUserData.oldPassword && newUserData.newPassword && newUserData.confirmPassword) {
@@ -195,13 +201,14 @@ export class UserService {
             }
 
             updatedUser = queryRunner.manager.merge(User, oldUserData, safePatch)
+
+            await queryRunner.startTransaction()
+            updatedUser = await this.saveUser(updatedUser, queryRunner)
+            await queryRunner.commitTransaction()
+
             if (passwordChanged) {
                 await destroyAllSessionsForUser(updatedUser.id as string)
             }
-
-            await queryRunner.startTransaction()
-            await this.saveUser(updatedUser, queryRunner)
-            await queryRunner.commitTransaction()
 
             const emailChanged = !!(updatedUser.email && updatedUser.email !== currentEmail)
 
@@ -220,5 +227,50 @@ export class UserService {
         }
 
         return sanitizeUser(updatedUser)
+    }
+
+    public async confirmEmailChange(
+        userId: string,
+        newEmail: string,
+        expectedToken: string,
+        onEmailChanged?: (userId: string, newEmail: string) => Promise<void>
+    ) {
+        const queryRunner = this.dataSource.createQueryRunner()
+        await queryRunner.connect()
+        let currentUser: User | null = null
+        const normalizedEmail = newEmail.trim()
+        try {
+            this.validateUserEmail(normalizedEmail)
+            currentUser = await this.readUserById(userId, queryRunner)
+            if (!currentUser || currentUser.tempToken !== expectedToken) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
+            }
+
+            const taken = await this.readUserByEmail(normalizedEmail, queryRunner)
+            if (taken && taken.id !== userId) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.USER_EMAIL_ALREADY_EXISTS)
+            }
+
+            await queryRunner.startTransaction()
+            const result = await queryRunner.manager.update(
+                User,
+                { id: userId, tempToken: expectedToken },
+                { email: normalizedEmail, tempToken: null, tokenExpiry: null, updatedBy: userId }
+            )
+            if (result.affected !== 1) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
+            }
+            await queryRunner.commitTransaction()
+
+            await destroyAllSessionsForUser(userId)
+            if (onEmailChanged) await onEmailChanged(userId, normalizedEmail)
+        } catch (error) {
+            if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
+            throw error
+        } finally {
+            if (!queryRunner.isReleased) await queryRunner.release()
+        }
+
+        return sanitizeUser({ ...currentUser, email: normalizedEmail, tempToken: null, tokenExpiry: null })
     }
 }

@@ -1,5 +1,6 @@
 import express from 'express'
 import { LoginMethodController } from '../controllers/login-method.controller'
+import { requireInteractiveSession, requireOrganizationAdminSession } from '../middleware/passport/interactiveSession'
 import { checkPermission } from '../rbac/PermissionCheck'
 
 const router = express.Router()
@@ -9,10 +10,10 @@ router.get('/', checkPermission('sso:manage'), loginMethodController.read)
 
 router.get('/default', loginMethodController.defaultMethods)
 
-router.post('/', checkPermission('sso:manage'), loginMethodController.create)
+router.post('/', requireInteractiveSession, checkPermission('sso:manage'), loginMethodController.create)
 
-router.put('/', checkPermission('sso:manage'), loginMethodController.update)
+router.put('/', requireInteractiveSession, checkPermission('sso:manage'), loginMethodController.update)
 
-router.post('/test', checkPermission('sso:manage'), loginMethodController.testConfig)
+router.post('/test', requireOrganizationAdminSession, checkPermission('sso:manage'), loginMethodController.testConfig)
 
 export default router

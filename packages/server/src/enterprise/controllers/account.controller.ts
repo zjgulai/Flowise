@@ -52,6 +52,7 @@ export class AccountController {
 
     public async verify(req: Request, res: Response, next: NextFunction) {
         try {
+            assertAccountProvisioningAllowed()
             const accountService = new AccountService()
             const data = await accountService.verify(req.body)
             return res.status(StatusCodes.CREATED).json(data)
@@ -62,6 +63,7 @@ export class AccountController {
 
     public async resendVerificationEmail(req: Request, res: Response, next: NextFunction) {
         try {
+            assertAccountProvisioningAllowed()
             const accountService = new AccountService()
             const data = await accountService.resendVerificationEmail(req.body)
             return res.status(StatusCodes.CREATED).json(data)

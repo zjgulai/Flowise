@@ -12,7 +12,6 @@ import { QueryRunner } from 'typeorm'
 import { Platform } from '../../Interface'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { GeneralRole } from '../database/entities/role.entity'
-import { User, UserStatus } from '../database/entities/user.entity'
 import { WorkspaceUser } from '../database/entities/workspace-user.entity'
 import { OrganizationUserService } from '../services/organization-user.service'
 import { RoleService } from '../services/role.service'
@@ -113,6 +112,7 @@ export class OrganizationUserController {
     public async delete(req: Request, res: Response, next: NextFunction) {
         let queryRunner: QueryRunner | undefined
         try {
+            const sessionUser = getLoggedInUser(req)
             queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
             const currentPlatform = getRunningExpressApp().identityManager.getPlatformType()
             await queryRunner.connect()
@@ -123,6 +123,7 @@ export class OrganizationUserController {
             if (!query.userId) {
                 throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'User ID is required')
             }
+            assertQueryOrganizationMatchesActiveOrg(sessionUser, query.organizationId)
 
             const organizationUserService = new OrganizationUserService()
             const workspaceService = new WorkspaceService()
@@ -134,23 +135,15 @@ export class OrganizationUserController {
                 const personalRole = await roleService.readGeneralRoleByName(GeneralRole.PERSONAL_WORKSPACE, queryRunner)
                 const personalWorkspaces = await queryRunner.manager.findBy(WorkspaceUser, {
                     userId: query.userId,
-                    roleId: personalRole.id
+                    roleId: personalRole.id,
+                    workspace: { organizationId: query.organizationId }
                 })
                 if (personalWorkspaces.length === 1)
                     // delete personal workspace
                     await workspaceService.deleteWorkspaceById(queryRunner, personalWorkspaces[0].workspaceId)
                 // remove user from other workspces
                 organizationUser = await organizationUserService.deleteOrganizationUser(queryRunner, query.organizationId, query.userId)
-                // soft delete user because they might workspace might created by them
-                const deleteUser = await queryRunner.manager.findOneBy(User, { id: query.userId })
-                if (!deleteUser) throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, GeneralErrorMessage.UNHANDLED_EDGE_CASE)
-                deleteUser.name = UserStatus.DELETED
-                deleteUser.email = `deleted_${deleteUser.id}_${Date.now()}@deleted.flowise`
-                deleteUser.status = UserStatus.DELETED
-                deleteUser.credential = null
-                deleteUser.tokenExpiry = null
-                deleteUser.tempToken = null
-                await queryRunner.manager.save(User, deleteUser)
+                await organizationUserService.softDeleteUserIfNoOrganizationMemberships(queryRunner, query.userId)
             } else {
                 organizationUser = await organizationUserService.deleteOrganizationUser(queryRunner, query.organizationId, query.userId)
             }
