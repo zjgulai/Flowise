@@ -1,53 +1,54 @@
-/*
-* TODO: Disabling for now as we need to enable login first
-*
-describe('E2E suite for api/v1/variables API endpoint', () => {
+describe('authenticated variable management', () => {
+    const runId = String(Cypress.env('runId')).slice(0, 8)
+    const variableName = `e2e-variable-${runId}`
+    const variableValue = `local-value-${runId}`
+    const updatedVariableName = `${variableName}-updated`
+    const updatedVariableValue = `${variableValue}-updated`
+
     beforeEach(() => {
-        cy.visit('http://localhost:3000/variables')
+        cy.loginAsLocalOwner()
     })
 
-    // DEFAULT TEST ON PAGE LOAD
-    it('displays no variables by default', () => {
-        cy.get('.MuiCardContent-root .MuiStack-root').last().find('div').last().should('have.text', 'No Variables Yet')
-    })
+    it('creates, updates, and deletes a static variable', () => {
+        cy.intercept('GET', '**/api/v1/variables*').as('loadVariables')
+        cy.visit('/variables')
+        cy.wait('@loadVariables').its('response.statusCode').should('eq', 200)
+        cy.contains('暂无变量').should('be.visible')
 
-    // CREATE
-    it.skip('can add new variable', () => {
-        const newVariableName = 'MafiVariable'
-        const newVariableValue = 'shh!!! secret value'
+        cy.intercept('POST', '**/api/v1/variables').as('createVariable')
         cy.get('#btn_createVariable').click()
-        cy.get('#txtInput_variableName').type(`${newVariableName}`)
-        cy.get('#txtInput_variableValue').type(`${newVariableValue}`)
-        cy.get('.MuiDialogActions-spacing button').click()
-        cy.get('.MuiTable-root tbody tr').should('have.length', 1)
-        cy.get('.MuiTable-root tbody tr').last().find('th').first().find('div').first().should('have.text', newVariableName)
-    })
+        cy.get('#txtInput_variableName').type(variableName)
+        cy.get('#txtInput_variableValue').type(variableValue)
+        cy.get('#btn_confirmAddingNewVariable').should('not.be.disabled').click()
+        cy.wait('@createVariable').its('response.statusCode').should('eq', 200)
 
-    // READ
-    it.skip('can retrieve all api keys', () => {
-        const newVariableName = 'MafiVariable'
-        cy.get('.MuiTable-root tbody tr').should('have.length', 1)
-        cy.get('.MuiTable-root tbody tr').last().find('th').first().find('div').first().should('have.text', newVariableName)
-    })
+        cy.contains('table tbody tr', variableName)
+            .should('have.length', 1)
+            .within(() => {
+                cy.contains(variableValue).should('be.visible')
+                cy.get('button[title="编辑"]').click()
+            })
 
-    // UPDATE
-    it.skip('can update new api key', () => {
-        const updatedVariableName = 'PichiVariable'
-        const updatedVariableValue = 'silence shh! value'
-        cy.get('.MuiTable-root tbody tr').last().find('td').eq(4).find('button').click()
-        cy.get('#txtInput_variableName').clear().type(`${updatedVariableName}`)
-        cy.get('#txtInput_variableValue').clear().type(`${updatedVariableValue}`)
-        cy.get('.MuiDialogActions-spacing button').click()
-        cy.get('.MuiTable-root tbody tr').should('have.length', 1)
-        cy.get('.MuiTable-root tbody tr').last().find('th').first().find('div').first().should('have.text', updatedVariableName)
-    })
+        cy.intercept('PUT', '**/api/v1/variables/*').as('updateVariable')
+        cy.get('#txtInput_variableName').clear().type(updatedVariableName)
+        cy.get('#txtInput_variableValue').clear().type(updatedVariableValue)
+        cy.get('#btn_confirmAddingNewVariable').should('not.be.disabled').click()
+        cy.wait('@updateVariable').its('response.statusCode').should('eq', 200)
 
-    // DELETE
-    it.skip('can delete new api key', () => {
-        cy.get('.MuiTable-root tbody tr').last().find('td').eq(5).find('button').click()
-        cy.get('.MuiDialog-scrollPaper .MuiDialogActions-spacing button').last().click()
-        cy.get('.MuiTable-root tbody tr').should('have.length', 0)
-        cy.get('.MuiCardContent-root .MuiStack-root').last().find('div').last().should('have.text', 'No Variables Yet')
+        cy.contains('table tbody tr', updatedVariableName)
+            .should('have.length', 1)
+            .within(() => {
+                cy.contains(updatedVariableValue).should('be.visible')
+                cy.get('button[title="删除"]').click()
+            })
+
+        cy.intercept('DELETE', '**/api/v1/variables/*').as('deleteVariable')
+        cy.get('[role="dialog"]')
+            .should('be.visible')
+            .within(() => {
+                cy.contains('button', 'Delete').click()
+            })
+        cy.wait('@deleteVariable').its('response.statusCode').should('eq', 200)
+        cy.contains('暂无变量').should('be.visible')
     })
 })
-*/

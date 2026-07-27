@@ -5,7 +5,7 @@ import { Profile, Strategy as OpenIDConnectStrategy, VerifyCallback } from 'pass
 import { Request } from 'express'
 import auditService from '../services/audit'
 import { ErrorMessage, LoggedInUser, LoginActivityCode } from '../Interface.Enterprise'
-import { setTokenOrCookies } from '../middleware/passport'
+import { setTokenOrCookies } from '../middleware/passport/tokenResponse'
 import axios from 'axios'
 
 class AzureSSO extends SSOBase {

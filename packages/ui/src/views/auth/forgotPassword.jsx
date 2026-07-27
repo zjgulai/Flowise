@@ -31,7 +31,7 @@ const ForgotPasswordPage = () => {
     useNotifier()
 
     const usernameInput = {
-        label: 'Username',
+        label: '用户名',
         name: 'username',
         type: 'email',
         placeholder: 'user@company.com'
@@ -71,7 +71,7 @@ const ForgotPasswordPage = () => {
                     : forgotPasswordApi.error.response.data
             setResponseMsg({
                 type: 'error',
-                msg: errMessage ?? 'Failed to send instructions, please contact your administrator.'
+                msg: errMessage ?? '发送说明失败，请联系管理员。'
             })
             setLoading(false)
         }
@@ -82,7 +82,7 @@ const ForgotPasswordPage = () => {
         if (forgotPasswordApi.data) {
             setResponseMsg({
                 type: 'success',
-                msg: 'Password reset instructions sent to the email.'
+                msg: '密码重置说明已发送到邮箱。'
             })
             setLoading(false)
         }
@@ -92,7 +92,7 @@ const ForgotPasswordPage = () => {
     return (
         <>
             <MainCard>
-                <Stack flexDirection='column' sx={{ width: '480px', gap: 3 }}>
+                <Stack flexDirection='column' sx={{ width: '100%', maxWidth: '480px', gap: 3 }}>
                     {responseMsg && responseMsg?.type === 'error' && (
                         <Alert icon={<IconExclamationCircle />} variant='filled' severity='error'>
                             {responseMsg.msg}
@@ -109,11 +109,11 @@ const ForgotPasswordPage = () => {
                         </Alert>
                     )}
                     <Stack sx={{ gap: 1 }}>
-                        <Typography variant='h1'>Forgot Password?</Typography>
+                        <Typography variant='h1'>忘记密码？</Typography>
                         <Typography variant='body2' sx={{ color: theme.palette.grey[600] }}>
-                            Have a reset password code?{' '}
+                            有重置密码的验证码？{' '}
                             <Link style={{ color: theme.palette.primary.main }} to='/reset-password'>
-                                Change your password here
+                                在此修改密码
                             </Link>
                             .
                         </Typography>
@@ -123,7 +123,7 @@ const ForgotPasswordPage = () => {
                             <Box>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Email<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        邮箱<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <Typography align='left'></Typography>
                                     <div style={{ flexGrow: 1 }}></div>
@@ -136,7 +136,7 @@ const ForgotPasswordPage = () => {
                                 />
                                 {isEnterpriseLicensed && (
                                     <Typography variant='caption'>
-                                        <i>If you forgot the email you used for signing up, please contact your administrator.</i>
+                                        <i>如果您忘记了注册邮箱，请联系管理员。</i>
                                     </Typography>
                                 )}
                             </Box>
@@ -146,7 +146,7 @@ const ForgotPasswordPage = () => {
                                 disabled={!usernameVal}
                                 type='submit'
                             >
-                                Send Reset Password Instructions
+                                发送重置密码说明
                             </StyledButton>
                         </Stack>
                     </form>

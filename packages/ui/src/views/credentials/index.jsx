@@ -109,7 +109,7 @@ const Credentials = () => {
 
     const listCredential = () => {
         const dialogProp = {
-            title: 'Add New Credential',
+            title: '添加新凭据',
             componentsCredentials
         }
         setCredentialListDialogProps(dialogProp)
@@ -146,7 +146,7 @@ const Credentials = () => {
             data: {
                 id: credential.id,
                 name: credential.name,
-                title: 'Share Credential',
+                title: '分享凭据',
                 itemType: 'credential'
             }
         }
@@ -246,7 +246,7 @@ const Credentials = () => {
                             onSearchChange={onSearchChange}
                             search={true}
                             searchPlaceholder='Search Credentials'
-                            title='Credentials'
+                            title='凭据'
                             description='API keys, tokens, and secrets for 3rd party integrations'
                         >
                             <StyledPermissionButton
@@ -268,7 +268,7 @@ const Credentials = () => {
                                         alt='CredentialEmptySVG'
                                     />
                                 </Box>
-                                <div>No Credentials Yet</div>
+                                <div>暂无凭据</div>
                             </Stack>
                         ) : (
                             <TableContainer
@@ -285,9 +285,9 @@ const Credentials = () => {
                                         }}
                                     >
                                         <TableRow>
-                                            <StyledTableCell>Name</StyledTableCell>
+                                            <StyledTableCell>名称</StyledTableCell>
                                             <StyledTableCell>Last Updated</StyledTableCell>
-                                            <StyledTableCell>Created</StyledTableCell>
+                                            <StyledTableCell>已创建</StyledTableCell>
                                             <StyledTableCell style={{ width: '5%' }}> </StyledTableCell>
                                             <StyledTableCell style={{ width: '5%' }}> </StyledTableCell>
                                             <StyledTableCell style={{ width: '5%' }}> </StyledTableCell>
@@ -391,7 +391,7 @@ const Credentials = () => {
                                                                     <PermissionIconButton
                                                                         permissionId={'credentials:share'}
                                                                         display={'feat:workspaces'}
-                                                                        title='Share'
+                                                                        title='分享'
                                                                         color='primary'
                                                                         onClick={() => share(credential)}
                                                                     >
@@ -401,7 +401,7 @@ const Credentials = () => {
                                                                 <StyledTableCell>
                                                                     <PermissionIconButton
                                                                         permissionId={'credentials:create,credentials:update'}
-                                                                        title='Edit'
+                                                                        title='编辑'
                                                                         color='primary'
                                                                         onClick={() => edit(credential)}
                                                                     >
@@ -411,7 +411,7 @@ const Credentials = () => {
                                                                 <StyledTableCell>
                                                                     <PermissionIconButton
                                                                         permissionId={'credentials:delete'}
-                                                                        title='Delete'
+                                                                        title='删除'
                                                                         color='error'
                                                                         onClick={() => deleteCredential(credential)}
                                                                     >

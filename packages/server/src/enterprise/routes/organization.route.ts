@@ -1,27 +1,49 @@
-import express from 'express'
+import express, { NextFunction, Request, Response } from 'express'
 import { OrganizationController } from '../controllers/organization.controller'
+import { ErrorMessage } from '../Interface.Enterprise'
+import { requireInteractiveSession, requireOrganizationAdminSession } from '../middleware/passport/interactiveSession'
 
 const router = express.Router()
 const organizationController = new OrganizationController()
 
-router.get('/', organizationController.read)
+const forbid = (res: Response) => res.status(403).json({ message: ErrorMessage.FORBIDDEN })
 
-router.post('/', organizationController.create)
+const requireActiveOrganizationQuery = (req: Request, res: Response, next: NextFunction) => {
+    const organizationId = typeof req.query.id === 'string' ? req.query.id : undefined
+    if (!organizationId || organizationId !== req.user?.activeOrganizationId) return forbid(res)
+    return next()
+}
 
-router.put('/', organizationController.update)
+export const bindOrganizationCreateToCurrentUser = (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user?.id) return forbid(res)
+    req.body = { name: req.body?.name, createdBy: req.user.id }
+    return next()
+}
 
-router.get('/additional-seats-quantity', organizationController.getAdditionalSeatsQuantity)
+export const bindOrganizationUpdateToActiveTenant = (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user?.id || !req.body?.id || req.body.id !== req.user.activeOrganizationId) return forbid(res)
+    req.body = { id: req.user.activeOrganizationId, name: req.body?.name, updatedBy: req.user.id }
+    return next()
+}
 
-router.get('/customer-default-source', organizationController.getCustomerWithDefaultSource)
+router.get('/', requireInteractiveSession, requireActiveOrganizationQuery, organizationController.read)
 
-router.get('/additional-seats-proration', organizationController.getAdditionalSeatsProration)
+router.post('/', requireOrganizationAdminSession, bindOrganizationCreateToCurrentUser, organizationController.create)
 
-router.post('/update-additional-seats', organizationController.updateAdditionalSeats)
+router.put('/', requireOrganizationAdminSession, bindOrganizationUpdateToActiveTenant, organizationController.update)
 
-router.get('/plan-proration', organizationController.getPlanProration)
+router.get('/additional-seats-quantity', requireOrganizationAdminSession, organizationController.getAdditionalSeatsQuantity)
 
-router.post('/update-subscription-plan', organizationController.updateSubscriptionPlan)
+router.get('/customer-default-source', requireOrganizationAdminSession, organizationController.getCustomerWithDefaultSource)
 
-router.get('/get-current-usage', organizationController.getCurrentUsage)
+router.get('/additional-seats-proration', requireOrganizationAdminSession, organizationController.getAdditionalSeatsProration)
+
+router.post('/update-additional-seats', requireOrganizationAdminSession, organizationController.updateAdditionalSeats)
+
+router.get('/plan-proration', requireOrganizationAdminSession, organizationController.getPlanProration)
+
+router.post('/update-subscription-plan', requireOrganizationAdminSession, organizationController.updateSubscriptionPlan)
+
+router.get('/get-current-usage', requireOrganizationAdminSession, organizationController.getCurrentUsage)
 
 export default router

@@ -137,7 +137,7 @@ const AgentReasoningCard = ({
                     </MemoizedReactMarkdown>
                 )}
                 {agent.instructions && <p>{agent.instructions}</p>}
-                {agent.messages.length === 0 && !agent.instructions && <p>Finished</p>}
+                {agent.messages.length === 0 && !agent.instructions && <p>已完成</p>}
                 {agent.sourceDocuments && agent.sourceDocuments.length > 0 && (
                     <div style={{ display: 'block', flexDirection: 'row', width: '100%' }}>
                         {removeDuplicateURL(agent).map((source, index) => {

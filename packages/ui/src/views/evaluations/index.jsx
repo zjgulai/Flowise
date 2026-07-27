@@ -341,7 +341,7 @@ const EvalsEvaluation = () => {
                                     }
                                 }}
                                 onClick={onRefresh}
-                                title='Refresh'
+                                title='刷新'
                             >
                                 <IconRefresh />
                             </IconButton>
@@ -375,7 +375,7 @@ const EvalsEvaluation = () => {
                                         alt='empty_evalSVG'
                                     />
                                 </Box>
-                                <div>No Evaluations Yet</div>
+                                <div>暂无评估</div>
                             </Stack>
                         ) : (
                             <>
@@ -404,12 +404,12 @@ const EvalsEvaluation = () => {
                                                     />
                                                 </TableCell>
                                                 <TableCell width={10}> </TableCell>
-                                                <TableCell>Name</TableCell>
+                                                <TableCell>名称</TableCell>
                                                 <TableCell>Latest Version</TableCell>
                                                 <TableCell>Average Metrics</TableCell>
                                                 <TableCell>Last Evaluated</TableCell>
                                                 <TableCell>Flow(s)</TableCell>
-                                                <TableCell>Dataset</TableCell>
+                                                <TableCell>数据集</TableCell>
                                                 <TableCell> </TableCell>
                                             </TableRow>
                                         </TableHead>
@@ -646,7 +646,7 @@ function EvaluationRunRow(props) {
                 <StyledTableCell>
                     {props.item.version}{' '}
                     {props.item.version > 0 && (
-                        <IconButton aria-label='expand row' size='small' color='inherit' onClick={() => setOpen(!open)}>
+                        <IconButton aria-label='展开行' size='small' color='inherit' onClick={() => setOpen(!open)}>
                             {props.item.version > 0 && open ? <IconChevronsUp /> : <IconChevronsDown />}
                         </IconButton>
                     )}
@@ -726,7 +726,7 @@ function EvaluationRunRow(props) {
                 </StyledTableCell>
                 <TableCell>
                     <IconButton
-                        title='View Results'
+                        title='查看结果'
                         color='primary'
                         disabled={props.item.status === 'pending'}
                         onClick={() => showResults(props.item)}
@@ -766,10 +766,10 @@ function EvaluationRunRow(props) {
                                                         onChange={onSelectAllChildClick}
                                                     />
                                                 </TableCell>
-                                                <TableCell>Version</TableCell>
+                                                <TableCell>版本</TableCell>
                                                 <TableCell>Last Run</TableCell>
                                                 <TableCell>Average Metrics</TableCell>
-                                                <TableCell>Status</TableCell>
+                                                <TableCell>状态</TableCell>
                                                 <TableCell> </TableCell>
                                             </TableRow>
                                         </TableHead>
@@ -861,7 +861,7 @@ function EvaluationRunRow(props) {
                                                             </StyledTableCell>
                                                             <StyledTableCell>
                                                                 <IconButton
-                                                                    title='View Results'
+                                                                    title='查看结果'
                                                                     color='primary'
                                                                     disabled={childItem.status === 'pending'}
                                                                     onClick={() => showResults(childItem)}

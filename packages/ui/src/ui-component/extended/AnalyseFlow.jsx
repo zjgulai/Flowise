@@ -47,13 +47,13 @@ const analyticProviders = [
         url: 'https://smith.langchain.com',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['langsmithApi']
             },
             {
-                label: 'Project Name',
+                label: '项目名称',
                 name: 'projectName',
                 type: 'string',
                 optional: true,
@@ -61,7 +61,7 @@ const analyticProviders = [
                 placeholder: 'default'
             },
             {
-                label: 'On/Off',
+                label: '开/关',
                 name: 'status',
                 type: 'boolean',
                 optional: true
@@ -75,20 +75,20 @@ const analyticProviders = [
         url: 'https://langfuse.com',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['langfuseApi']
             },
             {
-                label: 'Release',
+                label: '发布',
                 name: 'release',
                 type: 'string',
                 optional: true,
                 description: 'The release number/hash of the application to provide analytics grouped by release'
             },
             {
-                label: 'On/Off',
+                label: '开/关',
                 name: 'status',
                 type: 'boolean',
                 optional: true
@@ -102,13 +102,13 @@ const analyticProviders = [
         url: 'https://lunary.ai',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['lunaryApi']
             },
             {
-                label: 'On/Off',
+                label: '开/关',
                 name: 'status',
                 type: 'boolean',
                 optional: true
@@ -122,13 +122,13 @@ const analyticProviders = [
         url: 'https://langwatch.ai',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['langwatchApi']
             },
             {
-                label: 'On/Off',
+                label: '开/关',
                 name: 'status',
                 type: 'boolean',
                 optional: true
@@ -142,13 +142,13 @@ const analyticProviders = [
         url: 'https://arize.com',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['arizeApi']
             },
             {
-                label: 'Project Name',
+                label: '项目名称',
                 name: 'projectName',
                 type: 'string',
                 optional: true,
@@ -156,7 +156,7 @@ const analyticProviders = [
                 placeholder: 'default'
             },
             {
-                label: 'On/Off',
+                label: '开/关',
                 name: 'status',
                 type: 'boolean',
                 optional: true
@@ -170,13 +170,13 @@ const analyticProviders = [
         url: 'https://phoenix.arize.com',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['phoenixApi']
             },
             {
-                label: 'Project Name',
+                label: '项目名称',
                 name: 'projectName',
                 type: 'string',
                 optional: true,
@@ -184,7 +184,7 @@ const analyticProviders = [
                 placeholder: 'default'
             },
             {
-                label: 'On/Off',
+                label: '开/关',
                 name: 'status',
                 type: 'boolean',
                 optional: true
@@ -198,20 +198,20 @@ const analyticProviders = [
         url: 'https://www.comet.com/opik',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['opikApi']
             },
             {
-                label: 'Project Name',
+                label: '项目名称',
                 name: 'opikProjectName',
                 type: 'string',
                 description: 'Name of your Opik project',
                 placeholder: 'default'
             },
             {
-                label: 'On/Off',
+                label: '开/关',
                 name: 'status',
                 type: 'boolean',
                 optional: true

@@ -50,13 +50,13 @@ const spin = keyframes`
 
 // ─── Status palette ───────────────────────────────────────────────────────────
 const STATUS_META = {
-    connecting: { label: 'CONNECTING', tone: 'info' },
-    idle: { label: 'IDLE', tone: 'default' },
-    listening: { label: 'LISTENING', tone: 'success' },
-    running: { label: 'RUNNING', tone: 'warning' },
-    done: { label: 'COMPLETED', tone: 'success' },
-    stopped: { label: 'STOPPED', tone: 'info' },
-    error: { label: 'ERROR', tone: 'error' }
+    connecting: { label: '连接中', tone: 'info' },
+    idle: { label: '空闲', tone: 'default' },
+    listening: { label: '监听中', tone: 'success' },
+    running: { label: '运行中', tone: 'warning' },
+    done: { label: '已完成', tone: 'success' },
+    stopped: { label: '已停止', tone: 'info' },
+    error: { label: '错误', tone: 'error' }
 }
 
 const TONE_COLOR = (theme, tone) => {
@@ -232,7 +232,7 @@ const EndpointBlock = ({ method, url, isDark, onCopy }) => {
                 >
                     {url}
                 </Box>
-                <Tooltip title={copied ? 'Copied' : 'Copy URL'}>
+                <Tooltip title={copied ? '已复制' : '复制 URL'}>
                     <IconButton size='small' onClick={() => copy(url, setCopied)} sx={{ p: 0.5, color: iconColor }}>
                         {copied ? <IconCircleCheck size={14} color={theme.palette.success.main} /> : <IconCopy size={14} />}
                     </IconButton>
@@ -257,7 +257,7 @@ const EndpointBlock = ({ method, url, isDark, onCopy }) => {
                         '&:hover': { bgcolor: 'transparent', color: isDark ? 'common.white' : 'text.primary' }
                     }}
                 >
-                    cURL example
+                    cURL 示例
                 </Button>
                 <Collapse in={showCurl} timeout='auto' unmountOnExit>
                     <Box
@@ -278,7 +278,7 @@ const EndpointBlock = ({ method, url, isDark, onCopy }) => {
                         }}
                     >
                         {curl}
-                        <Tooltip title={copiedCurl ? 'Copied' : 'Copy cURL'}>
+                        <Tooltip title={copiedCurl ? '已复制' : '复制 cURL'}>
                             <IconButton
                                 size='small'
                                 onClick={() => copy(curl, setCopiedCurl)}
@@ -431,7 +431,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                                 if (typeof payload.data === 'string') setFinalMessage((m) => m + payload.data)
                                 break
                             case 'error':
-                                setErrorMessage(typeof payload.data === 'string' ? payload.data : 'Execution error')
+                                setErrorMessage(typeof payload.data === 'string' ? payload.data : '执行错误')
                                 setStatus('error')
                                 break
                             case 'executionEnd':
@@ -454,7 +454,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                 })
             } catch (err) {
                 if (!ctrl.signal.aborted) {
-                    setErrorMessage(err?.message || 'Listener disconnected')
+                    setErrorMessage(err?.message || '监听器已断开连接')
                     setStatus('error')
                 }
             }
@@ -477,7 +477,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                 openStream(id)
             } catch (err) {
                 if (cancelled) return
-                setErrorMessage(err?.response?.data?.message || err?.message || 'Failed to register listener')
+                setErrorMessage(err?.response?.data?.message || err?.message || '注册监听器失败')
                 setStatus('error')
             }
         })()
@@ -555,7 +555,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
         >
             {/* Resize handle */}
             <button
-                aria-label='Resize panel'
+                aria-label='调整面板大小'
                 onMouseDown={onMouseDown}
                 style={{
                     position: 'absolute',
@@ -623,11 +623,11 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                                 lineHeight: 1
                             }}
                         >
-                            Webhook Listener
+                            Webhook 监听器
                         </Typography>
-                        <Typography sx={{ fontSize: 14, fontWeight: 600, mt: 0.25, color: 'text.primary' }}>Live observatory</Typography>
+                        <Typography sx={{ fontSize: 14, fontWeight: 600, mt: 0.25, color: 'text.primary' }}>实时观测台</Typography>
                     </Box>
-                    <Tooltip title={maximized ? 'Restore width' : 'Expand'}>
+                    <Tooltip title={maximized ? '恢复宽度' : '展开'}>
                         <IconButton
                             size='small'
                             onClick={() => setMaximized((v) => !v)}
@@ -668,7 +668,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
             <Box sx={{ flex: 1, overflow: 'auto', px: 2.5, py: 2 }}>
                 {/* Endpoint */}
                 <Box sx={{ mb: 3 }}>
-                    <Caption>Endpoint</Caption>
+                    <Caption>端点</Caption>
                     <EndpointBlock method={method} url={webhookUrl} isDark={isDark} />
                 </Box>
 
@@ -693,9 +693,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                     ) : status === 'listening' ? (
                         <Box sx={{ textAlign: 'center' }}>
                             <SonarIdle />
-                            <Typography sx={{ fontSize: 12, color: 'text.secondary', mt: 1 }}>
-                                Waiting for an incoming webhook request…
-                            </Typography>
+                            <Typography sx={{ fontSize: 12, color: 'text.secondary', mt: 1 }}>等待传入的 Webhook 请求…</Typography>
                             <Typography sx={{ fontFamily: MONO_STACK, fontSize: 10.5, color: 'text.disabled', mt: 0.5 }}>
                                 Send a {method} to the endpoint above to trigger the flow.
                             </Typography>
@@ -703,12 +701,12 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                     ) : status === 'connecting' ? (
                         <Stack direction='row' alignItems='center' spacing={1} sx={{ color: 'text.secondary' }}>
                             <IconLoader2 size={14} style={{ animation: `${spin} 0.9s linear infinite` }} />
-                            <Typography sx={{ fontSize: 12 }}>Opening event stream…</Typography>
+                            <Typography sx={{ fontSize: 12 }}>正在打开事件流…</Typography>
                         </Stack>
                     ) : status === 'running' ? (
                         <Stack direction='row' alignItems='center' spacing={1} sx={{ color: 'text.secondary' }}>
                             <IconLoader2 size={14} style={{ animation: `${spin} 0.9s linear infinite` }} />
-                            <Typography sx={{ fontSize: 12 }}>Flow started — first node executing…</Typography>
+                            <Typography sx={{ fontSize: 12 }}>流程已启动 — 正在执行第一个节点…</Typography>
                         </Stack>
                     ) : status === 'error' ? (
                         <Box
@@ -723,7 +721,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                                 fontFamily: MONO_STACK
                             }}
                         >
-                            {errorMessage || 'Listener error'}
+                            {errorMessage || '监听器错误'}
                         </Box>
                     ) : (
                         <Typography sx={{ fontSize: 12, color: 'text.disabled' }}>—</Typography>
@@ -735,7 +733,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                     <>
                         <Divider sx={{ my: 2.5, opacity: 0.6 }} />
                         <Box>
-                            <Caption>Response</Caption>
+                            <Caption>响应</Caption>
                             <Box
                                 sx={{
                                     border: `1px solid ${theme.palette.divider}`,
@@ -762,7 +760,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                                     <MemoizedReactMarkdown chatflowid={chatflowid}>{finalMessage}</MemoizedReactMarkdown>
                                 ) : (
                                     <Typography sx={{ fontFamily: MONO_STACK, fontSize: 12, color: 'text.secondary' }}>
-                                        Flow completed without a text response.
+                                        流程已完成，但未返回文本响应。
                                     </Typography>
                                 )}
                             </Box>
@@ -775,7 +773,7 @@ const WebhookListenerDrawer = ({ open, chatflowid, onClose, onStatusChange }) =>
                     <>
                         <Divider sx={{ my: 2.5, opacity: 0.6 }} />
                         <Box>
-                            <Caption>Error</Caption>
+                            <Caption>错误</Caption>
                             <Box
                                 sx={{
                                     border: `1px solid ${alpha(theme.palette.error.main, 0.4)}`,

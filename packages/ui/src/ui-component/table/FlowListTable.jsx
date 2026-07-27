@@ -63,7 +63,8 @@ export const FlowListTable = ({
     isAgentCanvas,
     isAgentflowV2,
     currentPage,
-    pageLimit
+    pageLimit,
+    onSortChange
 }) => {
     const { hasPermission } = useAuth()
     const isActionsAvailable = isAgentCanvas
@@ -85,6 +86,7 @@ export const FlowListTable = ({
         setOrderBy(property)
         localStorage.setItem(localStorageKeyOrder, newOrder)
         localStorage.setItem(localStorageKeyOrderBy, property)
+        onSortChange?.(property, newOrder)
     }
 
     const onFlowClick = (row) => {
@@ -121,14 +123,14 @@ export const FlowListTable = ({
                         <TableRow>
                             <StyledTableCell component='th' scope='row' style={{ width: '20%' }} key='0'>
                                 <TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleRequestSort('name')}>
-                                    Name
+                                    名称
                                 </TableSortLabel>
                             </StyledTableCell>
                             <StyledTableCell style={{ width: '25%' }} key='1'>
-                                Category
+                                分类
                             </StyledTableCell>
                             <StyledTableCell style={{ width: '30%' }} key='2'>
-                                Nodes
+                                节点
                             </StyledTableCell>
                             <StyledTableCell style={{ width: '15%' }} key='3'>
                                 <TableSortLabel
@@ -136,12 +138,12 @@ export const FlowListTable = ({
                                     direction={order}
                                     onClick={() => handleRequestSort('updatedDate')}
                                 >
-                                    Last Modified Date
+                                    最近修改时间
                                 </TableSortLabel>
                             </StyledTableCell>
                             {isActionsAvailable && (
                                 <StyledTableCell style={{ width: '10%' }} key='4'>
-                                    Actions
+                                    操作
                                 </StyledTableCell>
                             )}
                         </TableRow>
@@ -315,16 +317,14 @@ export const FlowListTable = ({
                                                                     fontWeight: 200
                                                                 }}
                                                             >
-                                                                + {(images[row.id]?.length || 0) + (icons[row.id]?.length || 0) - 5} More
+                                                                + {(images[row.id]?.length || 0) + (icons[row.id]?.length || 0) - 5} 更多
                                                             </Typography>
                                                         </MoreItemsTooltip>
                                                     )}
                                                 </Box>
                                             )}
                                         </StyledTableCell>
-                                        <StyledTableCell key='3'>
-                                            {moment(row.updatedDate).format('MMMM Do, YYYY HH:mm:ss')}
-                                        </StyledTableCell>
+                                        <StyledTableCell key='3'>{moment(row.updatedDate).format('YYYY-MM-DD HH:mm:ss')}</StyledTableCell>
                                         {isActionsAvailable && (
                                             <StyledTableCell key='4'>
                                                 <Stack
@@ -368,5 +368,6 @@ FlowListTable.propTypes = {
     isAgentCanvas: PropTypes.bool,
     isAgentflowV2: PropTypes.bool,
     currentPage: PropTypes.number,
-    pageLimit: PropTypes.number
+    pageLimit: PropTypes.number,
+    onSortChange: PropTypes.func
 }

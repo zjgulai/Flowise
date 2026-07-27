@@ -15,24 +15,24 @@ const HowToUseFunctionDialog = ({ show, onCancel }) => {
             aria-describedby='alert-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
-                How To Use Function
+                如何使用函数
             </DialogTitle>
             <DialogContent>
                 <ul>
-                    <li style={{ marginTop: 10 }}>You can use any libraries imported in Flowise</li>
+                    <li style={{ marginTop: 10 }}>您可以使用 Flowise 中导入的任何库</li>
                     <li style={{ marginTop: 10 }}>
-                        You can use properties specified in Input Schema as variables with prefix $:
+                        您可以将输入架构中指定的属性用作变量，并添加 $ 前缀：
                         <ul style={{ marginTop: 10 }}>
                             <li>
-                                Property = <code>userid</code>
+                                属性 = <code>userid</code>
                             </li>
                             <li>
-                                Variable = <code>$userid</code>
+                                变量 = <code>$userid</code>
                             </li>
                         </ul>
                     </li>
                     <li style={{ marginTop: 10 }}>
-                        You can get default flow config:
+                        您可以获取默认流程配置：
                         <ul style={{ marginTop: 10 }}>
                             <li>
                                 <code>$flow.sessionId</code>
@@ -52,9 +52,9 @@ const HowToUseFunctionDialog = ({ show, onCancel }) => {
                         </ul>
                     </li>
                     <li style={{ marginTop: 10 }}>
-                        You can get custom variables:&nbsp;<code>{`$vars.<variable-name>`}</code>
+                        您可以获取自定义变量：&nbsp;<code>{`$vars.<variable-name>`}</code>
                     </li>
-                    <li style={{ marginTop: 10 }}>Must return a string value at the end of function</li>
+                    <li style={{ marginTop: 10 }}>函数最终必须返回字符串值</li>
                 </ul>
             </DialogContent>
         </Dialog>

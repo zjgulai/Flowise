@@ -376,7 +376,7 @@ const EvalDatasetRows = () => {
                                                         }}
                                                     />
                                                 </StyledTableCell>
-                                                <StyledTableCell>Input</StyledTableCell>
+                                                <StyledTableCell>输入</StyledTableCell>
                                                 <StyledTableCell>Expected Output</StyledTableCell>
                                                 <StyledTableCell style={{ width: '1%' }}>
                                                     <IconArrowsDownUp />

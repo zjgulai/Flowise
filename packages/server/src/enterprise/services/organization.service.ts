@@ -2,6 +2,7 @@ import { StatusCodes } from 'http-status-codes'
 import { DataSource, QueryRunner } from 'typeorm'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { generateId } from '../../utils'
+import { GeneralErrorMessage } from '../../utils/constants'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { Telemetry } from '../../utils/telemetry'
 import { Organization, OrganizationName } from '../database/entities/organization.entity'
@@ -16,6 +17,11 @@ export const enum OrganizationErrorMessage {
     ORGANIZATION_RESERVERD_NAME = 'Organization name cannot be Default Organization - this is a reserved name',
     ORGANIZATION_HAS_NO_SUBSCRIPTION = 'Organization has no subscription'
 }
+
+export type PublicOrganizationCreateInput = Pick<Organization, 'name'>
+export type PublicOrganizationUpdateInput = Pick<Organization, 'id' | 'name'>
+
+type TrustedOrganizationProvisioningInput = Partial<Pick<Organization, 'name' | 'customerId' | 'subscriptionId' | 'createdBy'>>
 
 export class OrganizationService {
     private telemetry: Telemetry
@@ -58,26 +64,57 @@ export class OrganizationService {
         return await queryRunner.manager.find(Organization)
     }
 
-    public createNewOrganization(data: Partial<Organization>, queryRunner: QueryRunner, isRegister: boolean = false) {
+    private createOrganizationEntity(data: Partial<Organization>, queryRunner: QueryRunner, isRegister: boolean) {
         this.validateOrganizationName(data.name, isRegister)
-        data.updatedBy = data.createdBy
-        data.id = generateId()
+        return queryRunner.manager.create(Organization, {
+            ...data,
+            id: generateId(),
+            updatedBy: data.createdBy
+        })
+    }
 
-        return queryRunner.manager.create(Organization, data)
+    /**
+     * Creates an organization from the public organization-management path.
+     * Billing identifiers and caller-supplied primary/audit fields are deliberately
+     * excluded before the entity reaches TypeORM.
+     */
+    public createNewOrganization(data: PublicOrganizationCreateInput & Pick<Organization, 'createdBy'>, queryRunner: QueryRunner) {
+        return this.createOrganizationEntity(
+            {
+                name: data.name,
+                createdBy: data.createdBy
+            },
+            queryRunner,
+            false
+        )
+    }
+
+    /** Trusted account-registration path for provider-issued billing identifiers. */
+    public createNewOrganizationForRegistration(data: TrustedOrganizationProvisioningInput, queryRunner: QueryRunner) {
+        return this.createOrganizationEntity(
+            {
+                name: data.name,
+                customerId: data.customerId,
+                subscriptionId: data.subscriptionId,
+                createdBy: data.createdBy
+            },
+            queryRunner,
+            true
+        )
     }
 
     public async saveOrganization(data: Partial<Organization>, queryRunner: QueryRunner) {
         return await queryRunner.manager.save(Organization, data)
     }
 
-    public async createOrganization(data: Partial<Organization>) {
+    public async createOrganization(data: PublicOrganizationCreateInput, createdBy: string) {
         const queryRunner = this.dataSource.createQueryRunner()
         await queryRunner.connect()
 
-        const user = await this.userService.readUserById(data.createdBy, queryRunner)
+        const user = await this.userService.readUserById(createdBy, queryRunner)
         if (!user) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
 
-        let newOrganization = this.createNewOrganization(data, queryRunner)
+        let newOrganization = this.createNewOrganization({ name: data.name, createdBy }, queryRunner)
         try {
             await queryRunner.startTransaction()
             newOrganization = await this.saveOrganization(newOrganization, queryRunner)
@@ -92,20 +129,27 @@ export class OrganizationService {
         return newOrganization
     }
 
-    public async updateOrganization(newOrganizationData: Partial<Organization>) {
+    public async updateOrganization(data: PublicOrganizationUpdateInput, updatedBy: string, activeOrganizationId: string) {
+        if (!data.id || data.id !== activeOrganizationId) {
+            throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+        }
+
         const queryRunner = this.dataSource.createQueryRunner()
         await queryRunner.connect()
 
-        const oldOrganizationData = await this.readOrganizationById(newOrganizationData.id, queryRunner)
+        const oldOrganizationData = await this.readOrganizationById(data.id, queryRunner)
         if (!oldOrganizationData) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationErrorMessage.ORGANIZATION_NOT_FOUND)
-        const user = await this.userService.readUserById(newOrganizationData.updatedBy, queryRunner)
+        const user = await this.userService.readUserById(updatedBy, queryRunner)
         if (!user) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
-        if (newOrganizationData.name) {
-            this.validateOrganizationName(newOrganizationData.name)
-        }
-        newOrganizationData.createdBy = oldOrganizationData.createdBy
+        this.validateOrganizationName(data.name)
 
-        let updateOrganization = queryRunner.manager.merge(Organization, oldOrganizationData, newOrganizationData)
+        const allowedUpdate: Partial<Organization> = {
+            id: oldOrganizationData.id,
+            name: data.name,
+            createdBy: oldOrganizationData.createdBy,
+            updatedBy
+        }
+        let updateOrganization = queryRunner.manager.merge(Organization, oldOrganizationData, allowedUpdate)
         try {
             await queryRunner.startTransaction()
             await this.saveOrganization(updateOrganization, queryRunner)

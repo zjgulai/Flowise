@@ -41,8 +41,8 @@ const UpsertResultDialog = ({ show, dialogProps, onCancel, onGoToRetrievalQuery 
                         }}
                     >
                         <StatsCard title='Added' stat={dialogProps.numAdded ?? 0} />
-                        <StatsCard title='Updated' stat={dialogProps.numUpdated ?? 0} />
-                        <StatsCard title='Skipped' stat={dialogProps.numSkipped ?? 0} />
+                        <StatsCard title='已更新' stat={dialogProps.numUpdated ?? 0} />
+                        <StatsCard title='已跳过' stat={dialogProps.numSkipped ?? 0} />
                         <StatsCard title='Deleted' stat={dialogProps.numDeleted ?? 0} />
                     </div>
                     {dialogProps.addedDocs && dialogProps.addedDocs.length > 0 && (
@@ -101,7 +101,7 @@ const UpsertResultDialog = ({ show, dialogProps, onCancel, onGoToRetrievalQuery 
                         </Button>
                     </div>
                 )}
-                {!dialogProps.goToRetrievalQuery && <Button onClick={onCancel}>Close</Button>}
+                {!dialogProps.goToRetrievalQuery && <Button onClick={onCancel}>关闭</Button>}
             </DialogActions>
         </Dialog>
     ) : null

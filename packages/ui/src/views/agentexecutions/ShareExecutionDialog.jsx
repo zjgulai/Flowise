@@ -110,7 +110,7 @@ const ShareExecutionDialog = ({ show, executionId, onClose, onUnshare }) => {
                             Unshare
                         </Button>
                     </Available>
-                    <Button onClick={onClose}>Close</Button>
+                    <Button onClick={onClose}>关闭</Button>
                 </Box>
             </DialogContent>
         </Dialog>

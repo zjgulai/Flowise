@@ -4,6 +4,7 @@ import { lazy } from 'react'
 import Loadable from '@/ui-component/loading/Loadable'
 import MinimalLayout from '@/layout/MinimalLayout'
 import { RequireAuth } from '@/routes/RequireAuth'
+import { MarketplaceRouteGuard } from '@/routes/MarketplaceRouteGuard'
 
 // canvas routing
 const Canvas = Loadable(lazy(() => import('@/views/canvas')))
@@ -69,7 +70,9 @@ const CanvasRoutes = {
             path: '/marketplace/:id',
             element: (
                 <RequireAuth permission={'templates:marketplace,templates:custom'}>
-                    <MarketplaceCanvas />
+                    <MarketplaceRouteGuard>
+                        <MarketplaceCanvas />
+                    </MarketplaceRouteGuard>
                 </RequireAuth>
             )
         },
@@ -77,7 +80,9 @@ const CanvasRoutes = {
             path: '/v2/marketplace/:id',
             element: (
                 <RequireAuth permission={'templates:marketplace,templates:custom'}>
-                    <MarketplaceCanvasV2 />
+                    <MarketplaceRouteGuard>
+                        <MarketplaceCanvasV2 />
+                    </MarketplaceRouteGuard>
                 </RequireAuth>
             )
         }

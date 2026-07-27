@@ -1,0 +1,205 @@
+# Flowise 中文部署 - 生产环境 Docker Compose
+# 用途: 腾讯云 Lighthouse 生产部署
+# 包含: Flowise 服务 + PostgreSQL 服务
+#
+# 使用方法:
+#   docker-compose -f docker-compose.prod.yml up -d
+#   docker-compose -f docker-compose.prod.yml ps
+#   docker-compose -f docker-compose.prod.yml logs -f flowise
+#
+
+services:
+    flowise:
+        image: ${FLOWISE_IMAGE:?FLOWISE_IMAGE must be a unique Git-derived image tag}
+        container_name: flowise-chinese
+        restart: always
+        init: true
+        user: '1000:1000'
+        read_only: true
+        cap_drop:
+            - ALL
+        # Derived from Moby seccomp/v0.2.2 (upstream SHA-256
+        # 1a4d017730647621403920d9558aa0152adef04dd89ed7720e4abafa24551999).
+        # The reviewed delta is limited to Chromium sandbox setup syscalls and
+        # is pinned at SHA-256 a1a19b1ab248ef5835972e3f867613a9aa838266855a3e7e6f8b3feac2eca8d3.
+        # Browser loaders are in-process, so this profile applies to the whole container.
+        security_opt:
+            - no-new-privileges:true
+            - seccomp=./docker/seccomp/chromium.json
+        pids_limit: 512
+        tmpfs:
+            - /tmp:rw,nosuid,nodev,size=256m,uid=1000,gid=1000,mode=1777
+            - /dev/shm:rw,nosuid,nodev,noexec,size=256m,uid=1000,gid=1000,mode=1777
+            - /usr/src/flowise/packages/server/logs:rw,nosuid,nodev,size=32m,uid=1000,gid=1000,mode=0700
+        ports:
+            # Default to localhost. Production may bind the reverse-proxy bridge gateway,
+            # which remains unreachable from the public host interface.
+            - '${FLOWISE_BIND_IP:-127.0.0.1}:3000:3000'
+        environment:
+            # 基础配置
+            - PORT=3000
+            - NODE_ENV=production
+            - HOME=/usr/src/flowise
+            - APP_URL=${APP_URL:-http://localhost:3000}
+            - FLOWISE_FILE_SIZE_LIMIT=${FLOWISE_FILE_SIZE_LIMIT:-50mb}
+
+            # 数据库配置 —— 生产环境使用 PostgreSQL
+            - DATABASE_TYPE=postgres
+            - DATABASE_HOST=postgres
+            - DATABASE_PORT=5432
+            - DATABASE_NAME=${POSTGRES_DB:-flowise}
+            - DATABASE_USER=${POSTGRES_USER:-flowise}
+            - DATABASE_PASSWORD=${POSTGRES_PASSWORD}
+            - DATABASE_SSL=${DATABASE_SSL:-false}
+            - DATABASE_REJECT_UNAUTHORIZED=${DATABASE_REJECT_UNAUTHORIZED:-true}
+            - DATABASE_PATH=/usr/src/flowise/.flowise
+
+            # 认证配置
+            - PUBLIC_LOGIN_ENABLED=${PUBLIC_LOGIN_ENABLED:-false}
+            - ADMIN_ONLY_MODE=${ADMIN_ONLY_MODE:-true}
+            - SECURE_COOKIES=${SECURE_COOKIES:-true}
+            - JWT_AUTH_TOKEN_SECRET=${JWT_AUTH_TOKEN_SECRET}
+            - JWT_REFRESH_TOKEN_SECRET=${JWT_REFRESH_TOKEN_SECRET}
+            - JWT_ISSUER=${JWT_ISSUER:-flowise}
+            - JWT_AUDIENCE=${JWT_AUDIENCE:-flowise}
+            - JWT_TOKEN_EXPIRY_IN_MINUTES=${JWT_TOKEN_EXPIRY_IN_MINUTES:-120}
+            - JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES=${JWT_REFRESH_TOKEN_EXPIRY_IN_MINUTES:-480}
+            - EXPIRE_AUTH_TOKENS_ON_RESTART=${EXPIRE_AUTH_TOKENS_ON_RESTART:-false}
+            - EXPRESS_SESSION_SECRET=${EXPRESS_SESSION_SECRET}
+            - PASSWORD_SALT_HASH_ROUNDS=${PASSWORD_SALT_HASH_ROUNDS:-10}
+            - TOKEN_HASH_SECRET=${TOKEN_HASH_SECRET}
+            - SECRETKEY_PATH=/usr/src/flowise/.flowise
+            - FLOWISE_SECRETKEY_OVERWRITE=${FLOWISE_SECRETKEY_OVERWRITE:?FLOWISE_SECRETKEY_OVERWRITE must reuse the current production encryption key}
+
+            # 安全开关 —— 生产环境强制启用
+            - HTTP_SECURITY_CHECK=${HTTP_SECURITY_CHECK:-true}
+            - PATH_TRAVERSAL_SAFETY=${PATH_TRAVERSAL_SAFETY:-true}
+            - CUSTOM_MCP_SECURITY_CHECK=${CUSTOM_MCP_SECURITY_CHECK:-true}
+            - OAUTH2_SECURITY_CHECK=${OAUTH2_SECURITY_CHECK:-true}
+            - DEEPSEEK_BASE_URL_ALLOWLIST=${DEEPSEEK_BASE_URL_ALLOWLIST:-}
+            - KIMI_BASE_URL_ALLOWLIST=${KIMI_BASE_URL_ALLOWLIST:-}
+            - TRUST_PROXY=${TRUST_PROXY:-1}
+            - CORS_ORIGINS=${CORS_ORIGINS}
+            - CORS_ALLOW_CREDENTIALS=${CORS_ALLOW_CREDENTIALS:-false}
+            - IFRAME_ORIGINS=${IFRAME_ORIGINS:-'self'}
+            - CSP_ENFORCEMENT_MODE=${CSP_ENFORCEMENT_MODE:-compat}
+            - CSP_REPORT_ONLY_MODE=${CSP_REPORT_ONLY_MODE:-off}
+            - CUSTOM_MCP_ALLOWED_COMMANDS=${CUSTOM_MCP_ALLOWED_COMMANDS:-}
+
+            # 日志配置
+            - LOG_LEVEL=${LOG_LEVEL:-warn}
+            - LOG_PATH=/usr/src/flowise/.flowise/logs
+            - LOG_SANITIZE_BODY_FIELDS=${LOG_SANITIZE_BODY_FIELDS}
+
+            # 性能配置
+            - NODE_OPTIONS=--max-old-space-size=4096
+            - NUMBER_OF_PROXIES=${NUMBER_OF_PROXIES:-1}
+
+            # Puppeteer / Chromium
+            - PUPPETEER_SKIP_DOWNLOAD=true
+            - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+            - PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium-browser
+            - XDG_CONFIG_HOME=/tmp/chromium/config
+            - XDG_CACHE_HOME=/tmp/chromium/cache
+            - XDG_RUNTIME_DIR=/tmp/chromium/runtime
+
+            # 其他功能开关
+            - DISABLE_FLOWISE_TELEMETRY=${DISABLE_FLOWISE_TELEMETRY:-true}
+            - SHOW_COMMUNITY_NODES=${SHOW_COMMUNITY_NODES:-false}
+            # Tool Function / Custom Function 依赖白名单
+            - TOOL_FUNCTION_BUILTIN_DEP=${TOOL_FUNCTION_BUILTIN_DEP:-}
+            - TOOL_FUNCTION_EXTERNAL_DEP=${TOOL_FUNCTION_EXTERNAL_DEP:-}
+            - ALLOW_BUILTIN_DEP=${ALLOW_BUILTIN_DEP:-false}
+
+            # 外部 API Keys（按需填写）
+            - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+            - KIMI_API_KEY=${KIMI_API_KEY}
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+            # 存储配置
+            - STORAGE_TYPE=${STORAGE_TYPE:-local}
+            - BLOB_STORAGE_PATH=/usr/src/flowise/.flowise/storage
+
+        volumes:
+            - flowise_data:/usr/src/flowise/.flowise
+        depends_on:
+            postgres:
+                condition: service_healthy
+        healthcheck:
+            test: ['CMD', 'curl', '-fsS', 'http://localhost:3000/api/v1/ping']
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 60s
+        deploy:
+            resources:
+                limits:
+                    cpus: '2.0'
+                    memory: 4G
+                    pids: 512
+                reservations:
+                    cpus: '1.0'
+                    memory: 2G
+        logging:
+            driver: 'json-file'
+            options:
+                max-size: '10m'
+                max-file: '3'
+                labels: 'service_name,environment'
+        networks:
+            - flowise_network
+            - reverse_proxy_network
+
+    # ------------------ PostgreSQL 服务 ------------------
+    postgres:
+        image: ${POSTGRES_IMAGE:?POSTGRES_IMAGE must be explicit}
+        container_name: flowise-postgres
+        restart: always
+        environment:
+            - POSTGRES_DB=${POSTGRES_DB:-flowise}
+            - POSTGRES_USER=${POSTGRES_USER:-flowise}
+            - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+            - PGDATA=/var/lib/postgresql/data/pgdata
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+        ports:
+            - '127.0.0.1:5432:5432' # 仅本地绑定，不暴露到公网
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
+        deploy:
+            resources:
+                limits:
+                    cpus: '1.0'
+                    memory: 1G
+                reservations:
+                    cpus: '0.5'
+                    memory: 512M
+        logging:
+            driver: 'json-file'
+            options:
+                max-size: '10m'
+                max-file: '3'
+        networks:
+            - flowise_network
+
+# ------------------ 持久化卷 ------------------
+volumes:
+    flowise_data:
+        driver: local
+    postgres_data:
+        driver: local
+
+# ------------------ 网络 ------------------
+networks:
+    flowise_network:
+        driver: bridge
+        ipam:
+            config:
+                - subnet: 172.28.0.0/16
+    reverse_proxy_network:
+        external: true
+        name: ${FLOWISE_PROXY_NETWORK:-lighthouse_ai_video_net}

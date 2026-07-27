@@ -31,7 +31,7 @@ const LicenseExpired = () => {
                             Your enterprise license has expired
                         </Typography>
                         <Typography variant='body1' component='div' sx={{ mb: 2 }}>
-                            Please contact our support team to renew your license.
+                            请联系我们的支持团队以续订许可证。
                         </Typography>
                         <a href='mailto:support@flowiseai.com'>
                             <StyledButton sx={{ px: 2, py: 1 }}>Contact Support</StyledButton>

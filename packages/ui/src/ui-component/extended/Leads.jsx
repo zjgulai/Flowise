@@ -148,13 +148,13 @@ const Leads = ({ dialogProps }) => {
                         <Typography variant='h4'>Form fields</Typography>
                         <Box sx={{ width: '100%' }}>
                             <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-                                <SwitchInput label='Name' onChange={(value) => handleChange('name', value)} value={leadsConfig.name} />
+                                <SwitchInput label='名称' onChange={(value) => handleChange('name', value)} value={leadsConfig.name} />
                                 <SwitchInput
-                                    label='Email Address'
+                                    label='邮箱地址'
                                     onChange={(value) => handleChange('email', value)}
                                     value={leadsConfig.email}
                                 />
-                                <SwitchInput label='Phone' onChange={(value) => handleChange('phone', value)} value={leadsConfig.phone} />
+                                <SwitchInput label='电话' onChange={(value) => handleChange('phone', value)} value={leadsConfig.phone} />
                             </Box>
                         </Box>
                     </>

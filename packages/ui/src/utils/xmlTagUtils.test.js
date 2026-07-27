@@ -19,7 +19,7 @@ describe('xmlTagUtils', () => {
         })
 
         it('should NOT detect prompts that contain HTML tags mid-content', () => {
-            expect(isHtmlContent('<instruction><div>Test</div></instruction>')).toBe(false)
+            expect(isHtmlContent('<instruction><div>测试</div></instruction>')).toBe(false)
         })
 
         it('should return false for plain text', () => {
@@ -90,12 +90,12 @@ describe('xmlTagUtils', () => {
                 content: [
                     {
                         type: 'paragraph',
-                        content: [{ type: 'text', text: '&lt;question&gt;What?&lt;/question&gt;' }]
+                        content: [{ type: 'text', text: '&lt;question&gt;什么？&lt;/question&gt;' }]
                     }
                 ]
             }
             unescapeXmlEntities(json)
-            expect(json.content[0].content[0].text).toBe('<question>What?</question>')
+            expect(json.content[0].content[0].text).toBe('<question>什么？</question>')
         })
 
         it('should unescape standard HTML tag entities too', () => {

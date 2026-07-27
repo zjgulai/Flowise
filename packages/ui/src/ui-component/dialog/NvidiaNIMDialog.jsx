@@ -343,8 +343,8 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                     {activeStep === 1 && (
                         <div>
                             <FormControl fullWidth sx={{ mt: 2 }}>
-                                <InputLabel>Model</InputLabel>
-                                <Select label='Model' value={imageTag} onChange={(e) => setImageTag(e.target.value)}>
+                                <InputLabel>模型</InputLabel>
+                                <Select label='模型' value={imageTag} onChange={(e) => setImageTag(e.target.value)}>
                                     {Object.entries(modelOptions).map(([value, { label }]) => (
                                         <MenuItem key={value} value={value}>
                                             {label}
@@ -385,18 +385,18 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                                     <FormControl fullWidth sx={{ mt: 2 }}>
                                         <InputLabel>Relax Memory Constraints</InputLabel>
                                         <Select
-                                            label='Relax Memory Constraints'
+                                            label='放宽内存限制'
                                             value={nimRelaxMemConstraints}
                                             onChange={(e) => setNimRelaxMemConstraints(e.target.value)}
                                         >
-                                            <MenuItem value='1'>Yes</MenuItem>
-                                            <MenuItem value='0'>No</MenuItem>
+                                            <MenuItem value='1'>是</MenuItem>
+                                            <MenuItem value='0'>否</MenuItem>
                                         </Select>
                                     </FormControl>
                                     <TextField
                                         fullWidth
                                         type='number'
-                                        label='Host Port'
+                                        label='主机端口'
                                         value={hostPort}
                                         onChange={(e) => setHostPort(e.target.value)}
                                         inputProps={{ min: 1, max: 65535 }}
@@ -431,10 +431,10 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                     <p>A container for this image already exists:</p>
                     <div>
                         <p>
-                            <strong>Name:</strong> {existingContainer?.name || 'N/A'}
+                            <strong>名称：</strong> {existingContainer?.name || 'N/A'}
                         </p>
                         <p>
-                            <strong>Status:</strong> {existingContainer?.status || 'N/A'}
+                            <strong>状态：</strong> {existingContainer?.status || 'N/A'}
                         </p>
                     </div>
                     <p>You can:</p>

@@ -2,6 +2,8 @@ import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
 import { BaseCache } from '@langchain/core/caches'
 import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
 import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+import { checkDenyList } from '../../../src/httpSecurity'
+import { buildSecureProviderConfiguration, parseProviderHeaders } from '../providerUtils'
 
 class ChatOpenAICustom_ChatModels implements INode {
     label: string
@@ -150,22 +152,11 @@ class ChatOpenAICustom_ChatModels implements INode {
         if (timeout) obj.timeout = parseInt(timeout, 10)
         if (cache) obj.cache = cache
 
-        let parsedBaseOptions: any | undefined = undefined
+        const parsedBaseOptions = parseProviderHeaders(baseOptions, 'OpenAI Custom')
 
-        if (baseOptions) {
-            try {
-                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
-            } catch (exception) {
-                throw new Error("Invalid JSON in the ChatOpenAI's BaseOptions: " + exception)
-            }
-        }
-
-        if (basePath || parsedBaseOptions) {
-            obj.configuration = {
-                baseURL: basePath,
-                defaultHeaders: parsedBaseOptions
-            }
-        }
+        const activeBasePath = basePath?.trim() || 'https://api.openai.com/v1'
+        await checkDenyList(activeBasePath)
+        obj.configuration = buildSecureProviderConfiguration(activeBasePath, parsedBaseOptions)
 
         const model = new ChatOpenAI(obj)
         return model

@@ -59,7 +59,7 @@ const CredentialInputHandler = ({ inputParam, data, disabled = false, onReveal }
                                         height: 25,
                                         width: 25
                                     }}
-                                    title='Expand'
+                                    title='展开'
                                     color='primary'
                                     onClick={() => onExpandDialogClicked(data[inputParam.name] ?? inputParam.default ?? '', inputParam)}
                                 >

@@ -121,7 +121,7 @@ const WorkspaceDetails = () => {
         const dialogProp = {
             type: 'ADD',
             cancelButtonName: 'Cancel',
-            confirmButtonName: 'Send Invite',
+            confirmButtonName: '发送邀请',
             data: workspace
         }
         setDialogProps(dialogProp)
@@ -140,7 +140,7 @@ const WorkspaceDetails = () => {
         const dialogProp = {
             type: 'EDIT',
             cancelButtonName: 'Cancel',
-            confirmButtonName: 'Update Invite',
+            confirmButtonName: '更新邀请',
             data: {
                 ...user,
                 isWorkspaceUser: true
@@ -392,8 +392,8 @@ const WorkspaceDetails = () => {
                                                     />
                                                 </StyledTableCell>
                                                 <StyledTableCell>Email/Name</StyledTableCell>
-                                                <StyledTableCell>Role</StyledTableCell>
-                                                <StyledTableCell>Status</StyledTableCell>
+                                                <StyledTableCell>角色</StyledTableCell>
+                                                <StyledTableCell>状态</StyledTableCell>
                                                 <StyledTableCell>Last Login</StyledTableCell>
                                                 <StyledTableCell> </StyledTableCell>
                                             </TableRow>
@@ -503,7 +503,7 @@ const WorkspaceDetails = () => {
                                                             <StyledTableCell>
                                                                 {!item.isOrgOwner && item.status.toUpperCase() === 'INVITED' && (
                                                                     <IconButton
-                                                                        title='Edit'
+                                                                        title='编辑'
                                                                         color='primary'
                                                                         onClick={() => onEditClick(item)}
                                                                     >

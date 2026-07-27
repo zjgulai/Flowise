@@ -5,7 +5,7 @@ import { Profile, Strategy as Auth0Strategy } from 'passport-auth0'
 import { Request } from 'express'
 import auditService from '../services/audit'
 import { ErrorMessage, LoggedInUser, LoginActivityCode } from '../Interface.Enterprise'
-import { setTokenOrCookies } from '../middleware/passport'
+import { setTokenOrCookies } from '../middleware/passport/tokenResponse'
 import axios from 'axios'
 
 const PROVIDER_NAME_AUTH0_SSO = 'Auth0 SSO'

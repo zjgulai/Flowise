@@ -65,10 +65,10 @@ export function escapeXmlTags(text) {
  *
  * @example
  * const json = { type: 'doc', content: [
- *   { type: 'paragraph', content: [{ type: 'text', text: '&lt;question&gt;What?&lt;/question&gt;' }] }
+ *   { type: 'paragraph', content: [{ type: 'text', text: '&lt;question&gt;什么？&lt;/question&gt;' }] }
  * ]}
  * unescapeXmlEntities(json)
- * // json.content[0].content[0].text → '<question>What?</question>'
+ * // json.content[0].content[0].text → '<question>什么？</question>'
  *
  * @param {object} json - ProseMirror document JSON from editor.getJSON()
  * @returns {object} The same JSON with decoded entities in text nodes

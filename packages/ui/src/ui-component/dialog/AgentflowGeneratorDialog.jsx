@@ -122,7 +122,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
 
     const displayWarning = (message) => {
         enqueueSnackbar({
-            message: message || 'Please fill in all mandatory fields.',
+            message: message || '请填写所有必填字段。',
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'warning',

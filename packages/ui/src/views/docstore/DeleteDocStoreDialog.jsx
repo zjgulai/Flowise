@@ -199,16 +199,15 @@ const DeleteDocStoreDialog = ({ show, dialogProps, onCancel, onDelete }) => {
                     >
                         <IconAlertTriangle size={70} color='orange' />
                         <span style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}>
-                            <strong>Note:</strong> Without a Record Manager configured, only the document chunks will be removed from the
-                            document store. The actual vector embeddings in your vector store database will remain unchanged. To enable
-                            automatic cleanup of vector store data, please configure a Record Manager.{' '}
+                            <strong>注意：</strong>如果未配置记录管理器，将仅从文档库中删除文档分块。向量数据库中的实际向量嵌入不会改变。
+                            若要自动清理向量库数据，请配置记录管理器。{' '}
                             <Link
                                 href='https://docs.flowiseai.com/integrations/langchain/record-managers'
                                 target='_blank'
                                 rel='noopener noreferrer'
                                 sx={{ fontWeight: 500, color: 'rgb(116,66,16)', textDecoration: 'underline' }}
                             >
-                                Learn more
+                                了解更多
                             </Link>
                         </span>
                     </div>
@@ -217,7 +216,7 @@ const DeleteDocStoreDialog = ({ show, dialogProps, onCancel, onDelete }) => {
                     <Card sx={{ borderColor: theme.palette.primary[200] + 75, p: 2 }} variant='outlined'>
                         <Stack sx={{ mt: 1, mb: 2, ml: 1, alignItems: 'center' }} direction='row' spacing={2}>
                             <SettingsIcon />
-                            <Typography variant='h4'>Configuration</Typography>
+                            <Typography variant='h4'>配置</Typography>
                         </Stack>
                         <Stack direction='column'>
                             <TableContainer component={Paper} sx={{ maxHeight: '400px', overflow: 'auto' }}>
@@ -294,10 +293,10 @@ const DeleteDocStoreDialog = ({ show, dialogProps, onCancel, onDelete }) => {
             </DialogContent>
             <DialogActions sx={{ pr: 3, pb: 3 }}>
                 <Button onClick={onCancel} color='primary'>
-                    Cancel
+                    取消
                 </Button>
                 <Button variant='contained' onClick={() => onDelete(dialogProps.type, dialogProps.file)} color='error'>
-                    Delete
+                    确认删除
                 </Button>
             </DialogActions>
         </Dialog>

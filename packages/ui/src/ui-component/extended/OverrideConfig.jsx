@@ -84,7 +84,7 @@ const OverrideConfigTable = ({ columns, onToggle, rows, sx }) => {
         }
     }
 
-    const columnLabels = { label: 'Label', name: 'Name', type: 'Type', enabled: 'On' }
+    const columnLabels = { label: '标签', name: 'Name', type: 'Type', enabled: 'On' }
 
     return (
         <TableContainer
@@ -423,7 +423,7 @@ const OverrideConfig = ({ dialogProps, hideTitle = false }) => {
                             >
                                 <Stack sx={{ mt: 1, mb: 2, ml: 1, alignItems: 'center' }} direction='row' spacing={2}>
                                     <IconBox />
-                                    <Typography variant='h4'>Nodes</Typography>
+                                    <Typography variant='h4'>节点</Typography>
                                 </Stack>
                                 <Stack direction='column'>
                                     {Object.keys(nodeOverrides)
@@ -506,7 +506,7 @@ const OverrideConfig = ({ dialogProps, hideTitle = false }) => {
                             >
                                 <Stack sx={{ mt: 1, mb: 2, ml: 1, alignItems: 'center' }} direction='row' spacing={2}>
                                     <IconVariable />
-                                    <Typography variant='h4'>Variables</Typography>
+                                    <Typography variant='h4'>变量</Typography>
                                 </Stack>
                                 <OverrideConfigTable
                                     rows={variableOverrides}

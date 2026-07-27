@@ -136,7 +136,7 @@ const ViewLeadsDialog = ({ show, dialogProps, onCancel }) => {
                             }
                         }}
                         variant='outlined'
-                        placeholder='Search Name or Email or Phone'
+                        placeholder='搜索名称、邮箱或电话'
                         onChange={onSearchChange}
                         startAdornment={
                             <Box
@@ -175,9 +175,9 @@ const ViewLeadsDialog = ({ show, dialogProps, onCancel }) => {
                         <Table sx={{ minWidth: 650 }} aria-label='simple table'>
                             <TableHead>
                                 <TableRow>
-                                    <TableCell>Name</TableCell>
+                                    <TableCell>名称</TableCell>
                                     <TableCell>Email Address</TableCell>
-                                    <TableCell>Phone</TableCell>
+                                    <TableCell>电话</TableCell>
                                     <TableCell>Created Date</TableCell>
                                 </TableRow>
                             </TableHead>

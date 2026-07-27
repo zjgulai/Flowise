@@ -10,6 +10,14 @@ import { test } from 'linkifyjs'
 import { omit } from 'lodash'
 import { handleEscapeCharacters, INodeOutputsValue, webCrawl, xmlScrape } from '../../../src'
 import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
+import {
+    assertWebScraperUrlAllowed,
+    isWebScraperPolicyError,
+    startPinnedBrowserProxy,
+    WEB_SCRAPER_SECURE_FETCH_POLICY,
+    WebScraperOperationTracker,
+    WebScraperPolicyGuard
+} from '../webScraperSecurity'
 
 class Playwright_DocumentLoaders implements INode {
     label: string
@@ -188,14 +196,15 @@ class Playwright_DocumentLoaders implements INode {
         }
 
         async function playwrightLoader(url: string): Promise<Document[] | undefined> {
+            await assertWebScraperUrlAllowed(url)
             try {
                 let docs = []
 
-                const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH
+                const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.PLAYWRIGHT_EXECUTABLE_FILE_PATH
 
                 const config: PlaywrightWebBaseLoaderOptions = {
                     launchOptions: {
-                        args: ['--no-sandbox'],
+                        chromiumSandbox: true,
                         headless: true,
                         executablePath: executablePath
                     }
@@ -224,6 +233,106 @@ class Playwright_DocumentLoaders implements INode {
                     }
                 }
                 const loader = new PlaywrightWebBaseLoader(url, config)
+                loader.scrape = async (): Promise<string> => {
+                    const { chromium } = await PlaywrightWebBaseLoader.imports()
+                    const policy = new WebScraperPolicyGuard()
+                    const proxy = await startPinnedBrowserProxy(policy)
+                    const policyChecks = new WebScraperOperationTracker()
+                    let browser: Browser | undefined
+                    let html: string | undefined
+                    let scrapeError: unknown
+                    try {
+                        browser = await chromium.launch({
+                            headless: true,
+                            ...config.launchOptions,
+                            args: [
+                                ...(config.launchOptions?.args ?? []),
+                                '--proxy-bypass-list=<-loopback>',
+                                '--disable-quic',
+                                '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'
+                            ],
+                            proxy: { server: proxy.server }
+                        })
+                        const context = await browser.newContext({ serviceWorkers: 'block' })
+                        const page = await context.newPage()
+                        await page.route('**/*', (route, request) => {
+                            const pending = policyChecks.start(
+                                async () => {
+                                    const allowed = await policy.allows(request.url())
+                                    try {
+                                        if (allowed) await route.continue()
+                                        else await route.abort('blockedbyclient')
+                                    } catch {
+                                        // The page may close or cancel a request while the
+                                        // asynchronous policy lookup is in flight.
+                                    }
+                                },
+                                (error) => policy.record(error)
+                            )
+                            if (pending) return pending
+
+                            // Teardown has sealed the tracker. Do not allow a
+                            // newly delivered route to proceed toward the proxy.
+                            policy.record(new Error('Web scraper route arrived after browser shutdown'))
+                            return route.abort('blockedbyclient').catch(() => undefined)
+                        })
+                        let response
+                        try {
+                            response = await page.goto(url, {
+                                timeout: 180000,
+                                waitUntil: 'domcontentloaded',
+                                ...config.gotoOptions
+                            })
+                            await policyChecks.drain()
+                        } catch (error) {
+                            await policyChecks.drain()
+                            policy.throwIfDenied()
+                            throw error
+                        }
+                        policy.throwIfDenied()
+                        if (response && !(await policy.allows(response.url()))) policy.throwIfDenied()
+                        if (!(await policy.allows(page.url()))) policy.throwIfDenied()
+
+                        html = config.evaluate ? await config.evaluate(page, browser, response) : await page.content()
+                        await policyChecks.drain()
+                        policy.throwIfDenied()
+                    } catch (error) {
+                        scrapeError = error
+                    }
+
+                    let cleanupError: unknown
+                    try {
+                        if (browser) await browser.close()
+                    } catch (error) {
+                        cleanupError = error
+                    }
+                    policyChecks.beginClosing()
+                    try {
+                        await policyChecks.drain()
+                    } catch (error) {
+                        policy.record(error)
+                        cleanupError ??= error
+                    }
+                    try {
+                        await proxy.close()
+                    } catch (error) {
+                        cleanupError ??= error
+                    }
+
+                    if (scrapeError) {
+                        policy.throwIfDenied()
+                        throw scrapeError
+                    }
+                    if (cleanupError) {
+                        policy.throwIfDenied()
+                        throw cleanupError
+                    }
+                    policy.throwIfDenied()
+                    if (html === undefined) {
+                        throw new Error('Playwright scraper returned no content')
+                    }
+                    return html
+                }
                 if (textSplitter) {
                     docs = await loader.load()
                     docs = await textSplitter.splitDocuments(docs)
@@ -232,8 +341,9 @@ class Playwright_DocumentLoaders implements INode {
                 }
                 return docs
             } catch (err) {
-                if (process.env.DEBUG === 'true')
-                    options.logger.error(`[${orgId}]: Error in PlaywrightWebBaseLoader: ${err.message}, on page: ${url}`)
+                if (isWebScraperPolicyError(err)) throw err
+                options.logger.error(`[${orgId}]: Playwright web scraper failed`, err)
+                throw new Error('Playwright web scraper failed')
             }
         }
 
@@ -244,12 +354,18 @@ class Playwright_DocumentLoaders implements INode {
             // so when limit is 0 we can fetch all the links
             if (limit === null || limit === undefined) limit = 10
             else if (limit < 0) throw new Error('Limit cannot be less than 0')
-            const pages: string[] =
-                selectedLinks && selectedLinks.length > 0
-                    ? selectedLinks.slice(0, limit === 0 ? undefined : limit)
-                    : relativeLinksMethod === 'webCrawl'
-                    ? await webCrawl(url, limit)
-                    : await xmlScrape(url, limit)
+            let pages: string[]
+            if (selectedLinks && selectedLinks.length > 0) {
+                pages = selectedLinks.slice(0, limit === 0 ? undefined : limit)
+            } else {
+                // Discovery is itself a network phase. Validate before it starts
+                // and force the default deny list for every crawl/XML request.
+                await assertWebScraperUrlAllowed(url)
+                pages =
+                    relativeLinksMethod === 'webCrawl'
+                        ? await webCrawl(url, limit, WEB_SCRAPER_SECURE_FETCH_POLICY)
+                        : await xmlScrape(url, limit, WEB_SCRAPER_SECURE_FETCH_POLICY)
+            }
             if (process.env.DEBUG === 'true')
                 options.logger.info(`[${orgId}]: PlaywrightWebBaseLoader pages: ${JSON.stringify(pages)}, length: ${pages.length}`)
             if (!pages || pages.length === 0) throw new Error('No relative links found')

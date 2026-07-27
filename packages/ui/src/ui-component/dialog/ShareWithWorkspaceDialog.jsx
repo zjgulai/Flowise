@@ -105,7 +105,7 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) => 
             getWorkspacesByOrganizationIdUserIdApi.request(user.activeOrganizationId, user.id)
         }
         setName(dialogProps.data.name)
-        getSharedWorkspacesForItemApi.request(dialogProps.data.id)
+        getSharedWorkspacesForItemApi.request(dialogProps.data.id, dialogProps.data.itemType)
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dialogProps, user])
@@ -182,7 +182,7 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) => 
             <DialogContent>
                 <Box sx={{ p: 2 }}>
                     <Stack sx={{ position: 'relative' }} direction='row'>
-                        <Typography variant='overline'>Name</Typography>
+                        <Typography variant='overline'>名称</Typography>
                     </Stack>
                     <OutlinedInput id='name' type='string' disabled={true} fullWidth placeholder={name} value={name} name='name' />
                 </Box>

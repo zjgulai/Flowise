@@ -77,7 +77,7 @@ export const JsonEditorInput = ({
                             }
                         }}
                         role='button'
-                        aria-label='JSON Editor'
+                        aria-label='JSON 编辑器'
                         tabIndex={0}
                         key={JSON.stringify(myValue)}
                     >

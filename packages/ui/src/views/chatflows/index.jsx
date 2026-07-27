@@ -53,15 +53,23 @@ const Chatflows = () => {
         setCurrentPage(page)
         setPageLimit(pageLimit)
         localStorage.setItem('chatFlowPageSize', pageLimit)
-        applyFilters(page, pageLimit)
+        applyFilters(page, pageLimit, search)
     }
 
-    const applyFilters = (page, limit) => {
+    const applyFilters = (page, limit, searchTerm = search, sort = {}) => {
         const params = {
             page: page || currentPage,
-            limit: limit || pageLimit
+            limit: limit || pageLimit,
+            search: searchTerm.trim(),
+            orderBy: sort.orderBy || localStorage.getItem('chatflowcanvas_orderBy') || 'updatedDate',
+            order: sort.order || localStorage.getItem('chatflowcanvas_order') || 'desc'
         }
         getAllChatflowsApi.request(params)
+    }
+
+    const onSortChange = (orderBy, order) => {
+        setCurrentPage(1)
+        applyFilters(1, pageLimit, search, { orderBy, order })
     }
 
     const handleChange = (event, nextView) => {
@@ -72,6 +80,7 @@ const Chatflows = () => {
 
     const onSearchChange = (event) => {
         setSearch(event.target.value)
+        setCurrentPage(1)
     }
 
     function filterFlows(data) {
@@ -91,9 +100,11 @@ const Chatflows = () => {
     }
 
     useEffect(() => {
-        applyFilters(currentPage, pageLimit)
+        const searchTimer = setTimeout(() => applyFilters(1, pageLimit, search), search ? 300 : 0)
+
+        return () => clearTimeout(searchTimer)
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [search])
 
     useEffect(() => {
         setLoading(getAllChatflowsApi.loading)
@@ -134,13 +145,13 @@ const Chatflows = () => {
             {error ? (
                 <ErrorBoundary error={error} />
             ) : (
-                <Stack flexDirection='column' sx={{ gap: 3 }}>
+                <Stack flexDirection='column' sx={{ gap: { xs: 2, sm: 3 } }}>
                     <ViewHeader
                         onSearchChange={onSearchChange}
                         search={true}
-                        searchPlaceholder='Search Name or Category'
-                        title='Chatflows'
-                        description='Build single-agent systems, chatbots and simple LLM flows'
+                        searchPlaceholder='搜索名称或分类'
+                        title='对话流程'
+                        description='构建单智能体系统、聊天机器人和基础大模型流程'
                     >
                         <ToggleButtonGroup
                             sx={{ borderRadius: 2, maxHeight: 40 }}
@@ -158,7 +169,7 @@ const Chatflows = () => {
                                 }}
                                 variant='contained'
                                 value='card'
-                                title='Card View'
+                                title='卡片视图'
                             >
                                 <IconLayoutGrid />
                             </ToggleButton>
@@ -170,7 +181,7 @@ const Chatflows = () => {
                                 }}
                                 variant='contained'
                                 value='list'
-                                title='List View'
+                                title='列表视图'
                             >
                                 <IconList />
                             </ToggleButton>
@@ -180,14 +191,18 @@ const Chatflows = () => {
                             variant='contained'
                             onClick={addNew}
                             startIcon={<IconPlus />}
-                            sx={{ borderRadius: 2, height: 40 }}
+                            sx={{ borderRadius: 2, height: 40, whiteSpace: 'nowrap' }}
                         >
-                            Add New
+                            新增流程
                         </StyledPermissionButton>
                     </ViewHeader>
 
                     {isLoading && (
-                        <Box display='grid' gridTemplateColumns='repeat(3, 1fr)' gap={gridSpacing}>
+                        <Box
+                            display='grid'
+                            gridTemplateColumns={{ xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' }}
+                            gap={gridSpacing}
+                        >
                             <Skeleton variant='rounded' height={160} />
                             <Skeleton variant='rounded' height={160} />
                             <Skeleton variant='rounded' height={160} />
@@ -196,7 +211,11 @@ const Chatflows = () => {
                     {!isLoading && total > 0 && (
                         <>
                             {!view || view === 'card' ? (
-                                <Box display='grid' gridTemplateColumns='repeat(3, 1fr)' gap={gridSpacing}>
+                                <Box
+                                    display='grid'
+                                    gridTemplateColumns={{ xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' }}
+                                    gap={gridSpacing}
+                                >
                                     {getAllChatflowsApi.data?.data?.filter(filterFlows).map((data, index) => (
                                         <ItemCard key={index} onClick={() => goToCanvas(data)} data={data} images={images[data.id]} />
                                     ))}
@@ -211,6 +230,7 @@ const Chatflows = () => {
                                     setError={setError}
                                     currentPage={currentPage}
                                     pageLimit={pageLimit}
+                                    onSortChange={onSortChange}
                                 />
                             )}
                             {/* Pagination and Page Size Controls */}
@@ -226,7 +246,7 @@ const Chatflows = () => {
                                     alt='WorkflowEmptySVG'
                                 />
                             </Box>
-                            <div>No Chatflows Yet</div>
+                            <div>暂无对话流程</div>
                         </Stack>
                     )}
                 </Stack>

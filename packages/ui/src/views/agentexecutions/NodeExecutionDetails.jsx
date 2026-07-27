@@ -362,7 +362,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                         }}
                         variant='contained'
                         value='rendered'
-                        title='Rendered'
+                        title='已渲染'
                     >
                         Rendered
                     </ToggleButton>
@@ -374,7 +374,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                         }}
                         variant='contained'
                         value='raw'
-                        title='Raw'
+                        title='原始'
                     >
                         Raw
                     </ToggleButton>
@@ -474,7 +474,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                                 </Typography>
                                                 {isToolUsed && (
                                                     <Chip
-                                                        label='Used'
+                                                        label='已使用'
                                                         size='small'
                                                         sx={{ ml: 2, color: 'white', backgroundColor: theme.palette.success.dark }}
                                                     />

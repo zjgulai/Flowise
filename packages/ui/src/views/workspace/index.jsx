@@ -116,7 +116,7 @@ function ShowWorkspaceRow(props) {
                     {props.workspace.userCount}{' '}
                     {props.workspace.userCount > 0 && (
                         <IconButton
-                            aria-label='expand row'
+                            aria-label='展开行'
                             size='small'
                             color='inherit'
                             onClick={() => handleViewWorkspaceUsers(props.workspace.id)}
@@ -130,7 +130,7 @@ function ShowWorkspaceRow(props) {
                     {props.workspace.name !== 'Default Workspace' && (
                         <PermissionIconButton
                             permissionId={'workspace:update'}
-                            title='Edit'
+                            title='编辑'
                             color='primary'
                             onClick={() => props.onEditClick(props.workspace)}
                         >
@@ -144,13 +144,13 @@ function ShowWorkspaceRow(props) {
                     </Link>
                     {props.workspace.name !== 'Default Workspace' &&
                         (props.workspace.userCount > 1 || props.workspace.isOrgDefault === true ? (
-                            <IconButton title='Delete' disabled={true} color='error' onClick={() => props.onDeleteClick(props.workspace)}>
+                            <IconButton title='删除' disabled={true} color='error' onClick={() => props.onDeleteClick(props.workspace)}>
                                 <IconTrashOff />
                             </IconButton>
                         ) : (
                             <PermissionIconButton
                                 permissionId={'workspace:delete'}
-                                title='Delete'
+                                title='删除'
                                 color='error'
                                 onClick={() => props.onDeleteClick(props.workspace)}
                             >
@@ -177,8 +177,8 @@ function ShowWorkspaceRow(props) {
                                 }}
                             >
                                 <TableRow>
-                                    <StyledTableCell sx={{ width: '60%' }}>User</StyledTableCell>
-                                    <StyledTableCell sx={{ width: '40%' }}>Role</StyledTableCell>
+                                    <StyledTableCell sx={{ width: '60%' }}>用户</StyledTableCell>
+                                    <StyledTableCell sx={{ width: '40%' }}>角色</StyledTableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -189,9 +189,9 @@ function ShowWorkspaceRow(props) {
                                             <StyledTableCell>{item.user.name || item.user.email}</StyledTableCell>
                                             <StyledTableCell>
                                                 {item.isOrgOwner ? (
-                                                    <Chip label='ORGANIZATION OWNER' size={'small'} />
+                                                    <Chip label='组织所有者' size={'small'} />
                                                 ) : item.role.name === 'personal workspace' ? (
-                                                    <Chip label='PERSONAL WORKSPACE' size={'small'} />
+                                                    <Chip label='个人工作空间' size={'small'} />
                                                 ) : (
                                                     item.role.name
                                                 )}
@@ -407,7 +407,7 @@ const Workspaces = () => {
                             isEditButton={false}
                             onSearchChange={onSearchChange}
                             search={true}
-                            title='Workspaces'
+                            title='工作空间'
                             searchPlaceholder='Search Workspaces'
                         >
                             <StyledPermissionButton
@@ -429,7 +429,7 @@ const Workspaces = () => {
                                         alt='workspaces_emptySVG'
                                     />
                                 </Box>
-                                <div>No Workspaces Yet</div>
+                                <div>暂无工作空间</div>
                             </Stack>
                         ) : (
                             <TableContainer
@@ -446,9 +446,9 @@ const Workspaces = () => {
                                         }}
                                     >
                                         <TableRow>
-                                            <TableCell>Name</TableCell>
-                                            <TableCell>Description</TableCell>
-                                            <TableCell>Users</TableCell>
+                                            <TableCell>名称</TableCell>
+                                            <TableCell>描述</TableCell>
+                                            <TableCell>用户</TableCell>
                                             <TableCell>Last Updated</TableCell>
                                             <TableCell> </TableCell>
                                         </TableRow>

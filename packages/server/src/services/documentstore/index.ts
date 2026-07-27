@@ -79,18 +79,33 @@ const createDocumentStore = async (newDocumentStore: DocumentStore, orgId: strin
     }
 }
 
-const getAllDocumentStores = async (workspaceId: string, page: number = -1, limit: number = -1) => {
+const getAllDocumentStores = async (
+    workspaceId: string,
+    page: number = -1,
+    limit: number = -1,
+    search?: string,
+    orderBy?: 'name' | 'updatedDate',
+    order?: 'asc' | 'desc'
+) => {
     try {
         const appServer = getRunningExpressApp()
+        const sortColumn = orderBy === 'name' ? 'doc_store.name' : 'doc_store.updatedDate'
+        const sortDirection = order === 'asc' ? 'ASC' : 'DESC'
         const queryBuilder = appServer.AppDataSource.getRepository(DocumentStore)
             .createQueryBuilder('doc_store')
-            .orderBy('doc_store.updatedDate', 'DESC')
+            .orderBy(sortColumn, sortDirection)
+            .addOrderBy('doc_store.id', 'ASC')
 
         if (page > 0 && limit > 0) {
             queryBuilder.skip((page - 1) * limit)
             queryBuilder.take(limit)
         }
         queryBuilder.andWhere('doc_store.workspaceId = :workspaceId', { workspaceId })
+        if (search) {
+            queryBuilder.andWhere(`(LOWER(doc_store.name) LIKE :search OR LOWER(COALESCE(doc_store.description, '')) LIKE :search)`, {
+                search: `%${search.toLowerCase()}%`
+            })
+        }
 
         const [data, total] = await queryBuilder.getManyAndCount()
 
@@ -309,6 +324,7 @@ const getDocumentStoreFileChunks = async (
         }
         return response
     } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
         throw new InternalFlowiseError(
             StatusCodes.INTERNAL_SERVER_ERROR,
             `Error: documentStoreServices.getDocumentStoreFileChunks - ${getErrorMessage(error)}`
@@ -2203,6 +2219,7 @@ const generateDocStoreToolDesc = async (docStoreId: string, selectedChatModel: I
             `Error: documentStoreServices.generateDocStoreToolDesc - Error generating tool description`
         )
     } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
         throw new InternalFlowiseError(
             StatusCodes.INTERNAL_SERVER_ERROR,
             `Error: documentStoreServices.generateDocStoreToolDesc - ${getErrorMessage(error)}`

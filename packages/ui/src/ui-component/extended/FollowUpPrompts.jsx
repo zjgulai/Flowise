@@ -49,19 +49,19 @@ const followUpPromptsOptions = {
         icon: anthropicIcon,
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['anthropicApi']
             },
             {
-                label: 'Model Name',
+                label: '模型名称',
                 name: 'modelName',
                 type: 'asyncOptions',
                 loadMethod: 'listModels'
             },
             {
-                label: 'Prompt',
+                label: '提示词',
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
@@ -70,7 +70,7 @@ const followUpPromptsOptions = {
                 default: defaultPrompt
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -85,19 +85,19 @@ const followUpPromptsOptions = {
         icon: azureOpenAiIcon,
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['azureOpenAIApi']
             },
             {
-                label: 'Model Name',
+                label: '模型名称',
                 name: 'modelName',
                 type: 'asyncOptions',
                 loadMethod: 'listModels'
             },
             {
-                label: 'Prompt',
+                label: '提示词',
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
@@ -106,7 +106,7 @@ const followUpPromptsOptions = {
                 default: defaultPrompt
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -121,19 +121,19 @@ const followUpPromptsOptions = {
         icon: geminiIcon,
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['googleGenerativeAI']
             },
             {
-                label: 'Model Name',
+                label: '模型名称',
                 name: 'modelName',
                 type: 'asyncOptions',
                 loadMethod: 'listModels'
             },
             {
-                label: 'Prompt',
+                label: '提示词',
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
@@ -142,7 +142,7 @@ const followUpPromptsOptions = {
                 default: defaultPrompt
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -157,19 +157,19 @@ const followUpPromptsOptions = {
         icon: groqIcon,
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['groqApi']
             },
             {
-                label: 'Model Name',
+                label: '模型名称',
                 name: 'modelName',
                 type: 'asyncOptions',
                 loadMethod: 'listModels'
             },
             {
-                label: 'Prompt',
+                label: '提示词',
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
@@ -178,7 +178,7 @@ const followUpPromptsOptions = {
                 default: defaultPrompt
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -193,19 +193,19 @@ const followUpPromptsOptions = {
         icon: mistralAiIcon,
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['mistralAIApi']
             },
             {
-                label: 'Model Name',
+                label: '模型名称',
                 name: 'modelName',
                 type: 'asyncOptions',
                 loadMethod: 'listModels'
             },
             {
-                label: 'Prompt',
+                label: '提示词',
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
@@ -214,7 +214,7 @@ const followUpPromptsOptions = {
                 default: defaultPrompt
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -229,19 +229,19 @@ const followUpPromptsOptions = {
         icon: openAiIcon,
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['openAIApi']
             },
             {
-                label: 'Model Name',
+                label: '模型名称',
                 name: 'modelName',
                 type: 'asyncOptions',
                 loadMethod: 'listModels'
             },
             {
-                label: 'Prompt',
+                label: '提示词',
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
@@ -250,7 +250,7 @@ const followUpPromptsOptions = {
                 default: defaultPrompt
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -265,7 +265,7 @@ const followUpPromptsOptions = {
         icon: ollamaIcon,
         inputs: [
             {
-                label: 'Base URL',
+                label: '基础 URL',
                 name: 'baseUrl',
                 type: 'string',
                 placeholder: 'http://127.0.0.1:11434',
@@ -273,7 +273,7 @@ const followUpPromptsOptions = {
                 default: 'http://127.0.0.1:11434'
             },
             {
-                label: 'Model Name',
+                label: '模型名称',
                 name: 'modelName',
                 type: 'string',
                 placeholder: 'llama2',
@@ -281,7 +281,7 @@ const followUpPromptsOptions = {
                 default: 'llama3.2-vision:latest'
             },
             {
-                label: 'Prompt',
+                label: '提示词',
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
@@ -290,7 +290,7 @@ const followUpPromptsOptions = {
                 default: defaultPrompt
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -479,7 +479,7 @@ const FollowUpPrompts = ({ dialogProps }) => {
                 />
                 {followUpPromptsConfig && followUpPromptsConfig.status && (
                     <>
-                        <Typography variant='h5'>Providers</Typography>
+                        <Typography variant='h5'>提供商</Typography>
                         <FormControl fullWidth>
                             <Select
                                 size='small'

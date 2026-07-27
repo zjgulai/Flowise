@@ -145,8 +145,8 @@ const ValidationPopUp = ({ chatflowid, hidden }) => {
                     ref={anchorRef}
                     size='small'
                     color='teal'
-                    aria-label='validation'
-                    title='Validate Nodes'
+                    aria-label='验证'
+                    title='验证节点'
                     onClick={handleToggle}
                 >
                     {open ? <IconX /> : <IconChecklist />}

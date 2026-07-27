@@ -33,21 +33,21 @@ const agent_settings = {
     children: [
         {
             id: 'viewMessages',
-            title: 'View Messages',
+            title: '查看消息',
             type: 'item',
             url: '',
             icon: icons.IconMessage
         },
         {
             id: 'viewLeads',
-            title: 'View Leads',
+            title: '查看线索',
             type: 'item',
             url: '',
             icon: icons.IconUsers
         },
         {
             id: 'chatflowConfiguration',
-            title: 'Configuration',
+            title: '配置',
             type: 'item',
             url: '',
             icon: icons.IconAdjustmentsHorizontal,
@@ -55,7 +55,7 @@ const agent_settings = {
         },
         {
             id: 'saveAsTemplate',
-            title: 'Save As Template',
+            title: '保存为模板',
             type: 'item',
             url: '',
             icon: icons.IconTemplate,
@@ -63,7 +63,7 @@ const agent_settings = {
         },
         {
             id: 'duplicateChatflow',
-            title: 'Duplicate Agents',
+            title: '复制智能体',
             type: 'item',
             url: '',
             icon: icons.IconCopy,
@@ -71,7 +71,7 @@ const agent_settings = {
         },
         {
             id: 'loadChatflow',
-            title: 'Load Agents',
+            title: '加载智能体',
             type: 'item',
             url: '',
             icon: icons.IconFileUpload,
@@ -79,7 +79,7 @@ const agent_settings = {
         },
         {
             id: 'exportChatflow',
-            title: 'Export Agents',
+            title: '导出智能体',
             type: 'item',
             url: '',
             icon: icons.IconFileExport,
@@ -87,7 +87,7 @@ const agent_settings = {
         },
         {
             id: 'deleteChatflow',
-            title: 'Delete Agents',
+            title: '删除智能体',
             type: 'item',
             url: '',
             icon: icons.IconTrash,

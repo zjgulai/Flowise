@@ -3,6 +3,20 @@ import { ChatDeepSeek, ChatDeepSeekInput } from '@langchain/deepseek'
 import { ICommonObject, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
 import { getModels, MODEL_TYPE } from '../../../src/modelLoader'
 import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+import {
+    buildSecureProviderConfiguration,
+    parseOptionalProviderNumber,
+    parseProviderHeaders,
+    requireProviderApiKey,
+    resolveProviderBaseUrl
+} from '../providerUtils'
+
+const DEEPSEEK_ENDPOINT_POLICY = {
+    providerLabel: 'Deepseek',
+    defaultBaseUrl: 'https://api.deepseek.com',
+    officialOrigins: ['https://api.deepseek.com'],
+    allowlistEnvVar: 'DEEPSEEK_BASE_URL_ALLOWLIST'
+}
 
 class Deepseek_ChatModels implements INode {
     label: string
@@ -43,7 +57,7 @@ class Deepseek_ChatModels implements INode {
                 name: 'modelName',
                 type: 'asyncOptions',
                 loadMethod: 'listModels',
-                default: 'deepseek-chat'
+                default: 'deepseek-v4-flash'
             },
             {
                 label: 'Temperature',
@@ -99,6 +113,7 @@ class Deepseek_ChatModels implements INode {
                 type: 'number',
                 step: 1,
                 optional: true,
+                description: 'Request timeout in milliseconds.',
                 additionalParams: true
             },
             {
@@ -111,14 +126,13 @@ class Deepseek_ChatModels implements INode {
                 additionalParams: true
             },
             {
-                label: 'Thinking',
-                name: 'thinking',
-                type: 'boolean',
-                default: false,
+                label: 'Base Path',
+                name: 'basepath',
+                type: 'string',
                 optional: true,
-                additionalParams: true,
-                description:
-                    'Enable deep thinking mode for complex reasoning tasks. When enabled, the model will use extended thinking before responding.'
+                default: 'https://api.deepseek.com',
+                description: 'Deepseek API 基础地址；自定义 origin 必须由 DEEPSEEK_BASE_URL_ALLOWLIST 明确允许。',
+                additionalParams: true
             },
             {
                 label: 'Base Options',
@@ -126,7 +140,7 @@ class Deepseek_ChatModels implements INode {
                 type: 'json',
                 optional: true,
                 additionalParams: true,
-                description: 'Additional options to pass to the Deepseek client. This should be a JSON object.'
+                description: 'Additional HTTP headers for the Deepseek client. This must be a JSON object.'
             }
         ]
     }
@@ -139,61 +153,56 @@ class Deepseek_ChatModels implements INode {
     }
 
     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
-        const temperature = nodeData.inputs?.temperature as string
-        const modelName = nodeData.inputs?.modelName as string
-        const maxTokens = nodeData.inputs?.maxTokens as string
-        const topP = nodeData.inputs?.topP as string
-        const frequencyPenalty = nodeData.inputs?.frequencyPenalty as string
-        const presencePenalty = nodeData.inputs?.presencePenalty as string
-        const timeout = nodeData.inputs?.timeout as string
+        const temperature = parseOptionalProviderNumber(nodeData.inputs?.temperature, 'Temperature', { min: 0, max: 2 })
+        const modelName = (nodeData.inputs?.modelName as string) || 'deepseek-v4-flash'
+        const maxTokens = parseOptionalProviderNumber(nodeData.inputs?.maxTokens, 'Max Tokens', { integer: true, min: 1 })
+        const topP = parseOptionalProviderNumber(nodeData.inputs?.topP, 'Top Probability', { min: 0, max: 1 })
+        const frequencyPenalty = parseOptionalProviderNumber(nodeData.inputs?.frequencyPenalty, 'Frequency Penalty')
+        const presencePenalty = parseOptionalProviderNumber(nodeData.inputs?.presencePenalty, 'Presence Penalty')
+        const timeout = parseOptionalProviderNumber(nodeData.inputs?.timeout, 'Timeout', { integer: true, min: 1 })
         const stopSequence = nodeData.inputs?.stopSequence as string
         const streaming = nodeData.inputs?.streaming as boolean
-        const thinking = nodeData.inputs?.thinking as boolean
-        const baseOptions = nodeData.inputs?.baseOptions
+        const thinking = nodeData.inputs?.thinking
+        const reasoningEffort = nodeData.inputs?.reasoningEffort
+
+        if (thinking === true || thinking === 'true' || reasoningEffort || modelName === 'deepseek-reasoner') {
+            throw new Error('Deepseek reasoning and thinking are not supported by this node transport')
+        }
+        const basePath = resolveProviderBaseUrl(nodeData.inputs?.basepath, DEEPSEEK_ENDPOINT_POLICY)
+        const baseOptions = parseProviderHeaders(nodeData.inputs?.baseOptions, 'Deepseek')
 
         if (nodeData.inputs?.credentialId) {
             nodeData.credential = nodeData.inputs?.credentialId
         }
         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
-        const openAIApiKey = getCredentialParam('deepseekApiKey', credentialData, nodeData)
+        const apiKey = requireProviderApiKey(getCredentialParam('deepseekApiKey', credentialData, nodeData), 'Deepseek')
 
         const cache = nodeData.inputs?.cache as BaseCache
 
         const obj: ChatDeepSeekInput = {
-            temperature: parseFloat(temperature),
             modelName,
-            openAIApiKey,
-            apiKey: openAIApiKey,
-            streaming: streaming ?? true
+            apiKey,
+            streaming: streaming ?? true,
+            maxRetries: 0
         }
 
-        if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
-        if (topP) obj.topP = parseFloat(topP)
-        if (frequencyPenalty) obj.frequencyPenalty = parseFloat(frequencyPenalty)
-        if (presencePenalty) obj.presencePenalty = parseFloat(presencePenalty)
-        if (timeout) obj.timeout = parseInt(timeout, 10)
+        if (temperature !== undefined) obj.temperature = temperature
+        if (maxTokens !== undefined) obj.maxTokens = maxTokens
+        if (topP !== undefined) obj.topP = topP
+        if (frequencyPenalty !== undefined) obj.frequencyPenalty = frequencyPenalty
+        if (presencePenalty !== undefined) obj.presencePenalty = presencePenalty
+        if (timeout !== undefined) obj.timeout = timeout
         if (cache) obj.cache = cache
         if (stopSequence) {
-            const stopSequenceArray = stopSequence.split(',').map((item) => item.trim())
-            obj.stop = stopSequenceArray
+            const stopSequenceArray = stopSequence
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean)
+            if (stopSequenceArray.length) obj.stop = stopSequenceArray
         }
-        if (thinking) {
-            obj.modelKwargs = {
-                ...obj.modelKwargs,
-                thinking: { type: 'enabled' }
-            }
-        }
+        if (modelName.startsWith('deepseek-v4')) obj.modelKwargs = { thinking: { type: 'disabled' } }
 
-        if (baseOptions) {
-            try {
-                const parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
-                obj.configuration = {
-                    defaultHeaders: parsedBaseOptions
-                }
-            } catch (exception) {
-                throw new Error('Invalid JSON in the BaseOptions: ' + exception)
-            }
-        }
+        obj.configuration = buildSecureProviderConfiguration(basePath, baseOptions)
 
         const model = new ChatDeepSeek(obj)
         return model

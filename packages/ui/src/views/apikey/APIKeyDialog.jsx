@@ -412,7 +412,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
                             type='string'
                             size='small'
                             fullWidth
-                            placeholder='My New Key'
+                            placeholder='我的新密钥'
                             value={keyName}
                             name='keyName'
                             onChange={(e) => setKeyName(e.target.value)}

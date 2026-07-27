@@ -24,11 +24,12 @@
  *
  * 1. POST /api/v1/oauth2/authorize/:credentialId
  *    - Generates authorization URL for initiating OAuth2 flow
- *    - Uses credential ID as state parameter for security
+ *    - Creates a short-lived, opaque, one-time state bound to the initiating session and workspace
  *    - Returns authorization URL to redirect user to
  *
  * 2. GET /api/v1/oauth2/callback
  *    - Handles OAuth2 callback with authorization code
+ *    - Requires the same authenticated session and consumes state before token exchange
  *    - Exchanges code for access token
  *    - Updates credential with token data
  *    - Supports Microsoft Graph and custom OAuth2 providers
@@ -57,12 +58,16 @@
  */
 
 import axios from 'axios'
+import { randomBytes } from 'crypto'
 import express, { NextFunction, Request, Response } from 'express'
 import { secureAxiosRequest } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
 import { Credential } from '../../database/entities/Credential'
-import { WorkspaceShared } from '../../enterprise/database/entities/EnterpriseEntities'
-import { getActiveWorkspaceIdForRequest } from '../../enterprise/utils/tenantRequestGuards'
+import { ErrorMessage, LoggedInUser } from '../../enterprise/Interface.Enterprise'
+import { reloadSessionAuthorization } from '../../enterprise/middleware/passport/AuthStrategy'
+import { isInteractiveSessionRequest, requireInteractiveSession } from '../../enterprise/middleware/passport/interactiveSession'
+import { checkPermission } from '../../enterprise/rbac/PermissionCheck'
+import { getActiveWorkspaceIdForRequest, getLoggedInUser } from '../../enterprise/utils/tenantRequestGuards'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { decryptCredentialData, encryptCredentialData } from '../../utils'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
@@ -71,30 +76,97 @@ import { generateErrorPage, generateSuccessPage } from './templates'
 
 const router = express.Router()
 
+const OAUTH2_STATE_TTL_MS = 10 * 60 * 1000
+const MAX_PENDING_OAUTH2_STATES = 10
+
+type PendingOAuth2State = {
+    credentialId: string
+    workspaceId: string
+    organizationId: string
+    initiatorUserId: string
+    sessionId: string
+    redirectUri: string
+    expiresAt: number
+}
+
+type OAuth2Session = Request['session'] & {
+    flowiseOAuth2States?: Record<string, PendingOAuth2State>
+}
+
+const requireCurrentOAuthCallbackSession = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!req.session || !req.sessionID || !isInteractiveSessionRequest(req)) {
+            return res.status(StatusCodes.UNAUTHORIZED).json({ message: ErrorMessage.INVALID_MISSING_TOKEN })
+        }
+
+        const currentUser = await reloadSessionAuthorization(req.user as LoggedInUser)
+        if (!currentUser) return res.status(StatusCodes.UNAUTHORIZED).json({ message: ErrorMessage.INVALID_MISSING_TOKEN })
+
+        req.user = currentUser
+        const passportSession = (req.session as OAuth2Session & { passport?: { user?: LoggedInUser } }).passport
+        if (!passportSession) return res.status(StatusCodes.UNAUTHORIZED).json({ message: ErrorMessage.INVALID_MISSING_TOKEN })
+        passportSession.user = currentUser
+        await saveSession(req)
+        return next()
+    } catch (error) {
+        return next(error)
+    }
+}
+
+const saveSession = async (req: Request): Promise<void> => {
+    await new Promise<void>((resolve, reject) => {
+        req.session.save((error) => (error ? reject(error) : resolve()))
+    })
+}
+
+const storeOAuth2State = async (req: Request, state: string, pendingState: PendingOAuth2State): Promise<void> => {
+    const now = Date.now()
+    const session = req.session as OAuth2Session
+    const activeStates = Object.entries(session.flowiseOAuth2States ?? {})
+        .filter(([, value]) => value.expiresAt > now)
+        .sort(([, left], [, right]) => right.expiresAt - left.expiresAt)
+        .slice(0, MAX_PENDING_OAUTH2_STATES - 1)
+
+    session.flowiseOAuth2States = Object.fromEntries(activeStates)
+    session.flowiseOAuth2States[state] = pendingState
+    await saveSession(req)
+}
+
+const consumeOAuth2State = async (req: Request, state: string, user: LoggedInUser): Promise<PendingOAuth2State | undefined> => {
+    const session = req.session as OAuth2Session
+    const pendingState = session.flowiseOAuth2States?.[state]
+    if (!pendingState) return undefined
+
+    delete session.flowiseOAuth2States?.[state]
+    await saveSession(req)
+
+    if (
+        pendingState.expiresAt <= Date.now() ||
+        pendingState.sessionId !== req.sessionID ||
+        pendingState.initiatorUserId !== user.id ||
+        pendingState.workspaceId !== user.activeWorkspaceId ||
+        pendingState.organizationId !== user.activeOrganizationId
+    ) {
+        return undefined
+    }
+
+    return pendingState
+}
+
+const getOwnedCredential = async (credentialId: string, workspaceId: string) => {
+    const appServer = getRunningExpressApp()
+    const credentialRepository = appServer.AppDataSource.getRepository(Credential)
+    const credential = await credentialRepository.findOneBy({ id: credentialId, workspaceId })
+    return { credential, credentialRepository }
+}
+
 // Initiate OAuth2 authorization flow
-router.post('/authorize/:credentialId', async (req: Request, res: Response, next: NextFunction) => {
+const authorizeOAuth2 = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { credentialId } = req.params
+        const user = getLoggedInUser(req)
         const workspaceId = getActiveWorkspaceIdForRequest(req)
-
-        const appServer = getRunningExpressApp()
-        const credentialRepository = appServer.AppDataSource.getRepository(Credential)
-
-        let credential = await credentialRepository.findOneBy({
-            id: credentialId,
-            workspaceId
-        })
-
-        if (!credential) {
-            const share = await appServer.AppDataSource.getRepository(WorkspaceShared).findOneBy({
-                workspaceId,
-                sharedItemId: credentialId,
-                itemType: 'credential'
-            })
-            if (share) {
-                credential = await credentialRepository.findOneBy({ id: credentialId })
-            }
-        }
+        const { credential } = await getOwnedCredential(credentialId, workspaceId)
 
         if (!credential) {
             return next(new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Credential not found'))
@@ -139,11 +211,22 @@ router.post('/authorize/:credentialId', async (req: Request, res: Response, next
         const defaultRedirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth2-credential/callback`
         const finalRedirectUri = redirect_uri || defaultRedirectUri
 
+        const state = randomBytes(32).toString('base64url')
+        await storeOAuth2State(req, state, {
+            credentialId,
+            workspaceId,
+            organizationId: user.activeOrganizationId,
+            initiatorUserId: user.id,
+            sessionId: req.sessionID,
+            redirectUri: finalRedirectUri,
+            expiresAt: Date.now() + OAUTH2_STATE_TTL_MS
+        })
+
         const authParams = new URLSearchParams({
             client_id: clientId,
             response_type,
             response_mode,
-            state: credentialId, // Use credential ID as state parameter
+            state,
             redirect_uri: finalRedirectUri
         })
 
@@ -151,11 +234,17 @@ router.post('/authorize/:credentialId', async (req: Request, res: Response, next
             authParams.append('scope', scope)
         }
 
-        let fullAuthorizationUrl = `${authorizationUrl}?${authParams.toString()}`
-
         if (additionalParameters) {
-            fullAuthorizationUrl += `&${additionalParameters.toString()}`
+            const reservedParameters = new Set(['client_id', 'response_type', 'response_mode', 'state', 'redirect_uri'])
+            const additionalAuthParams = new URLSearchParams(additionalParameters.toString().replace(/^\?/, ''))
+            for (const [key, value] of additionalAuthParams) {
+                if (!reservedParameters.has(key)) authParams.append(key, value)
+            }
         }
+
+        const authorizationEndpoint = new URL(authorizationUrl)
+        for (const [key, value] of authParams) authorizationEndpoint.searchParams.set(key, value)
+        const fullAuthorizationUrl = authorizationEndpoint.toString()
 
         res.json({
             success: true,
@@ -175,12 +264,28 @@ router.post('/authorize/:credentialId', async (req: Request, res: Response, next
             )
         )
     }
-})
+}
+
+router.post('/authorize/:credentialId', requireInteractiveSession, checkPermission('credentials:update'), authorizeOAuth2)
 
 // OAuth2 callback endpoint
-router.get('/callback', async (req: Request, res: Response) => {
+router.get('/callback', requireCurrentOAuthCallbackSession, checkPermission('credentials:update'), async (req: Request, res: Response) => {
     try {
         const { code, state, error, error_description } = req.query
+
+        if (typeof state !== 'string') {
+            const errorHtml = generateErrorPage('Invalid authorization state', 'The authorization request is invalid or expired.')
+            res.setHeader('Content-Type', 'text/html')
+            return res.status(StatusCodes.BAD_REQUEST).send(errorHtml)
+        }
+
+        const user = getLoggedInUser(req)
+        const pendingState = await consumeOAuth2State(req, state, user)
+        if (!pendingState) {
+            const errorHtml = generateErrorPage('Invalid authorization state', 'The authorization request is invalid or expired.')
+            res.setHeader('Content-Type', 'text/html')
+            return res.status(StatusCodes.BAD_REQUEST).send(errorHtml)
+        }
 
         if (error) {
             const errorHtml = generateErrorPage(
@@ -193,25 +298,19 @@ router.get('/callback', async (req: Request, res: Response) => {
             return res.status(400).send(errorHtml)
         }
 
-        if (!code || !state) {
+        if (typeof code !== 'string' || !code) {
             const errorHtml = generateErrorPage('Missing required parameters', 'Missing code or state', 'Please try again later.')
 
             res.setHeader('Content-Type', 'text/html')
             return res.status(400).send(errorHtml)
         }
 
-        const appServer = getRunningExpressApp()
-        const credentialRepository = appServer.AppDataSource.getRepository(Credential)
-
-        // Find credential by state (assuming state contains the credential ID)
-        const credential = await credentialRepository.findOneBy({
-            id: state as string
-        })
+        const { credential, credentialRepository } = await getOwnedCredential(pendingState.credentialId, pendingState.workspaceId)
 
         if (!credential) {
             const errorHtml = generateErrorPage(
                 'Credential not found',
-                `Credential not found for the provided state: ${state}`,
+                'Credential not found for the provided authorization request.',
                 'Please try the authorization process again.'
             )
 
@@ -221,7 +320,7 @@ router.get('/callback', async (req: Request, res: Response) => {
 
         const decryptedData = await decryptCredentialData(credential.encryptedData)
 
-        const { clientId, clientSecret, accessTokenUrl, redirect_uri, scope } = decryptedData
+        const { clientId, clientSecret, accessTokenUrl, scope } = decryptedData
 
         if (!clientId || !clientSecret) {
             const errorHtml = generateErrorPage(
@@ -259,13 +358,12 @@ router.get('/callback', async (req: Request, res: Response) => {
             return res.status(400).send(errorHtml)
         }
 
-        const defaultRedirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth2-credential/callback`
-        const finalRedirectUri = redirect_uri || defaultRedirectUri
+        const finalRedirectUri = pendingState.redirectUri
 
         const tokenRequestData: any = {
             client_id: clientId,
             client_secret: clientSecret,
-            code: code as string,
+            code,
             grant_type: 'authorization_code',
             redirect_uri: finalRedirectUri
         }
@@ -347,16 +445,11 @@ router.get('/callback', async (req: Request, res: Response) => {
 })
 
 // Refresh OAuth2 access token
-router.post('/refresh/:credentialId', async (req: Request, res: Response, next: NextFunction) => {
+const refreshOAuth2AccessToken = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { credentialId } = req.params
-
-        const appServer = getRunningExpressApp()
-        const credentialRepository = appServer.AppDataSource.getRepository(Credential)
-
-        const credential = await credentialRepository.findOneBy({
-            id: credentialId
-        })
+        const workspaceId = getActiveWorkspaceIdForRequest(req)
+        const { credential, credentialRepository } = await getOwnedCredential(credentialId, workspaceId)
 
         if (!credential) {
             return res.status(404).json({
@@ -471,6 +564,8 @@ router.post('/refresh/:credentialId', async (req: Request, res: Response, next: 
             )
         )
     }
-})
+}
+
+router.post('/refresh/:credentialId', requireInteractiveSession, checkPermission('credentials:update'), refreshOAuth2AccessToken)
 
 export default router

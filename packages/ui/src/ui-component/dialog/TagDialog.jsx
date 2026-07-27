@@ -81,7 +81,7 @@ const TagDialog = ({ isOpen, dialogProps, onClose, onSubmit }) => {
                             value={inputValue}
                             onChange={handleInputChange}
                             onKeyDown={handleInputKeyDown}
-                            label='Add a tag'
+                            label='添加标签'
                             variant='outlined'
                         />
                         <Typography variant='body2' sx={{ fontStyle: 'italic', mt: 1 }} color='text.secondary'>
@@ -91,7 +91,7 @@ const TagDialog = ({ isOpen, dialogProps, onClose, onSubmit }) => {
                 </Box>
             </DialogContent>
             <DialogActions>
-                <Button onClick={onClose}>Cancel</Button>
+                <Button onClick={onClose}>取消</Button>
                 <Button variant='contained' onClick={handleSubmit}>
                     Submit
                 </Button>

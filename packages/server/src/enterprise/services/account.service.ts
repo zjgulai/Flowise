@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs'
+import { randomInt } from 'crypto'
 import { removeFolderFromStorage } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
 import jwt, { JwtPayload } from 'jsonwebtoken'
@@ -55,6 +56,7 @@ import {
 import { generateTempToken } from '../utils/tempTokenUtils'
 import { getSecureAppUrl, getSecureTokenLink } from '../utils/url.util'
 import { validatePasswordOrThrow } from '../utils/validation.util'
+import { ADMIN_ONLY_ERROR_MESSAGE, assertAdminPasswordLoginAllowed, isAdminOnlyModeEnabled } from '../utils/adminOnlyPolicy'
 import auditService from './audit'
 import { OrganizationUserErrorMessage, OrganizationUserService } from './organization-user.service'
 import { OrganizationErrorMessage, OrganizationService } from './organization.service'
@@ -62,9 +64,27 @@ import { RoleErrorMessage, RoleService } from './role.service'
 import { UserErrorMessage, UserService } from './user.service'
 import { WorkspaceUserErrorMessage, WorkspaceUserService } from './workspace-user.service'
 import { WorkspaceErrorMessage, WorkspaceService } from './workspace.service'
+import { createCredentialAuthVersion } from '../middleware/passport/authVersion'
 
 /** Optional referral field for Stripe referral tracking in CLOUD; not a User entity column. */
 type RegistrationUser = Partial<User> & { referral?: string }
+type UserWithAuthVersion = RegistrationUser & { authVersion?: string }
+
+const PASSWORD_RECOVERY_RESPONSE_FLOOR_MS = 250
+const PASSWORD_RECOVERY_RESPONSE_JITTER_MS = 75
+
+export function getPasswordRecoveryResponseDelay(
+    startedAt: number,
+    now = Date.now(),
+    jitter = randomInt(0, PASSWORD_RECOVERY_RESPONSE_JITTER_MS + 1)
+) {
+    return Math.max(0, PASSWORD_RECOVERY_RESPONSE_FLOOR_MS + jitter - (now - startedAt))
+}
+
+const waitForPasswordRecoveryResponseWindow = async (startedAt: number): Promise<void> => {
+    const delay = getPasswordRecoveryResponseDelay(startedAt)
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
+}
 
 export type AccountDTO = {
     user: RegistrationUser
@@ -73,6 +93,56 @@ export type AccountDTO = {
     workspace: Partial<Workspace>
     workspaceUser: Partial<WorkspaceUser>
     role: Partial<Role>
+}
+
+/**
+ * Invites are tenant mutations. Bind caller-controlled tenant and audit fields to
+ * the authenticated principal, and reject cross-tenant or privilege-escalating roles.
+ */
+export function bindInviteToActiveTenant(data: AccountDTO, currentUser: Express.User | undefined, workspace: Workspace, role: Role) {
+    if (!currentUser?.id || !currentUser.activeOrganizationId || !currentUser.activeWorkspaceId) {
+        throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, GeneralErrorMessage.UNAUTHORIZED)
+    }
+    if (!workspace.id || workspace.organizationId !== currentUser.activeOrganizationId) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+    }
+    if (role.organizationId !== currentUser.activeOrganizationId) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+    }
+
+    const actorPermissions = new Set(currentUser.permissions ?? [])
+    const mayManageOrganization = currentUser.isOrganizationAdmin === true || actorPermissions.has('users:manage')
+    const mayManageActiveWorkspace = workspace.id === currentUser.activeWorkspaceId && actorPermissions.has('workspace:add-user')
+    if (!mayManageOrganization && !mayManageActiveWorkspace) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+    }
+
+    let assignedPermissions: unknown
+    try {
+        assignedPermissions = JSON.parse(role.permissions)
+    } catch {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, RoleErrorMessage.INVALID_ROLE_PERMISSIONS)
+    }
+    if (!Array.isArray(assignedPermissions) || assignedPermissions.some((permission) => typeof permission !== 'string')) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, RoleErrorMessage.INVALID_ROLE_PERMISSIONS)
+    }
+    if (!currentUser.isOrganizationAdmin && assignedPermissions.some((permission) => !actorPermissions.has(permission))) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+    }
+
+    const email = data.user?.email
+    data.user = { email, createdBy: currentUser.id, updatedBy: currentUser.id }
+    data.organization = { id: currentUser.activeOrganizationId }
+    data.organizationUser = { createdBy: currentUser.id, updatedBy: currentUser.id }
+    data.workspace = { ...workspace, organizationId: currentUser.activeOrganizationId, updatedBy: currentUser.id }
+    data.workspaceUser = { createdBy: currentUser.id, updatedBy: currentUser.id }
+    data.role = role
+
+    return currentUser
+}
+
+export function getWorkspaceMembershipStatusForInvite(organizationUserStatus: string | undefined): WorkspaceUserStatus {
+    return organizationUserStatus === OrganizationUserStatus.ACTIVE ? WorkspaceUserStatus.ACTIVE : WorkspaceUserStatus.INVITED
 }
 
 export class AccountService {
@@ -287,7 +357,7 @@ export class AccountService {
 
         if (!data.organization.id) {
             data.organization.createdBy = data.user.createdBy
-            data.organization = this.organizationservice.createNewOrganization(data.organization, queryRunner, true)
+            data.organization = this.organizationservice.createNewOrganizationForRegistration(data.organization, queryRunner)
         }
         data.organizationUser.organizationId = data.organization.id
         data.organizationUser.userId = data.user.id
@@ -352,16 +422,20 @@ export class AccountService {
         await queryRunner.connect()
 
         try {
+            if (!currentUser?.id || !currentUser.activeOrganizationId || !currentUser.activeWorkspaceId) {
+                throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, GeneralErrorMessage.UNAUTHORIZED)
+            }
             const workspace = await this.workspaceService.readWorkspaceById(data.workspace.id, queryRunner)
             if (!workspace) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, WorkspaceErrorMessage.WORKSPACE_NOT_FOUND)
-            data.workspace = workspace
 
-            const totalOrgUsers = await this.organizationUserService.readOrgUsersCountByOrgId(data.workspace.organizationId || '')
-            const subscriptionId = currentUser?.activeOrganizationSubscriptionId || ''
-
-            const role = await this.roleService.readRoleByRoleIdOrganizationId(data.role.id, data.workspace.organizationId, queryRunner)
+            const role = await this.roleService.readRoleByRoleIdOrganizationId(data.role.id, currentUser.activeOrganizationId, queryRunner)
             if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
-            data.role = role
+            const actor = bindInviteToActiveTenant(data, currentUser, workspace, role)
+            const actorId = actor.id
+
+            const totalOrgUsers = await this.organizationUserService.readOrgUsersCountByOrgId(actor.activeOrganizationId)
+            const subscriptionId = actor.activeOrganizationSubscriptionId || ''
+
             const user = await this.userService.readUserByEmail(data.user.email, queryRunner)
             if (!user) {
                 await checkUsageLimit('users', subscriptionId, getRunningExpressApp().usageCacheManager, totalOrgUsers + 1)
@@ -389,16 +463,18 @@ export class AccountService {
                 data.organizationUser.userId = data.user.id
                 const roleMember = await this.roleService.readGeneralRoleByName(GeneralRole.MEMBER, queryRunner)
                 data.organizationUser.roleId = roleMember.id
-                data.organizationUser.createdBy = data.user.createdBy
+                data.organizationUser.createdBy = actorId
+                data.organizationUser.updatedBy = actorId
                 data.organizationUser.status = OrganizationUserStatus.INVITED
                 data.organizationUser = await this.organizationUserService.createNewOrganizationUser(data.organizationUser, queryRunner)
 
-                workspace.updatedBy = data.user.createdBy
+                workspace.updatedBy = actorId
 
                 data.workspaceUser.workspaceId = data.workspace.id
                 data.workspaceUser.userId = data.user.id
                 data.workspaceUser.roleId = data.role.id
-                data.workspaceUser.createdBy = data.user.createdBy
+                data.workspaceUser.createdBy = actorId
+                data.workspaceUser.updatedBy = actorId
                 data.workspaceUser.status = WorkspaceUserStatus.INVITED
                 data.workspaceUser = await this.workspaceUserService.createNewWorkspaceUser(data.workspaceUser, queryRunner)
 
@@ -407,7 +483,6 @@ export class AccountService {
                 await this.workspaceService.saveWorkspace(workspace, queryRunner)
                 data.organizationUser = await this.organizationUserService.saveOrganizationUser(data.organizationUser, queryRunner)
                 data.workspaceUser = await this.workspaceUserService.saveWorkspaceUser(data.workspaceUser, queryRunner)
-                data.role = await this.roleService.saveRole(data.role, queryRunner)
                 await queryRunner.commitTransaction()
                 data.user = sanitizeUser(data.user)
 
@@ -424,12 +499,14 @@ export class AccountService {
                 data.organizationUser.userId = user.id
                 const roleMember = await this.roleService.readGeneralRoleByName(GeneralRole.MEMBER, queryRunner)
                 data.organizationUser.roleId = roleMember.id
-                data.organizationUser.createdBy = data.user.createdBy
+                data.organizationUser.createdBy = actorId
+                data.organizationUser.updatedBy = actorId
                 data.organizationUser.status = OrganizationUserStatus.INVITED
                 data.organizationUser = await this.organizationUserService.createNewOrganizationUser(data.organizationUser, queryRunner)
             } else {
                 data.organizationUser = organizationUser
             }
+            data.organizationUser.updatedBy = actorId
 
             let oldWorkspaceUser
             if (data.organizationUser.status === OrganizationUserStatus.INVITED) {
@@ -490,7 +567,7 @@ export class AccountService {
                     )
                 }
             } else {
-                data.organizationUser.updatedBy = data.user.createdBy
+                data.organizationUser.updatedBy = actorId
 
                 const dashboardLink = getSecureAppUrl()
                 await this.sendInviteEmailIfAllowed(
@@ -499,13 +576,14 @@ export class AccountService {
                 )
             }
 
-            workspace.updatedBy = data.user.createdBy
+            workspace.updatedBy = actorId
 
             data.workspaceUser.workspaceId = data.workspace.id
             data.workspaceUser.userId = user.id
             data.workspaceUser.roleId = data.role.id
-            data.workspaceUser.createdBy = data.user.createdBy
-            data.workspaceUser.status = WorkspaceUserStatus.INVITED
+            data.workspaceUser.createdBy = actorId
+            data.workspaceUser.updatedBy = actorId
+            data.workspaceUser.status = getWorkspaceMembershipStatusForInvite(data.organizationUser.status)
             data.workspaceUser = await this.workspaceUserService.createNewWorkspaceUser(data.workspaceUser, queryRunner)
 
             const personalWorkspaceRole = await this.roleService.readGeneralRoleByName(GeneralRole.PERSONAL_WORKSPACE, queryRunner)
@@ -517,7 +595,6 @@ export class AccountService {
             data.organizationUser = await this.organizationUserService.saveOrganizationUser(data.organizationUser, queryRunner)
             await this.workspaceService.saveWorkspace(workspace, queryRunner)
             data.workspaceUser = await this.workspaceUserService.saveWorkspaceUser(data.workspaceUser, queryRunner)
-            data.role = await this.roleService.saveRole(data.role, queryRunner)
             await queryRunner.commitTransaction()
 
             data.user = sanitizeUser(data.user)
@@ -546,29 +623,24 @@ export class AccountService {
             }
             const user = await this.userService.readUserByEmail(data.user.email, queryRunner)
             if (!user) {
+                compareHash(data.user.credential, '$2a$10$RQpMxf9B0nz0mqFLHjXDfepuYjdUVX7QxffRXLMSJs2TfDH8nJYC2')
                 await auditService.recordLoginActivity(data.user.email || '', LoginActivityCode.UNKNOWN_USER, 'Login Failed')
-                throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
+                throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, UserErrorMessage.INCORRECT_USER_EMAIL_OR_CREDENTIALS)
             }
             if (!user.credential) {
+                compareHash(data.user.credential, '$2a$10$RQpMxf9B0nz0mqFLHjXDfepuYjdUVX7QxffRXLMSJs2TfDH8nJYC2')
                 await auditService.recordLoginActivity(user.email || '', LoginActivityCode.INCORRECT_CREDENTIAL, 'Login Failed')
-                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_USER_CREDENTIAL)
+                throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, UserErrorMessage.INCORRECT_USER_EMAIL_OR_CREDENTIALS)
             }
             if (!compareHash(data.user.credential, user.credential)) {
                 await auditService.recordLoginActivity(user.email || '', LoginActivityCode.INCORRECT_CREDENTIAL, 'Login Failed')
                 throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, UserErrorMessage.INCORRECT_USER_EMAIL_OR_CREDENTIALS)
             }
 
-            // If the stored hash was created with fewer salt rounds than the current minimum
-            // (e.g. 5 before we increased to 10), rehash with the current rounds on successful login.
-            if (hashNeedsUpgrade(user.credential!, getPasswordSaltRounds())) {
-                try {
-                    const newHash = getHash(data.user.credential!)
-                    await this.userService.saveUser({ ...user, credential: newHash }, queryRunner)
-                } catch (upgradeError) {
-                    logger.warn(`Failed to upgrade password hash for user ${user.email}`, upgradeError)
-                }
+            const adminOnlyMode = isAdminOnlyModeEnabled()
+            if (adminOnlyMode && user.status !== UserStatus.ACTIVE) {
+                throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, ADMIN_ONLY_ERROR_MESSAGE)
             }
-
             if (user.status === UserStatus.UNVERIFIED) {
                 await auditService.recordLoginActivity(data.user.email || '', LoginActivityCode.REGISTRATION_PENDING, 'Login Failed')
                 throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, UserErrorMessage.USER_EMAIL_UNVERIFIED)
@@ -582,11 +654,61 @@ export class AccountService {
                     throw new InternalFlowiseError(StatusCodes.NOT_FOUND, WorkspaceUserErrorMessage.WORKSPACE_USER_NOT_FOUND)
                 }
             }
+
+            if (adminOnlyMode) {
+                const { organizationUser } = await this.organizationUserService.readOrganizationUserByWorkspaceIdUserId(
+                    wsUserOrUsers.workspaceId,
+                    user.id,
+                    queryRunner
+                )
+                const ownerRole = await this.roleService.readGeneralRoleByName(GeneralRole.OWNER, queryRunner)
+                assertAdminPasswordLoginAllowed({
+                    userStatus: user.status,
+                    workspaceStatus: wsUserOrUsers.status,
+                    organizationStatus: organizationUser?.status,
+                    workspaceRoleId: wsUserOrUsers.roleId,
+                    organizationRoleId: organizationUser?.roleId,
+                    ownerRoleId: ownerRole.id
+                })
+            }
+
+            // If the stored hash was created with fewer salt rounds than the current minimum
+            // (e.g. 5 before we increased to 10), rehash with the current rounds on successful login.
+            if (hashNeedsUpgrade(user.credential!, getPasswordSaltRounds())) {
+                try {
+                    const newHash = getHash(data.user.credential!)
+                    const upgradeResult = await queryRunner.manager
+                        .createQueryBuilder()
+                        .update(User)
+                        .set({ credential: newHash })
+                        .where('id = :id AND credential = :credential', { id: user.id, credential: user.credential })
+                        .execute()
+                    if (upgradeResult.affected === 1) {
+                        user.credential = newHash
+                    } else {
+                        const currentUser = await this.userService.readUserById(user.id, queryRunner)
+                        if (!currentUser?.credential || !compareHash(data.user.credential, currentUser.credential)) {
+                            throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, UserErrorMessage.INCORRECT_USER_EMAIL_OR_CREDENTIALS)
+                        }
+                        user.credential = currentUser.credential
+                    }
+                } catch (upgradeError) {
+                    // A concurrent credential change is an authentication failure, not a
+                    // best-effort rehash failure. Never let the rehash fallback turn an old
+                    // password into a successful login.
+                    if (upgradeError instanceof InternalFlowiseError && upgradeError.statusCode === StatusCodes.UNAUTHORIZED) {
+                        throw upgradeError
+                    }
+                    logger.warn(`Failed to upgrade password hash for user ${user.email}`, upgradeError)
+                }
+            }
+
             if (platform === Platform.ENTERPRISE) {
                 await auditService.recordLoginActivity(user.email, LoginActivityCode.LOGIN_SUCCESS, 'Login Success')
             }
 
-            const sanitizedUser = sanitizeUser(user)
+            const authVersion = createCredentialAuthVersion(user.credential, user.email)
+            const sanitizedUser: UserWithAuthVersion = { ...sanitizeUser(user), authVersion }
             return { user: sanitizedUser, workspaceDetails: wsUserOrUsers }
         } finally {
             await queryRunner.release()
@@ -599,56 +721,91 @@ export class AccountService {
         await queryRunner.connect()
         try {
             await queryRunner.startTransaction()
-            if (!data.user.tempToken) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
-            this.assertNotEmailChangeJwt(data.user.tempToken)
-            const user = await this.userService.readUserByToken(data.user.tempToken, queryRunner)
+            const expectedToken = data.user.tempToken
+            if (!expectedToken) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
+            this.assertNotEmailChangeJwt(expectedToken)
+            const user = await this.userService.readUserByToken(expectedToken, queryRunner)
             if (!user) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
-            data.user = user
-            data.user.tempToken = null
-            data.user.tokenExpiry = null
-            data.user.status = UserStatus.ACTIVE
-            data.user = await this.userService.saveUser(data.user, queryRunner)
+
+            if (!user.tokenExpiry) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
+            const tokenExpiryMoment = moment(user.tokenExpiry)
+            if (!tokenExpiryMoment.isValid() || moment().isAfter(tokenExpiryMoment)) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.EXPIRED_TEMP_TOKEN)
+            }
+
+            const updateResult = await queryRunner.manager.update(
+                User,
+                { id: user.id, tempToken: expectedToken },
+                { tempToken: null, tokenExpiry: null, status: UserStatus.ACTIVE, updatedBy: user.id }
+            )
+            if (updateResult.affected !== 1) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
+            }
             await queryRunner.commitTransaction()
+            data.user = { ...user, tempToken: null, tokenExpiry: null, status: UserStatus.ACTIVE, updatedBy: user.id }
         } catch (error) {
-            await queryRunner.rollbackTransaction()
+            if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
             throw error
         } finally {
-            await queryRunner.release()
+            if (!queryRunner.isReleased) await queryRunner.release()
         }
         data.user = sanitizeUser(data.user)
         return data
     }
 
     public async forgotPassword(data: AccountDTO) {
+        const startedAt = Date.now()
         data = this.initializeAccountDTO(data)
         if (!this.canSendTransactionalEmail()) {
             throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, GeneralErrorMessage.SMTP_NOT_CONFIGURED)
         }
         const queryRunner = this.dataSource.createQueryRunner()
         await queryRunner.connect()
+        let resetEmail: string | undefined
+        let resetLink: string | undefined
         try {
             await queryRunner.startTransaction()
             const user = await this.userService.readUserByEmail(data.user.email, queryRunner)
-            if (!user) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
+            if (!user) {
+                await queryRunner.commitTransaction()
+            } else {
+                const tempToken = generateTempToken()
+                const tokenExpiry = new Date()
+                const expiryInMins = process.env.PASSWORD_RESET_TOKEN_EXPIRY_IN_MINUTES
+                    ? parseInt(process.env.PASSWORD_RESET_TOKEN_EXPIRY_IN_MINUTES)
+                    : 15
+                tokenExpiry.setMinutes(tokenExpiry.getMinutes() + expiryInMins)
 
-            data.user = user
-            data.user.tempToken = generateTempToken()
-            const tokenExpiry = new Date()
-            const expiryInMins = process.env.PASSWORD_RESET_TOKEN_EXPIRY_IN_MINUTES
-                ? parseInt(process.env.PASSWORD_RESET_TOKEN_EXPIRY_IN_MINUTES)
-                : 15
-            tokenExpiry.setMinutes(tokenExpiry.getMinutes() + expiryInMins)
-            data.user.tokenExpiry = tokenExpiry
-            data.user = await this.userService.saveUser(data.user, queryRunner)
-            const resetLink = getSecureTokenLink('/reset-password', data.user.tempToken!)
-            await sendPasswordResetEmail(data.user.email!, resetLink)
-            await queryRunner.commitTransaction()
+                // Never persist the entity snapshot returned by the lookup: its
+                // credential/email/status may already be stale due to a concurrent
+                // account mutation. Token issuance owns only these recovery fields.
+                const updateResult = await queryRunner.manager.update(User, { id: user.id }, { tempToken, tokenExpiry, updatedBy: user.id })
+                if (updateResult.affected === 1) {
+                    resetEmail = user.email
+                    resetLink = getSecureTokenLink('/reset-password', tempToken)
+                }
+                await queryRunner.commitTransaction()
+            }
         } catch (error) {
-            await queryRunner.rollbackTransaction()
+            if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
             throw error
         } finally {
             await queryRunner.release()
         }
+
+        if (resetEmail && resetLink) {
+            queueMicrotask(() => {
+                void sendPasswordResetEmail(resetEmail!, resetLink!).catch((error: unknown) => {
+                    const errorName = error instanceof Error ? error.name : 'Error'
+                    logger.error('password_reset_email_delivery_failed', {
+                        event: 'password_reset_email_delivery_failed',
+                        errorName
+                    })
+                })
+            })
+        }
+
+        await waitForPasswordRecoveryResponseWindow(startedAt)
 
         return { message: 'success' }
     }
@@ -658,12 +815,13 @@ export class AccountService {
         const queryRunner = this.dataSource.createQueryRunner()
         await queryRunner.connect()
         try {
-            if (!data.user.tempToken) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
-            this.assertNotEmailChangeJwt(data.user.tempToken)
+            const expectedToken = data.user.tempToken
+            if (!expectedToken) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
+            this.assertNotEmailChangeJwt(expectedToken)
 
             const user = await this.userService.readUserByEmail(data.user.email, queryRunner)
             if (!user) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
-            if (!user.tempToken || user.tempToken !== data.user.tempToken)
+            if (!user.tempToken || user.tempToken !== expectedToken)
                 throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
 
             const tokenExpiry = user.tokenExpiry
@@ -682,17 +840,21 @@ export class AccountService {
             const salt = bcrypt.genSaltSync(getPasswordSaltRounds())
             // @ts-ignore
             const hash = bcrypt.hashSync(password, salt)
-            data.user = user
-            data.user.credential = hash
-            data.user.tempToken = null
-            data.user.tokenExpiry = null
-            data.user.status = UserStatus.ACTIVE
-
             await queryRunner.startTransaction()
-            data.user = await this.userService.saveUser(data.user, queryRunner)
+            const updateResult = await queryRunner.manager.update(
+                User,
+                { id: user.id, tempToken: expectedToken },
+                {
+                    credential: hash,
+                    tempToken: null,
+                    tokenExpiry: null,
+                    updatedBy: user.id
+                }
+            )
+            if (updateResult.affected !== 1) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
+            }
             await queryRunner.commitTransaction()
-
-            // Invalidate all sessions for this user after password reset
             await destroyAllSessionsForUser(user.id as string)
         } catch (error) {
             if (queryRunner && queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
@@ -911,34 +1073,11 @@ export class AccountService {
             throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.INVALID_TEMP_TOKEN)
         }
 
-        const queryRunner = this.dataSource.createQueryRunner()
-        await queryRunner.connect()
-        try {
-            const user = await this.userService.readUserById(userId, queryRunner)
-            if (!user || user.tempToken !== token) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
+        await this.userService.confirmEmailChange(userId, newEmail, token, (uid, email) =>
+            this.syncStripeCustomerEmailAfterUserEmailChange(uid, email)
+        )
 
-            const taken = await this.userService.readUserByEmail(newEmail, queryRunner)
-            if (taken && taken.id !== user.id) {
-                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, UserErrorMessage.USER_EMAIL_ALREADY_EXISTS)
-            }
-
-            await this.userService.updateUser(
-                {
-                    id: user.id,
-                    updatedBy: user.id,
-                    email: newEmail,
-                    tempToken: null,
-                    tokenExpiry: null
-                },
-                {
-                    onEmailChanged: (uid, em) => this.syncStripeCustomerEmailAfterUserEmailChange(uid, em)
-                }
-            )
-
-            return { message: 'success' }
-        } finally {
-            await queryRunner.release()
-        }
+        return { message: 'success' }
     }
 
     public async updateAuthenticatedUserProfile(

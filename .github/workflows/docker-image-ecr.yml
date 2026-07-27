@@ -1,78 +1,55 @@
-name: Docker Image CI - AWS ECR
+name: Docker Image CI - ECR Candidate (Build Only)
 
 on:
     workflow_dispatch:
-        inputs:
-            environment:
-                description: 'Environment to push the image to.'
-                required: true
-                default: 'dev'
-                type: choice
-                options:
-                    - dev
-                    - prod
-            node_version:
-                description: 'Node.js version to build this image with.'
-                type: choice
-                required: true
-                default: '24'
-                options:
-                    - '24'
-            tag_version:
-                description: 'Tag version of the image to be pushed.'
-                type: string
-                required: true
-                default: 'latest'
 
 permissions:
-    contents: read # Required for checkout
-    id-token: write # Required for AWS OIDC
+    contents: read
 
 jobs:
     docker:
         runs-on: ubuntu-latest
-        environment: ${{ github.event.inputs.environment }}
         steps:
-            - name: Set default values
-              id: defaults
-              run: |
-                  echo "node_version=${{ github.event.inputs.node_version || '24' }}" >> $GITHUB_OUTPUT
-                  echo "tag_version=${{ github.event.inputs.tag_version || 'latest' }}" >> $GITHUB_OUTPUT
-
             - name: Checkout
               uses: actions/checkout@v6.0.2
-
-            - name: Set up QEMU
-              uses: docker/setup-qemu-action@v4.0.0
-
+              with:
+                  fetch-depth: 0
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 10.26.0
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: '24.18.0'
+                  cache: 'pnpm'
+                  cache-dependency-path: pnpm-lock.yaml
+            - name: Verify source and release contracts
+              run: |
+                  before="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+                  pnpm install --frozen-lockfile
+                  after="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+                  test "$before" = "$after"
+                  pnpm test:release
+                  bash scripts/verify-release-source.sh
+                  bash scripts/verify-security.sh
             - name: Set up Docker Buildx
               uses: docker/setup-buildx-action@v4.0.0
-
-            - name: Configure AWS OIDC Credentials
-              uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
-              with:
-                  aws-region: ${{ secrets.AWS_REGION }}
-                  role-to-assume: ${{ secrets.AWS_OIDC_IAM_ROLE }}
-                  mask-aws-account-id: true
-                  unset-current-credentials: true
-
-            - name: Login to Amazon ECR
-              uses: aws-actions/amazon-ecr-login@v2
-
-            # -------------------------
-            # Build and push main image
-            # -------------------------
-            - name: Build and push main image
+            - name: Resolve immutable build metadata
+              id: metadata
+              run: |
+                  echo "source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+                  echo "revision=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+                  echo "version=git-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+                  echo "created=$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+            - name: Build ECR candidate without registry side effects
               uses: docker/build-push-action@v6.19.2
               with:
                   context: .
                   file: Dockerfile
+                  platforms: linux/amd64
+                  push: false
+                  tags: flowise-ecr-candidate:${{ steps.metadata.outputs.version }}
                   build-args: |
-                      NODE_VERSION=${{ steps.defaults.outputs.node_version }}
-                  platforms: linux/amd64,linux/arm64
-                  push: true
-                  tags: |
-                      ${{ format('{0}.dkr.ecr.{1}.amazonaws.com/flowise:{2}', 
-                          secrets.AWS_ACCOUNT_ID, 
-                          secrets.AWS_REGION, 
-                          steps.defaults.outputs.tag_version) }}
+                      BUILD_SOURCE=${{ steps.metadata.outputs.source }}
+                      BUILD_REVISION=${{ steps.metadata.outputs.revision }}
+                      BUILD_VERSION=${{ steps.metadata.outputs.version }}
+                      BUILD_CREATED=${{ steps.metadata.outputs.created }}

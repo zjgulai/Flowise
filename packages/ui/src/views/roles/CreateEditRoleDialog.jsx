@@ -348,7 +348,7 @@ const CreateEditRoleDialog = ({ show, dialogProps, onCancel, onConfirm, setError
                         />
                     </Box>
                     <div className='permissions-container'>
-                        <p>Permissions</p>
+                        <p>权限</p>
                         <div className='permissions-list-wrapper'>
                             {permissions &&
                                 Object.keys(permissions).map((category) => (

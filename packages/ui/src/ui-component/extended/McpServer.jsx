@@ -48,9 +48,9 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
     const endpointUrl = chatflowId ? `${window.location.origin}/api/v1/mcp/${chatflowId}` : ''
 
     const validateToolName = (name) => {
-        if (!name) return 'Tool name is required'
-        if (name.length > 64) return 'Tool name must be 64 characters or less'
-        if (!/^[A-Za-z0-9_-]+$/.test(name)) return 'Only letters, numbers, underscores, and hyphens allowed'
+        if (!name) return '工具名称必填'
+        if (name.length > 64) return '工具名称不得超过 64 个字符'
+        if (!/^[A-Za-z0-9_-]+$/.test(name)) return '仅允许字母、数字、下划线和连字符'
         return ''
     }
 
@@ -124,7 +124,7 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                         setToolName(resp.data.toolName || '')
                         setDescription(resp.data.description || '')
                         onStatusChange?.(resp.data.enabled)
-                        showSuccess('MCP Server settings saved')
+                        showSuccess('MCP 服务器设置已保存')
                     }
                 } else {
                     const resp = await mcpServerApi.createMcpServerConfig(dialogProps.chatflow.id, {
@@ -138,19 +138,19 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                         setDescription(resp.data.description || '')
                         setHasExistingConfig(true)
                         onStatusChange?.(resp.data.enabled)
-                        showSuccess('MCP Server settings saved')
+                        showSuccess('MCP 服务器设置已保存')
                     }
                 }
             } else {
                 await mcpServerApi.deleteMcpServerConfig(dialogProps.chatflow.id)
                 setMcpEnabled(false)
                 onStatusChange?.(false)
-                showSuccess('MCP Server disabled')
+                showSuccess('MCP 服务器已禁用')
             }
             await refreshChatflowStore()
         } catch (error) {
             showError(
-                `Failed to save MCP Server settings: ${
+                `保存 MCP 服务器设置失败: ${
                     typeof error.response?.data === 'object' ? error.response.data.message : error.response?.data || error.message
                 }`
             )
@@ -162,16 +162,15 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
     const handleCopyUrl = (url) => {
         if (!url) return
         navigator.clipboard.writeText(url)
-        showSuccess('URL copied to clipboard')
+        showSuccess('URL 已复制到剪贴板')
     }
 
     const handleRefreshCode = async () => {
         const confirmPayload = {
-            title: 'Rotate Token',
-            description:
-                'This will invalidate the existing token. Any clients using the old token will need to be updated with the new one. Are you sure?',
-            confirmButtonName: 'Rotate',
-            cancelButtonName: 'Cancel'
+            title: '轮换令牌',
+            description: '这将使现有令牌失效。使用旧令牌的客户端需要更新为新令牌。确定要继续吗？',
+            confirmButtonName: '轮换',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
         if (!isConfirmed) return
@@ -182,12 +181,12 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
             const resp = await mcpServerApi.refreshMcpToken(dialogProps.chatflow.id)
             if (resp.data) {
                 setToken(resp.data.token || '')
-                showSuccess('Token rotated successfully')
+                showSuccess('令牌轮换成功')
             }
             await refreshChatflowStore()
         } catch (error) {
             showError(
-                `Failed to rotate token: ${
+                `轮换令牌失败: ${
                     typeof error.response?.data === 'object' ? error.response.data.message : error.response?.data || error.message
                 }`
             )
@@ -206,7 +205,7 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
     useEffect(() => {
         if (getMcpServerConfigApi.error) {
             showError(
-                `Failed to load MCP Server configuration: ${
+                `加载 MCP 服务器配置失败: ${
                     typeof getMcpServerConfigApi.error.response?.data === 'object'
                         ? getMcpServerConfigApi.error.response.data.message
                         : getMcpServerConfigApi.error.response?.data || getMcpServerConfigApi.error.message
@@ -231,7 +230,7 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
     if (getMcpServerConfigApi.loading) {
         return (
             <Box sx={{ p: 2, textAlign: 'center' }}>
-                <Typography>Loading MCP Server configuration...</Typography>
+                <Typography>加载 MCP 服务器配置...</Typography>
             </Box>
         )
     }
@@ -239,7 +238,7 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
     return (
         <>
             <Box sx={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <SwitchInput label='Expose as MCP Server' onChange={handleToggle} value={mcpEnabled} disabled={loading} />
+                <SwitchInput label='公开为 MCP 服务器' onChange={handleToggle} value={mcpEnabled} disabled={loading} />
             </Box>
 
             {mcpEnabled && (
@@ -247,14 +246,14 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                     {/* Tool Name (required) */}
                     <Box>
                         <Typography sx={{ mb: 1 }}>
-                            Tool Name <span style={{ color: theme.palette.error.main }}>*</span>
+                            工具名称 <span style={{ color: theme.palette.error.main }}>*</span>
                         </Typography>
                         <OutlinedInput
                             fullWidth
                             size='small'
                             value={toolName}
                             onChange={(e) => handleToolNameChange(e.target.value)}
-                            placeholder='e.g. product_qa'
+                            placeholder='例如 product_qa'
                             error={!!toolNameError}
                             disabled={loading}
                         />
@@ -267,14 +266,14 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                             variant='caption'
                             sx={{ mt: 0.5, display: 'block', color: customization.isDarkMode ? theme.palette.grey[400] : 'text.secondary' }}
                         >
-                            Used as the MCP tool identifier by LLM clients.
+                            由 LLM 客户端用作 MCP 工具标识符。
                         </Typography>
                     </Box>
 
                     {/* Description (required) */}
                     <Box>
                         <Typography sx={{ mb: 1 }}>
-                            Description <span style={{ color: theme.palette.error.main }}>*</span>
+                            描述 <span style={{ color: theme.palette.error.main }}>*</span>
                         </Typography>
                         <OutlinedInput
                             fullWidth
@@ -283,21 +282,21 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                             rows={3}
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
-                            placeholder='e.g. Answers product catalog questions'
+                            placeholder='例如回答产品目录问题'
                             disabled={loading}
                         />
                         <Typography
                             variant='caption'
                             sx={{ mt: 0.5, display: 'block', color: customization.isDarkMode ? theme.palette.grey[400] : 'text.secondary' }}
                         >
-                            Helps LLMs understand when to route queries to this tool. Good descriptions improve tool selection accuracy.
+                            帮助 LLM 了解何时将查询路由到此工具。良好的描述可提高工具选择准确性。
                         </Typography>
                     </Box>
 
                     {/* MCP Endpoint URL — visible only when has token */}
                     {token && (
                         <Box>
-                            <Typography sx={{ mb: 1 }}>Streamable HTTP Endpoint</Typography>
+                            <Typography sx={{ mb: 1 }}>可流式 HTTP 端点</Typography>
                             <OutlinedInput
                                 fullWidth
                                 size='small'
@@ -312,7 +311,7 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                                         <IconButton
                                             size='small'
                                             onClick={() => handleCopyUrl(endpointUrl)}
-                                            title='Copy URL to clipboard'
+                                            title='复制 URL 到剪贴板'
                                             sx={{ color: customization.isDarkMode ? theme.palette.grey[300] : 'inherit' }}
                                         >
                                             <IconCopy size={18} />
@@ -328,10 +327,10 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                                     color: customization.isDarkMode ? theme.palette.grey[400] : 'text.secondary'
                                 }}
                             >
-                                For clients that support the Streamable HTTP transport
+                                适用于支持可流式 HTTP 传输的客户端
                             </Typography>
 
-                            <Typography sx={{ mb: 1, mt: 2 }}>Token (Bearer Token)</Typography>
+                            <Typography sx={{ mb: 1, mt: 2 }}>令牌（Bearer Token）</Typography>
                             <OutlinedInput
                                 fullWidth
                                 size='small'
@@ -348,9 +347,9 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                                             size='small'
                                             onClick={() => {
                                                 navigator.clipboard.writeText(token)
-                                                showSuccess('Token copied to clipboard')
+                                                showSuccess('令牌已复制到剪贴板')
                                             }}
-                                            title='Copy token'
+                                            title='复制令牌'
                                             sx={{ color: customization.isDarkMode ? theme.palette.grey[300] : 'inherit' }}
                                         >
                                             <IconCopy size={18} />
@@ -358,7 +357,7 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                                         <IconButton
                                             size='small'
                                             onClick={handleRefreshCode}
-                                            title='Rotate token'
+                                            title='轮换令牌'
                                             disabled={loading}
                                             sx={{ color: customization.isDarkMode ? theme.palette.grey[300] : 'inherit' }}
                                         >
@@ -380,8 +379,7 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                                     })
                                 }}
                             >
-                                Use the URL above as the MCP endpoint and pass the token as a Bearer token in the Authorization header.
-                                Configure your MCP client with:{' '}
+                                将上述 URL 用作 MCP 端点，并在 Authorization 请求头中将令牌作为 Bearer 令牌传递。配置您的 MCP 客户端时使用：{' '}
                                 <code
                                     style={{
                                         display: 'block',
@@ -403,7 +401,7 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                     onClick={onSave}
                     sx={{ minWidth: 100 }}
                 >
-                    {loading ? 'Saving...' : 'Save'}
+                    {loading ? '保存中...' : '保存'}
                 </StyledButton>
             </Box>
         </>

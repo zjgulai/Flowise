@@ -173,7 +173,7 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
                                     }}
                                 />
                             </StyledTableCell>
-                            <StyledTableCell>Status</StyledTableCell>
+                            <StyledTableCell>状态</StyledTableCell>
                             <StyledTableCell>
                                 <TableSortLabel
                                     active={orderBy === 'updatedDate'}
@@ -188,7 +188,7 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
                                     Agentflow
                                 </TableSortLabel>
                             </StyledTableCell>
-                            <StyledTableCell>Session</StyledTableCell>
+                            <StyledTableCell>会话</StyledTableCell>
                             <StyledTableCell>
                                 <TableSortLabel
                                     active={orderBy === 'createdDate'}

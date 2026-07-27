@@ -152,7 +152,7 @@ const CustomAssistantConfigurePreview = () => {
 
     const displayWarning = () => {
         enqueueSnackbar({
-            message: 'Please fill in all mandatory fields.',
+            message: '请填写所有必填字段。',
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'warning',
@@ -512,14 +512,14 @@ const CustomAssistantConfigurePreview = () => {
             handleDeleteFlow()
         } else if (setting === 'viewMessages') {
             setViewMessagesDialogProps({
-                title: 'View Messages',
+                title: '查看消息',
                 chatflow: canvas.chatflow,
                 isChatflow: false
             })
             setViewMessagesDialogOpen(true)
         } else if (setting === 'viewLeads') {
             setViewLeadsDialogProps({
-                title: 'View Leads',
+                title: '查看线索',
                 chatflow: canvas.chatflow
             })
             setViewLeadsDialogOpen(true)
@@ -570,7 +570,7 @@ const CustomAssistantConfigurePreview = () => {
         const dialogProps = {
             value,
             inputParam: {
-                label: 'Instructions',
+                label: '指令',
                 name: 'instructions',
                 type: 'string'
             },
@@ -864,7 +864,7 @@ const CustomAssistantConfigurePreview = () => {
                                                         size='small'
                                                         color='secondary'
                                                         aria-label='back'
-                                                        title='Back'
+                                                        title='返回'
                                                         onClick={() => navigate(-1)}
                                                     >
                                                         <IconArrowLeft />
@@ -919,7 +919,7 @@ const CustomAssistantConfigurePreview = () => {
                                                     </ButtonBase>
                                                 </Available>
                                                 {customAssistantFlowId && !loadingAssistant && (
-                                                    <ButtonBase ref={settingsRef} title='Settings' sx={{ borderRadius: '50%' }}>
+                                                    <ButtonBase ref={settingsRef} title='设置' sx={{ borderRadius: '50%' }}>
                                                         <Avatar
                                                             variant='rounded'
                                                             sx={{
@@ -941,7 +941,7 @@ const CustomAssistantConfigurePreview = () => {
                                                 )}
                                                 {!customAssistantFlowId && !loadingAssistant && (
                                                     <Available permission={'assistants:delete'}>
-                                                        <ButtonBase ref={settingsRef} title='Delete Assistant' sx={{ borderRadius: '50%' }}>
+                                                        <ButtonBase ref={settingsRef} title='删除助手' sx={{ borderRadius: '50%' }}>
                                                             <Avatar
                                                                 variant='rounded'
                                                                 sx={{
@@ -1022,7 +1022,7 @@ const CustomAssistantConfigurePreview = () => {
                                                         height: 25,
                                                         width: 25
                                                     }}
-                                                    title='Expand'
+                                                    title='展开'
                                                     color='secondary'
                                                     onClick={() => onExpandDialogClicked(customAssistantInstruction)}
                                                 >
@@ -1142,7 +1142,7 @@ const CustomAssistantConfigurePreview = () => {
                                                         />
                                                         <Stack sx={{ mt: 2, position: 'relative', alignItems: 'center' }} direction='row'>
                                                             <Typography>Return Source Documents</Typography>
-                                                            <TooltipWithParser title='Return the actual source documents that were used to answer the question' />
+                                                            <TooltipWithParser title='返回用于回答问题的实际源文档' />
                                                         </Stack>
                                                         <SwitchInput
                                                             value={ds.returnSourceDocuments ?? false}
@@ -1190,8 +1190,8 @@ const CustomAssistantConfigurePreview = () => {
                                             }}
                                         >
                                             <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                                                <Typography>Tools</Typography>
-                                                <TooltipWithParser title='Tools are actions that your assistant can perform' />
+                                                <Typography>工具</Typography>
+                                                <TooltipWithParser title='工具是您的助手可以执行的操作' />
                                             </Stack>
                                             {selectedTools.map((tool, index) => {
                                                 return (
@@ -1290,7 +1290,7 @@ const CustomAssistantConfigurePreview = () => {
                                             <Available permission={'assistants:create'}>
                                                 <Button
                                                     fullWidth
-                                                    title='Save Assistant'
+                                                    title='保存助手'
                                                     sx={{
                                                         mt: 1,
                                                         mb: 1,

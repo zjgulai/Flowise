@@ -1,5 +1,5 @@
 import { OTLPTraceExporter as ProtoOTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
-import { getPhoenixTracer, AnalyticHandler } from './handler'
+import { getPhoenixTracer, AnalyticHandler, createTracePropagator } from './handler'
 import { resetTracingEnvCache } from './tracingEnv'
 
 jest.mock('@opentelemetry/exporter-trace-otlp-proto', () => {
@@ -8,6 +8,22 @@ jest.mock('@opentelemetry/exporter-trace-otlp-proto', () => {
             return { args }
         })
     }
+})
+
+describe('OpenTelemetry propagation compatibility', () => {
+    it('preserves the W3C trace context and baggage defaults', () => {
+        expect(createTracePropagator(undefined).fields()).toEqual(expect.arrayContaining(['traceparent', 'tracestate', 'baggage']))
+    })
+
+    it('supports B3 single, B3 multi-header, and Jaeger environment values', () => {
+        expect(createTracePropagator('b3,b3multi,jaeger').fields()).toEqual(
+            expect.arrayContaining(['b3', 'x-b3-traceid', 'x-b3-spanid', 'uber-trace-id'])
+        )
+    })
+
+    it('fails closed when propagation is explicitly disabled', () => {
+        expect(createTracePropagator('none,b3').fields()).toEqual([])
+    })
 })
 
 // Track every RunTree constructed so tests can assert per-instance lifecycle calls.

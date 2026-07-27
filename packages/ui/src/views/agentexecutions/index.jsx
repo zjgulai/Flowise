@@ -243,11 +243,11 @@ const AgentExecutions = () => {
                         <Grid container spacing={2} alignItems='center'>
                             <Grid item xs={12} md={2}>
                                 <FormControl fullWidth size='small'>
-                                    <InputLabel id='state-select-label'>State</InputLabel>
+                                    <InputLabel id='state-select-label'>状态</InputLabel>
                                     <Select
                                         labelId='state-select-label'
                                         value={filters.state}
-                                        label='State'
+                                        label='状态'
                                         onChange={(e) => handleFilterChange('state', e.target.value)}
                                         size='small'
                                         sx={{
@@ -259,13 +259,13 @@ const AgentExecutions = () => {
                                             }
                                         }}
                                     >
-                                        <MenuItem value=''>All</MenuItem>
+                                        <MenuItem value=''>全部</MenuItem>
                                         <MenuItem value='INPROGRESS'>In Progress</MenuItem>
-                                        <MenuItem value='FINISHED'>Finished</MenuItem>
-                                        <MenuItem value='ERROR'>Error</MenuItem>
-                                        <MenuItem value='TERMINATED'>Terminated</MenuItem>
-                                        <MenuItem value='TIMEOUT'>Timeout</MenuItem>
-                                        <MenuItem value='STOPPED'>Stopped</MenuItem>
+                                        <MenuItem value='FINISHED'>已完成</MenuItem>
+                                        <MenuItem value='ERROR'>错误</MenuItem>
+                                        <MenuItem value='TERMINATED'>已终止</MenuItem>
+                                        <MenuItem value='TIMEOUT'>超时</MenuItem>
+                                        <MenuItem value='STOPPED'>已停止</MenuItem>
                                     </Select>
                                 </FormControl>
                             </Grid>
@@ -281,7 +281,7 @@ const AgentExecutions = () => {
                                     customInput={
                                         <TextField
                                             size='small'
-                                            label='Start date'
+                                            label='开始日期'
                                             fullWidth
                                             sx={{
                                                 '& .MuiOutlinedInput-notchedOutline': {
@@ -319,7 +319,7 @@ const AgentExecutions = () => {
                             <Grid sx={{ ml: -1 }} item xs={12} md={2}>
                                 <TextField
                                     fullWidth
-                                    label='Agentflow'
+                                    label='智能体流程'
                                     value={filters.agentflowName}
                                     onChange={(e) => handleFilterChange('agentflowName', e.target.value)}
                                     size='small'
@@ -333,7 +333,7 @@ const AgentExecutions = () => {
                             <Grid sx={{ ml: -1 }} item xs={12} md={2}>
                                 <TextField
                                     fullWidth
-                                    label='Session ID'
+                                    label='会话 ID'
                                     value={filters.sessionId}
                                     onChange={(e) => handleFilterChange('sessionId', e.target.value)}
                                     size='small'
@@ -453,7 +453,7 @@ const AgentExecutions = () => {
                                     alt='execution_empty'
                                 />
                             </Box>
-                            <div>No Executions Yet</div>
+                            <div>暂无执行记录</div>
                         </Stack>
                     )}
                 </Stack>

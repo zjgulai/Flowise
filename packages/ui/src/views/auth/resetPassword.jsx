@@ -36,28 +36,28 @@ const ResetPasswordPage = () => {
     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
 
     const emailInput = {
-        label: 'Email',
+        label: '邮箱',
         name: 'email',
         type: 'email',
         placeholder: 'user@company.com'
     }
 
     const passwordInput = {
-        label: 'Password',
+        label: '密码',
         name: 'password',
         type: 'password',
         placeholder: '********'
     }
 
     const confirmPasswordInput = {
-        label: 'Confirm Password',
+        label: '确认密码',
         name: 'confirmPassword',
         type: 'password',
         placeholder: '********'
     }
 
     const resetPasswordInput = {
-        label: 'Reset Token',
+        label: '重置令牌',
         name: 'resetToken',
         type: 'text'
     }
@@ -88,7 +88,7 @@ const ResetPasswordPage = () => {
             validationErrors.push('Token cannot be left blank!')
         }
         if (newPasswordVal !== confirmPasswordVal) {
-            validationErrors.push('New Password and Confirm Password do not match.')
+            validationErrors.push('新密码与确认密码不一致。')
         }
         const passwordErrors = validatePassword(newPasswordVal)
         if (passwordErrors.length > 0) {
@@ -156,7 +156,7 @@ const ResetPasswordPage = () => {
     return (
         <>
             <MainCard>
-                <Stack flexDirection='column' sx={{ maxWidth: '480px', gap: 3 }}>
+                <Stack flexDirection='column' sx={{ width: '100%', maxWidth: '480px', gap: 3 }}>
                     {authErrors && authErrors.length > 0 && (
                         <Alert icon={<IconExclamationCircle />} variant='filled' severity='error'>
                             <ul style={{ margin: 0 }}>
@@ -172,10 +172,10 @@ const ResetPasswordPage = () => {
                         </Alert>
                     )}
                     <Stack sx={{ gap: 1 }}>
-                        <Typography variant='h1'>Reset Password</Typography>
+                        <Typography variant='h1'>重置密码</Typography>
                         <Typography variant='body2' sx={{ color: theme.palette.grey[600] }}>
                             <Link style={{ color: theme.palette.primary.main }} to='/signin'>
-                                Back to Login
+                                返回登录
                             </Link>
                             .
                         </Typography>
@@ -200,7 +200,7 @@ const ResetPasswordPage = () => {
                             <Box>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Reset Token<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        重置令牌<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <div style={{ flexGrow: 1 }}></div>
                                 </div>
@@ -222,7 +222,7 @@ const ResetPasswordPage = () => {
                             <Box>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        New Password<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        新密码<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <Typography align='left'></Typography>
                                     <div style={{ flexGrow: 1 }}></div>
@@ -243,7 +243,7 @@ const ResetPasswordPage = () => {
                             <Box>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Confirm Password<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        确认密码<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <div style={{ flexGrow: 1 }}></div>
                                 </div>
@@ -259,7 +259,7 @@ const ResetPasswordPage = () => {
                             </Box>
 
                             <StyledButton variant='contained' style={{ borderRadius: 12, height: 40, marginRight: 5 }} type='submit'>
-                                Update Password
+                                更新密码
                             </StyledButton>
                         </Stack>
                     </form>

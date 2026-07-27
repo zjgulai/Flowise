@@ -274,7 +274,6 @@ const Canvas = () => {
     const onDrop = useCallback(
         (event) => {
             event.preventDefault()
-            const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect()
             let nodeData = event.dataTransfer.getData('application/reactflow')
 
             // check if the dropped element is valid
@@ -284,9 +283,9 @@ const Canvas = () => {
 
             nodeData = JSON.parse(nodeData)
 
-            const position = reactFlowInstance.project({
-                x: event.clientX - reactFlowBounds.left - 100,
-                y: event.clientY - reactFlowBounds.top - 50
+            const position = reactFlowInstance.screenToFlowPosition({
+                x: event.clientX - 100,
+                y: event.clientY - 50
             })
 
             const newNodeId = getUniqueNodeId(nodeData, reactFlowInstance.getNodes())
@@ -617,8 +616,8 @@ const Canvas = () => {
                                         onClick={() => {
                                             setIsSnappingEnabled(!isSnappingEnabled)
                                         }}
-                                        title='toggle snapping'
-                                        aria-label='toggle snapping'
+                                        title='切换吸附'
+                                        aria-label='切换吸附'
                                     >
                                         {isSnappingEnabled ? <IconMagnetFilled /> : <IconMagnetOff />}
                                     </button>
@@ -627,8 +626,8 @@ const Canvas = () => {
                                         onClick={() => {
                                             setIsBackgroundEnabled(!isBackgroundEnabled)
                                         }}
-                                        title='toggle background'
-                                        aria-label='toggle background'
+                                        title='切换背景'
+                                        aria-label='切换背景'
                                     >
                                         {isBackgroundEnabled ? <IconArtboard /> : <IconArtboardOff />}
                                     </button>
@@ -648,8 +647,8 @@ const Canvas = () => {
                                             }
                                         }}
                                         size='small'
-                                        aria-label='sync'
-                                        title='Sync Nodes'
+                                        aria-label='同步'
+                                        title='同步节点'
                                         onClick={() => syncNodes()}
                                     >
                                         <IconRefreshAlert />

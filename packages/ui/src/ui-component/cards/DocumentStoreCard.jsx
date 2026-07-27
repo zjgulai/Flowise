@@ -103,7 +103,7 @@ const DocumentStoreCard = ({ data, images, onClick, hasActions }) => {
                             }}
                         >
                             <IconVectorBezier2 style={{ marginRight: 5 }} size={15} />
-                            {data.whereUsed?.length ?? 0} {data.whereUsed?.length <= 1 ? 'flow' : 'flows'}
+                            {data.whereUsed?.length ?? 0} 个流程
                         </div>
                         <div
                             style={{
@@ -124,7 +124,7 @@ const DocumentStoreCard = ({ data, images, onClick, hasActions }) => {
                             }}
                         >
                             <IconLanguage style={{ marginRight: 5 }} size={15} />
-                            {kFormatter(data.totalChars ?? 0)} chars
+                            {kFormatter(data.totalChars ?? 0)} 个字符
                         </div>
                         <div
                             style={{
@@ -144,7 +144,7 @@ const DocumentStoreCard = ({ data, images, onClick, hasActions }) => {
                             }}
                         >
                             <IconScissors style={{ marginRight: 5 }} size={15} />
-                            {kFormatter(data.totalChunks ?? 0)} chunks
+                            {kFormatter(data.totalChunks ?? 0)} 个分块
                         </div>
                     </Grid>
                     {images && images.length > 0 && (
@@ -173,7 +173,7 @@ const DocumentStoreCard = ({ data, images, onClick, hasActions }) => {
                             ))}
                             {images.length > 3 && (
                                 <Typography sx={{ alignItems: 'center', display: 'flex', fontSize: '.9rem', fontWeight: 200 }}>
-                                    + {images.length - 3} More
+                                    + {images.length - 3} 更多
                                 </Typography>
                             )}
                         </Box>

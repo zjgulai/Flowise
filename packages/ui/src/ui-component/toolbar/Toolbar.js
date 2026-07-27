@@ -13,7 +13,7 @@ export default function Toolbar() {
 
     return (
         <ToggleButtonGroup value={view} exclusive onChange={handleChange}>
-            <StyledToggleButton variant='contained' value='list' aria-label='list'>
+            <StyledToggleButton variant='contained' value='list' aria-label='列表'>
                 <ViewListIcon />
             </StyledToggleButton>
             <StyledToggleButton variant='contained' value='module' aria-label='module'>

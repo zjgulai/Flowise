@@ -14,14 +14,14 @@ import { IconRobotFace, IconBrandOpenai } from '@tabler/icons-react'
 
 const cards = [
     {
-        title: 'Custom Assistant',
+        title: '自定义助手',
         description: 'Create custom assistant using your choice of LLMs',
         icon: <IconRobotFace />,
         iconText: 'Custom',
         gradient: 'linear-gradient(135deg, #fff8e14e 0%, #ffcc802f 100%)'
     },
     {
-        title: 'OpenAI Assistant',
+        title: 'OpenAI 助手',
         description:
             'Create assistant using OpenAI Assistant API. This option is being deprecated; consider using Custom Assistant instead.',
         icon: <IconBrandOpenai />,
@@ -118,10 +118,7 @@ const Assistants = () => {
         <>
             <MainCard>
                 <Stack flexDirection='column' sx={{ gap: 3 }}>
-                    <ViewHeader
-                        title='Assistants'
-                        description='Chat assistants with instructions, tools, and files to respond to user queries'
-                    />
+                    <ViewHeader title='助手' description='Chat assistants with instructions, tools, and files to respond to user queries' />
                     <FeatureCards />
                 </Stack>
             </MainCard>

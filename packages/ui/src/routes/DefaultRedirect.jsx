@@ -1,6 +1,7 @@
 import { useAuth } from '@/hooks/useAuth'
 import { useConfig } from '@/store/context/ConfigContext'
 import { useSelector } from 'react-redux'
+import { Navigate } from 'react-router'
 
 // Import all view components
 import Account from '@/views/account'
@@ -32,9 +33,11 @@ import Workspaces from '@/views/workspace'
  */
 export const DefaultRedirect = () => {
     const { hasPermission, hasDisplay } = useAuth()
-    const { isOpenSource } = useConfig()
+    const { config, isOpenSource, loading } = useConfig()
     const isGlobal = useSelector((state) => state.auth.isGlobal)
     const isAuthenticated = useSelector((state) => state.auth.isAuthenticated)
+
+    if (loading) return null
 
     // Define the order of routes to check (based on the menu order in dashboard.js)
     const routesToCheck = [
@@ -65,7 +68,7 @@ export const DefaultRedirect = () => {
 
     // If user is not authenticated, show login page
     if (!isAuthenticated) {
-        return <Login />
+        return config.PUBLIC_LOGIN_ENABLED === false ? <Navigate to='/access-restricted' replace /> : <Login />
     }
 
     // For open source, show chatflows (no permission checks)

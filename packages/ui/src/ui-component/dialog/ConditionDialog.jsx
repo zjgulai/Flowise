@@ -51,7 +51,7 @@ const ConditionDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 <>
                     {inputParam && inputParam.type.includes('conditionFunction') && (
                         <>
-                            <Tabs value={tabValue} onChange={(event, val) => setTabValue(val)} aria-label='tabs' variant='fullWidth'>
+                            <Tabs value={tabValue} onChange={(event, val) => setTabValue(val)} aria-label='标签页' variant='fullWidth'>
                                 <TabsList>
                                     {inputParam.tabs.map((inputChildParam, index) => (
                                         <Tab key={index}>{inputChildParam.label}</Tab>

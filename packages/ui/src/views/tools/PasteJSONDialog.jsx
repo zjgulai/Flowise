@@ -24,7 +24,7 @@ const PasteJSONDialog = ({ show, onCancel, onConfirm, customization }) => {
             onConfirm(formattedData)
             setError('')
         } catch (err) {
-            setError('Invalid JSON format. Please check your input.')
+            setError('无效的 JSON 格式，请检查您的输入。')
         }
     }
 
@@ -46,7 +46,7 @@ const PasteJSONDialog = ({ show, onCancel, onConfirm, customization }) => {
     const component = show ? (
         <Dialog fullWidth maxWidth='md' open={show} onClose={onCancel} aria-labelledby='paste-json-dialog-title'>
             <DialogTitle sx={{ fontSize: '1rem' }} id='paste-json-dialog-title'>
-                Paste JSON Schema
+                粘贴 JSON Schema
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ mt: 2 }}>
@@ -66,9 +66,9 @@ const PasteJSONDialog = ({ show, onCancel, onConfirm, customization }) => {
                 </Box>
             </DialogContent>
             <DialogActions>
-                <Button onClick={onCancel}>Cancel</Button>
+                <Button onClick={onCancel}>取消</Button>
                 <StyledButton variant='contained' onClick={handleConfirm}>
-                    Confirm
+                    确认
                 </StyledButton>
             </DialogActions>
         </Dialog>

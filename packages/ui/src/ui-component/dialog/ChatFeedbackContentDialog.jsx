@@ -54,7 +54,7 @@ const ChatFeedbackContentDialog = ({ show, onCancel, onConfirm }) => {
                         multiline={true}
                         name='feedbackContentInput'
                         onChange={onChange}
-                        placeholder='What do you think of the response?'
+                        placeholder='您觉得回复如何？'
                         rows={4}
                         value={feedbackContent}
                         sx={{ width: '100%' }}
@@ -62,7 +62,7 @@ const ChatFeedbackContentDialog = ({ show, onCancel, onConfirm }) => {
                 </Box>
             </DialogContent>
             <DialogActions>
-                <Button onClick={onCancel}>Cancel</Button>
+                <Button onClick={onCancel}>取消</Button>
                 <StyledButton variant='contained' onClick={onSave}>
                     Submit Feedback
                 </StyledButton>

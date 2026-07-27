@@ -141,7 +141,7 @@ const APICodeDialog = ({ show, dialogProps, onCancel }) => {
 
         const options = [
             {
-                label: 'No Authorization',
+                label: '无授权',
                 name: ''
             }
         ]
@@ -363,7 +363,7 @@ def query(payload):
     return response.json()
 
 output = query({
-    "question": "Hey, how are you?",
+    "question": "嗨，你好吗？",
 })
 `
         } else if (codeLang === 'JavaScript') {
@@ -382,14 +382,14 @@ output = query({
     return result;
 }
 
-query({"question": "Hey, how are you?"}).then((response) => {
+query({"question": "嗨，你好吗？"}).then((response) => {
     console.log(response);
 });
 `
         } else if (codeLang === 'cURL') {
             return `curl ${baseURL}/api/v1/prediction/${dialogProps.chatflowid} \\
      -X POST \\
-     -d '{"question": "Hey, how are you?"}' \\
+     -d '{"question": "嗨，你好吗？"}' \\
      -H "Content-Type: application/json"`
         }
         return ''
@@ -408,7 +408,7 @@ def query(payload):
     return response.json()
     
 output = query({
-    "question": "Hey, how are you?",
+    "question": "嗨，你好吗？",
 })
 `
         } else if (codeLang === 'JavaScript') {
@@ -428,14 +428,14 @@ output = query({
     return result;
 }
 
-query({"question": "Hey, how are you?"}).then((response) => {
+query({"question": "嗨，你好吗？"}).then((response) => {
     console.log(response);
 });
 `
         } else if (codeLang === 'cURL') {
             return `curl ${baseURL}/api/v1/prediction/${dialogProps.chatflowid} \\
      -X POST \\
-     -d '{"question": "Hey, how are you?"}' \\
+     -d '{"question": "嗨，你好吗？"}' \\
      -H "Content-Type: application/json" \\
      -H "Authorization: Bearer ${selectedApiKey?.apiKey}"`
         }
@@ -481,7 +481,7 @@ query({"question": "Hey, how are you?"}).then((response) => {
 
 API_URL = "${baseURL}/api/v1/prediction/${dialogProps.chatflowid}"
 
-# use form data to upload files
+# 使用表单数据上传文件
 form_data = {
     "files": ${`('example${fileType}', open('example${fileType}', 'rb'))`}
 }
@@ -494,7 +494,7 @@ def query(form_data):
 output = query(form_data)
 `
         } else if (codeLang === 'JavaScript') {
-            return `// use FormData to upload files
+            return `// 使用 FormData 上传文件
 let formData = new FormData();
 ${getConfigExamplesForJS(configData, 'formData')}
 async function query(formData) {
@@ -533,7 +533,7 @@ query(formData).then((response) => {
 API_URL = "${baseURL}/api/v1/prediction/${dialogProps.chatflowid}"
 headers = {"Authorization": "Bearer ${selectedApiKey?.apiKey}"}
 
-# use form data to upload files
+# 使用表单数据上传文件
 form_data = {
     "files": ${`('example${fileType}', open('example${fileType}', 'rb'))`}
 }
@@ -546,7 +546,7 @@ def query(form_data):
 output = query(form_data)
 `
         } else if (codeLang === 'JavaScript') {
-            return `// use FormData to upload files
+            return `// 使用 FormData 上传文件
 let formData = new FormData();
 ${getConfigExamplesForJS(configData, 'formData')}
 async function query(formData) {
@@ -588,7 +588,7 @@ def query(payload):
     return response.json()
 
 output = query({
-    "question": "Hey, how are you?",
+    "question": "嗨，你好吗？",
     "overrideConfig": {${getConfigExamplesForPython(configData, 'json')}
     }
 })
@@ -610,7 +610,7 @@ output = query({
 }
 
 query({
-  "question": "Hey, how are you?",
+  "question": "嗨，你好吗？",
   "overrideConfig": {${getConfigExamplesForJS(configData, 'json')}
   }
 }).then((response) => {
@@ -620,7 +620,7 @@ query({
         } else if (codeLang === 'cURL') {
             return `curl ${baseURL}/api/v1/prediction/${dialogProps.chatflowid} \\
      -X POST \\
-     -d '{"question": "Hey, how are you?", "overrideConfig": {${getConfigExamplesForCurl(configData, 'json')}}' \\
+     -d '{"question": "嗨，你好吗？", "overrideConfig": {${getConfigExamplesForCurl(configData, 'json')}}' \\
      -H "Content-Type: application/json"`
         }
         return ''
@@ -640,7 +640,7 @@ def query(payload):
     return response.json()
 
 output = query({
-    "question": "Hey, how are you?",
+    "question": "嗨，你好吗？",
     "overrideConfig": {${getConfigExamplesForPython(configData, 'json')}
     }
 })
@@ -663,7 +663,7 @@ output = query({
 }
 
 query({
-  "question": "Hey, how are you?",
+  "question": "嗨，你好吗？",
   "overrideConfig": {${getConfigExamplesForJS(configData, 'json')}
   }
 }).then((response) => {
@@ -673,7 +673,7 @@ query({
         } else if (codeLang === 'cURL') {
             return `curl ${baseURL}/api/v1/prediction/${dialogProps.chatflowid} \\
      -X POST \\
-     -d '{"question": "Hey, how are you?", "overrideConfig": {${getConfigExamplesForCurl(configData, 'json')}}' \\
+     -d '{"question": "嗨，你好吗？", "overrideConfig": {${getConfigExamplesForCurl(configData, 'json')}}' \\
      -H "Content-Type: application/json" \\
      -H "Authorization: Bearer ${selectedApiKey?.apiKey}"`
         }
@@ -683,7 +683,7 @@ query({
     const getMultiConfigCodeWithFormData = (codeLang) => {
         if (dialogProps.isAgentflowV2) {
             if (codeLang === 'Python') {
-                return `# Specify multiple values for a config parameter by specifying the node id
+                return `# 通过指定节点 ID 为配置参数设置多个值
 body_data = {
     "agentModelConfig": {
         "agentAgentflow_0": {
@@ -695,7 +695,7 @@ body_data = {
     }
 }`
             } else if (codeLang === 'JavaScript') {
-                return `// Specify multiple values for a config parameter by specifying the node id
+                return `// 通过指定节点 ID 为配置参数设置多个值
 formData.append("agentModelConfig[agentAgentflow_0][openAIApiKey]", "sk-my-openai-1st-key")
 formData.append("agentModelConfig[agentAgentflow_1][openAIApiKey]", "sk-my-openai-2nd-key")`
             } else if (codeLang === 'cURL') {
@@ -704,7 +704,7 @@ formData.append("agentModelConfig[agentAgentflow_1][openAIApiKey]", "sk-my-opena
             }
         } else {
             if (codeLang === 'Python') {
-                return `# Specify multiple values for a config parameter by specifying the node id
+                return `# 通过指定节点 ID 为配置参数设置多个值
 body_data = {
     "openAIApiKey": {
         "chatOpenAI_0": "sk-my-openai-1st-key",
@@ -712,7 +712,7 @@ body_data = {
     }
 }`
             } else if (codeLang === 'JavaScript') {
-                return `// Specify multiple values for a config parameter by specifying the node id
+                return `// 通过指定节点 ID 为配置参数设置多个值
 formData.append("openAIApiKey[chatOpenAI_0]", "sk-my-openai-1st-key")
 formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
             } else if (codeLang === 'cURL') {
@@ -836,7 +836,7 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                         )}
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <div style={{ flex: 80 }}>
-                                <Tabs value={value} onChange={handleChange} aria-label='tabs'>
+                                <Tabs value={value} onChange={handleChange} aria-label='标签页'>
                                     {codes.map((codeLang, index) => (
                                         <Tab
                                             icon={
@@ -871,9 +871,9 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                             <TabPanel key={index} value={value} index={index}>
                                 {(codeLang === 'Embed' || codeLang === 'Share Chatbot') && chatflowApiKeyId && (
                                     <>
-                                        <p>You cannot use API key while embedding/sharing chatbot.</p>
+                                        <p>嵌入/分享聊天机器人时无法使用 API 密钥。</p>
                                         <p>
-                                            Please select <b>&quot;No Authorization&quot;</b> from the dropdown at the top right corner.
+                                            请从右上角下拉菜单中选择 <b>“无需授权”</b>。
                                         </p>
                                     </>
                                 )}
@@ -887,12 +887,11 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                             showLineNumbers={false}
                                             wrapLines
                                         />
-                                        <CheckboxInput label='Show Override Config' value={checkboxVal} onChange={onCheckBoxChanged} />
+                                        <CheckboxInput label='显示覆盖配置' value={checkboxVal} onChange={onCheckBoxChanged} />
                                         {checkboxVal && getConfigApi.data && getConfigApi.data.length > 0 && (
                                             <>
                                                 <Typography sx={{ mt: 2 }}>
-                                                    You can override existing input configuration of the chatflow with overrideConfig
-                                                    property.
+                                                    你可以使用 overrideConfig 属性覆盖聊天流的现有输入配置。
                                                 </Typography>
                                                 <div
                                                     style={{
@@ -915,17 +914,17 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                                         <IconExclamationCircle size={30} color='rgb(116,66,16)' />
                                                         <span style={{ color: 'rgb(116,66,16)', marginLeft: 10, fontWeight: 500 }}>
                                                             {
-                                                                'For security reason, override config is disabled by default. You can change this by going into Chatflow Configuration -> Security tab, and enable the property you want to override.'
+                                                                '出于安全原因，覆盖配置默认被禁用。你可以进入聊天流配置 -> 安全选项卡，启用你想要覆盖的属性。'
                                                             }
-                                                            &nbsp;Refer{' '}
+                                                            &nbsp;参考{' '}
                                                             <a
                                                                 rel='noreferrer'
                                                                 target='_blank'
                                                                 href='https://docs.flowiseai.com/using-flowise/prediction#configuration-override'
                                                             >
-                                                                here
+                                                                此处
                                                             </a>{' '}
-                                                            for more details
+                                                            了解更多详情
                                                         </span>
                                                     </div>
                                                 </div>
@@ -937,7 +936,7 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                                             spacing={2}
                                                         >
                                                             <IconBox />
-                                                            <Typography variant='h4'>Nodes</Typography>
+                                                            <Typography variant='h4'>节点</Typography>
                                                         </Stack>
                                                         {Object.keys(nodeConfig)
                                                             .sort()
@@ -1007,7 +1006,7 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                                             spacing={2}
                                                         >
                                                             <IconVariable />
-                                                            <Typography variant='h4'>Variables</Typography>
+                                                            <Typography variant='h4'>变量</Typography>
                                                         </Stack>
                                                         <TableViewOnly rows={variableOverrides} columns={['name', 'type', 'enabled']} />
                                                     </Card>
@@ -1047,8 +1046,7 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                                     >
                                                         <IconBulb size={30} color='#2d6a4f' />
                                                         <span style={{ color: '#2d6a4f', marginLeft: 10, fontWeight: 500 }}>
-                                                            You can also specify multiple values for a config parameter by specifying the
-                                                            node id
+                                                            你也可以通过指定节点 ID 为配置参数设置多个值
                                                         </span>
                                                     </div>
                                                     <div style={{ padding: 10 }}>
@@ -1069,15 +1067,15 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                         )}
                                         {getIsChatflowStreamingApi.data?.isStreaming && (
                                             <p>
-                                                Read&nbsp;
+                                                阅读
                                                 <a
                                                     rel='noreferrer'
                                                     target='_blank'
                                                     href='https://docs.flowiseai.com/using-flowise/streaming'
                                                 >
-                                                    here
+                                                    此处
                                                 </a>
-                                                &nbsp;on how to stream response back to application
+                                                了解如何将流式响应返回到应用程序
                                             </p>
                                         )}
                                     </>

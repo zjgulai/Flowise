@@ -6,6 +6,8 @@ import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../
 import { getModels, MODEL_TYPE } from '../../../src/modelLoader'
 import { GoogleGenerativeAIChatInput } from '@langchain/google-genai'
 import { ChatGoogleGenerativeAI } from './FlowiseChatGoogleGenerativeAI'
+import { checkDenyList } from '../../../src/httpSecurity'
+import { resolveProviderBaseUrl } from '../providerUtils'
 
 class GoogleGenerativeAI_ChatModels implements INode {
     label: string
@@ -275,7 +277,13 @@ class GoogleGenerativeAI_ChatModels implements INode {
         if (topK) obj.topK = parseFloat(topK)
         if (cache) obj.cache = cache
         if (temperature) obj.temperature = parseFloat(temperature)
-        if (baseUrl) obj.baseUrl = baseUrl
+        const activeBaseUrl = resolveProviderBaseUrl(baseUrl, {
+            providerLabel: 'Google Gemini',
+            defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+            officialOrigins: ['https://generativelanguage.googleapis.com']
+        })
+        await checkDenyList(activeBaseUrl)
+        obj.baseUrl = activeBaseUrl
         if (thinkingLevel) {
             obj.thinkingConfig = {
                 thinkingLevel: thinkingLevel,

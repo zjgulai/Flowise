@@ -821,7 +821,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
                                         backgroundColor: (theme) => theme.palette.primary.main + '20'
                                     }
                                 }}
-                                title='Refresh execution data'
+                                title='刷新执行数据'
                             >
                                 <IconRefresh size={20} />
                             </IconButton>
@@ -865,7 +865,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
     // Resize handle component (shared between modes)
     const resizeHandle = (
         <button
-            aria-label='Resize drawer'
+            aria-label='调整抽屉大小'
             style={{
                 position: 'absolute',
                 left: 0,

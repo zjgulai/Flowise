@@ -7,11 +7,29 @@ import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { emitEvent, TelemetryEventCategory, TelemetryEventResult } from '../../utils/telemetry'
 import { Organization } from '../database/entities/organization.entity'
 import { User } from '../database/entities/user.entity'
+import { resolveSecureCookie } from '../middleware/passport/authSecurityPolicy'
 import { AccountDTO, AccountService } from '../services/account.service'
+import { assertAccountProvisioningAllowed } from '../utils/adminOnlyPolicy'
+
+const AUTH_COOKIE_NAMES = ['connect.sid', 'token', 'refreshToken'] as const
+
+function clearAuthenticationCookies(res: Response): void {
+    const cookieOptions = {
+        path: '/',
+        httpOnly: true,
+        secure: resolveSecureCookie(),
+        sameSite: 'lax' as const
+    }
+
+    for (const cookieName of AUTH_COOKIE_NAMES) {
+        res.clearCookie(cookieName, cookieOptions)
+    }
+}
 
 export class AccountController {
     public async register(req: Request, res: Response, next: NextFunction) {
         try {
+            assertAccountProvisioningAllowed()
             const accountService = new AccountService()
             const sanitizedBody = sanitizeRegistrationDTO(req.body)
             const data = await accountService.register(sanitizedBody)
@@ -23,6 +41,7 @@ export class AccountController {
 
     public async invite(req: Request, res: Response, next: NextFunction) {
         try {
+            assertAccountProvisioningAllowed()
             const accountService = new AccountService()
             const data = await accountService.invite(req.body, req.user)
             return res.status(StatusCodes.CREATED).json(data)
@@ -33,6 +52,7 @@ export class AccountController {
 
     public async verify(req: Request, res: Response, next: NextFunction) {
         try {
+            assertAccountProvisioningAllowed()
             const accountService = new AccountService()
             const data = await accountService.verify(req.body)
             return res.status(StatusCodes.CREATED).json(data)
@@ -43,6 +63,7 @@ export class AccountController {
 
     public async resendVerificationEmail(req: Request, res: Response, next: NextFunction) {
         try {
+            assertAccountProvisioningAllowed()
             const accountService = new AccountService()
             const data = await accountService.resendVerificationEmail(req.body)
             return res.status(StatusCodes.CREATED).json(data)
@@ -92,25 +113,22 @@ export class AccountController {
 
     public async logout(req: Request, res: Response, next: NextFunction) {
         try {
+            clearAuthenticationCookies(res)
             if (req.user) {
                 const accountService = new AccountService()
                 await accountService.logout(req.user)
                 if (req.isAuthenticated()) {
-                    req.logout((err) => {
-                        if (err) {
-                            return res.status(500).json({ message: 'Logout failed' })
-                        }
-                        req.session.destroy((err) => {
-                            if (err) {
-                                return res.status(500).json({ message: 'Failed to destroy session' })
-                            }
-                        })
+                    const logoutError = await new Promise<unknown>((resolve) => {
+                        req.logout((error) => resolve(error))
                     })
+                    if (logoutError) return res.status(500).json({ message: 'Logout failed' })
+
+                    const sessionDestroyError = await new Promise<unknown>((resolve) => {
+                        req.session.destroy((error) => resolve(error))
+                    })
+                    if (sessionDestroyError) return res.status(500).json({ message: 'Failed to destroy session' })
                 } else {
                     // For JWT-based users (owner, org_admin)
-                    res.clearCookie('connect.sid') // Clear the session cookie
-                    res.clearCookie('token') // Clear the JWT cookie
-                    res.clearCookie('refreshToken') // Clear the JWT cookie
                     return res.redirect('/login') // Redirect to the login page
                 }
             }

@@ -91,56 +91,70 @@ export class RoleService {
 
     public async createRole(data: Partial<Role>) {
         const queryRunner = this.dataSource.createQueryRunner()
-        await queryRunner.connect()
-
-        const user = await this.userService.readUserById(data.createdBy, queryRunner)
-        if (!user) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
-        const organization = await this.organizationService.readOrganizationById(data.organizationId, queryRunner)
-        if (!organization) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationErrorMessage.ORGANIZATION_NOT_FOUND)
-        this.validateRoleName(data.name)
-        if (!data.permissions) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, RoleErrorMessage.INVALID_ROLE_PERMISSIONS)
-        data.updatedBy = data.createdBy
-
-        let newRole = queryRunner.manager.create(Role, data)
         try {
+            await queryRunner.connect()
+            const user = await this.userService.readUserById(data.createdBy, queryRunner)
+            if (!user) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
+            const organization = await this.organizationService.readOrganizationById(data.organizationId, queryRunner)
+            if (!organization) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationErrorMessage.ORGANIZATION_NOT_FOUND)
+            this.validateRoleName(data.name)
+            if (!data.permissions) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, RoleErrorMessage.INVALID_ROLE_PERMISSIONS)
+            const roleData: Partial<Role> = {
+                organizationId: organization.id,
+                name: data.name,
+                description: data.description,
+                permissions: data.permissions,
+                createdBy: user.id,
+                updatedBy: user.id
+            }
+
+            let newRole = queryRunner.manager.create(Role, roleData)
             await queryRunner.startTransaction()
             newRole = await this.saveRole(newRole, queryRunner)
             await queryRunner.commitTransaction()
+            return newRole
         } catch (error) {
-            await queryRunner.rollbackTransaction()
+            if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
             throw error
         } finally {
-            await queryRunner.release()
+            if (!queryRunner.isReleased) await queryRunner.release()
         }
-
-        return newRole
     }
 
-    public async updateRole(newRole: Partial<Role>) {
+    public async updateRole(newRole: Partial<Role>, activeOrganizationId: string) {
         const queryRunner = this.dataSource.createQueryRunner()
-        await queryRunner.connect()
-
-        const oldRole = await this.readRoleById(newRole.id, queryRunner)
-        if (!oldRole) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
-        const user = await this.userService.readUserById(newRole.updatedBy, queryRunner)
-        if (!user) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
-        if (newRole.name) this.validateRoleName(newRole.name)
-        newRole.organizationId = oldRole.organizationId
-        newRole.createdBy = oldRole.createdBy
-
-        let updateRole = queryRunner.manager.merge(Role, oldRole, newRole)
         try {
+            await queryRunner.connect()
+            const oldRole = await this.readRoleByRoleIdOrganizationId(newRole.id, activeOrganizationId, queryRunner)
+            if (!oldRole) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
+            const user = await this.userService.readUserById(newRole.updatedBy, queryRunner)
+            if (!user) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
+            if (newRole.name) this.validateRoleName(newRole.name)
+            if (newRole.permissions !== undefined && !newRole.permissions) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, RoleErrorMessage.INVALID_ROLE_PERMISSIONS)
+            }
+
+            const roleData: Partial<Role> = {
+                id: oldRole.id,
+                organizationId: oldRole.organizationId,
+                name: newRole.name ?? oldRole.name,
+                description: newRole.description !== undefined ? newRole.description : oldRole.description,
+                permissions: newRole.permissions ?? oldRole.permissions,
+                createdBy: oldRole.createdBy,
+                updatedBy: user.id
+            }
+
+            let updateRole = queryRunner.manager.merge(Role, oldRole, roleData)
             await queryRunner.startTransaction()
             updateRole = await this.saveRole(updateRole, queryRunner)
             await queryRunner.commitTransaction()
+            return updateRole
         } catch (error) {
-            await queryRunner.rollbackTransaction()
+            if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
             throw error
         } finally {
-            await queryRunner.release()
+            if (!queryRunner.isReleased) await queryRunner.release()
         }
-
-        return updateRole
     }
 
     public async deleteRole(organizationId: string | undefined, roleId: string | undefined) {

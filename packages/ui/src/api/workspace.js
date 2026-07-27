@@ -13,7 +13,10 @@ const createWorkspace = (body) => client.post(`/workspace`, body)
 const updateWorkspace = (body) => client.put(`/workspace`, body)
 const deleteWorkspace = (id) => client.delete(`/workspace/${id}`)
 
-const getSharedWorkspacesForItem = (id) => client.get(`/workspace/shared/${id}`)
+const getSharedWorkspacesForItem = (id, itemType) =>
+    client.get(`/workspace/shared/${id}`, {
+        params: { itemType }
+    })
 const setSharedWorkspacesForItem = (id, body) => client.post(`/workspace/shared/${id}`, body)
 
 const updateWorkspaceUserRole = (body) => client.put(`/workspaceuser`, body)

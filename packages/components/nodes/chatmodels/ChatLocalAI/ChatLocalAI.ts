@@ -2,6 +2,8 @@ import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
 import { BaseCache } from '@langchain/core/caches'
 import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
 import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+import { checkDenyList } from '../../../src/httpSecurity'
+import { buildSecureProviderConfiguration } from '../providerUtils'
 
 class ChatLocalAI_ChatModels implements INode {
     label: string
@@ -123,7 +125,9 @@ class ChatLocalAI_ChatModels implements INode {
             obj.openAIApiKey = localAIApiKey
             obj.apiKey = localAIApiKey
         }
-        if (basePath) obj.configuration = { baseURL: basePath }
+        if (!basePath?.trim()) throw new Error('LocalAI Base Path is required')
+        await checkDenyList(basePath)
+        obj.configuration = buildSecureProviderConfiguration(basePath)
 
         const model = new ChatOpenAI(obj)
 

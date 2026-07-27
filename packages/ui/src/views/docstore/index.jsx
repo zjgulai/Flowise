@@ -83,12 +83,14 @@ const Documents = () => {
 
     function filterDocStores(data) {
         return (
-            data.name.toLowerCase().indexOf(search.toLowerCase()) > -1 || data.description.toLowerCase().indexOf(search.toLowerCase()) > -1
+            (data?.name || '').toLowerCase().indexOf(search.toLowerCase()) > -1 ||
+            (data?.description || '').toLowerCase().indexOf(search.toLowerCase()) > -1
         )
     }
 
     const onSearchChange = (event) => {
         setSearch(event.target.value)
+        setCurrentPage(1)
     }
 
     const getDeleteErrorMessage = (error) => {
@@ -103,11 +105,14 @@ const Documents = () => {
             return responseMessage
         }
 
+        const status = error?.response?.status
+        if (status) return `服务请求失败（${status}）`
+
         if (typeof error?.message === 'string' && error.message.trim()) {
             return error.message
         }
 
-        return 'Unknown error'
+        return '未知错误'
     }
 
     const goToDocumentStore = (id) => {
@@ -116,10 +121,10 @@ const Documents = () => {
 
     const addNew = () => {
         const dialogProp = {
-            title: 'Add New Document Store',
+            title: '添加新文档库',
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add'
+            cancelButtonName: '取消',
+            confirmButtonName: '添加'
         }
         setDialogProps(dialogProp)
         setShowDialog(true)
@@ -161,10 +166,10 @@ const Documents = () => {
     const renameDocumentStore = () => {
         if (!selectedDocumentStore) return
         const dialogProp = {
-            title: 'Rename Document Store',
+            title: '重命名文档库',
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             data: {
                 id: selectedDocumentStore.id,
                 name: selectedDocumentStore.name,
@@ -181,7 +186,7 @@ const Documents = () => {
         const documentStoreToDelete = selectedDocumentStore
         handleActionMenuClose()
 
-        let description = `Delete store [${documentStoreToDelete.name}]? This will remove this document store from the list.`
+        let description = `确定删除文档库“${documentStoreToDelete.name}”吗？删除后它将从列表中移除。`
 
         if (
             documentStoreToDelete.recordManagerConfig &&
@@ -189,11 +194,11 @@ const Documents = () => {
             Object.keys(documentStoreToDelete.recordManagerConfig).length > 0 &&
             Object.keys(documentStoreToDelete.vectorStoreConfig).length > 0
         ) {
-            description = `Delete store [${documentStoreToDelete.name}]? This will remove this document store from the list and remove the actual data from the vector store database.`
+            description = `确定删除文档库“${documentStoreToDelete.name}”吗？此操作还会删除向量数据库中的实际数据，且无法撤销。`
         }
 
         setDeleteDocStoreDialogProps({
-            title: 'Delete',
+            title: '删除',
             description,
             vectorStoreConfig: documentStoreToDelete.vectorStoreConfig,
             recordManagerConfig: documentStoreToDelete.recordManagerConfig,
@@ -214,7 +219,7 @@ const Documents = () => {
             const deleteResp = await documentsApi.deleteDocumentStore(storeId)
             if (deleteResp.data) {
                 enqueueSnackbar({
-                    message: 'Document Store deleted.',
+                    message: '文档库已删除',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -238,7 +243,7 @@ const Documents = () => {
             const errorMessage = getDeleteErrorMessage(error)
 
             enqueueSnackbar({
-                message: `Failed to delete Document Store: ${errorMessage}`,
+                message: `删除文档库失败：${errorMessage}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -254,10 +259,11 @@ const Documents = () => {
     }
 
     useEffect(() => {
-        applyFilters(currentPage, pageLimit)
+        const searchTimer = setTimeout(() => applyFilters(1, pageLimit, search), search ? 300 : 0)
 
+        return () => clearTimeout(searchTimer)
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [search])
 
     /* Table Pagination */
     const [currentPage, setCurrentPage] = useState(1)
@@ -267,16 +273,24 @@ const Documents = () => {
         setCurrentPage(page)
         setPageLimit(pageLimit)
         localStorage.setItem('docStorePageSize', pageLimit)
-        applyFilters(page, pageLimit)
+        applyFilters(page, pageLimit, search)
     }
 
-    const applyFilters = (page, limit) => {
+    const applyFilters = (page, limit, searchTerm = search, sort = {}) => {
         setLoading(true)
         const params = {
             page: page || currentPage,
-            limit: limit || pageLimit
+            limit: limit || pageLimit,
+            search: searchTerm.trim(),
+            orderBy: sort.orderBy || localStorage.getItem('doc_store_orderBy') || 'name',
+            order: sort.order || localStorage.getItem('doc_store_order') || 'desc'
         }
         getAllDocumentStores.request(params)
+    }
+
+    const onSortChange = (orderBy, order) => {
+        setCurrentPage(1)
+        applyFilters(1, pageLimit, search, { orderBy, order })
     }
 
     useEffect(() => {
@@ -328,9 +342,9 @@ const Documents = () => {
                     <ViewHeader
                         onSearchChange={onSearchChange}
                         search={hasDocStores}
-                        searchPlaceholder='Search Name'
-                        title='Document Store'
-                        description='Store and upsert documents for LLM retrieval (RAG)'
+                        searchPlaceholder='搜索名称'
+                        title='文档库'
+                        description='存储并更新用于大模型检索的文档（RAG）'
                     >
                         {hasDocStores && (
                             <ToggleButtonGroup
@@ -348,7 +362,7 @@ const Documents = () => {
                                     }}
                                     variant='contained'
                                     value='card'
-                                    title='Card View'
+                                    title='卡片视图'
                                 >
                                     <IconLayoutGrid />
                                 </ToggleButton>
@@ -360,7 +374,7 @@ const Documents = () => {
                                     }}
                                     variant='contained'
                                     value='list'
-                                    title='List View'
+                                    title='列表视图'
                                 >
                                     <IconList />
                                 </ToggleButton>
@@ -372,9 +386,9 @@ const Documents = () => {
                             sx={{ borderRadius: 2, height: '100%' }}
                             onClick={addNew}
                             startIcon={<IconPlus />}
-                            id='btn_createVariable'
+                            id='btn_createDocumentStore'
                         >
-                            Add New
+                            新增文档库
                         </StyledPermissionButton>
                     </ViewHeader>
                     {!hasDocStores ? (
@@ -386,12 +400,16 @@ const Documents = () => {
                                     alt='doc_store_empty'
                                 />
                             </Box>
-                            <div>No Document Stores Created Yet</div>
+                            <div>暂无文档库</div>
                         </Stack>
                     ) : (
                         <React.Fragment>
                             {!view || view === 'card' ? (
-                                <Box display='grid' gridTemplateColumns='repeat(3, 1fr)' gap={gridSpacing}>
+                                <Box
+                                    display='grid'
+                                    gridTemplateColumns={{ xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' }}
+                                    gap={gridSpacing}
+                                >
                                     {docStores?.filter(filterDocStores).map((data) => (
                                         <Box key={data.id} sx={{ position: 'relative' }}>
                                             <DocumentStoreCard
@@ -403,7 +421,7 @@ const Documents = () => {
                                             {canManageDocumentStore && (
                                                 <IconButton
                                                     size='small'
-                                                    aria-label='Document store actions'
+                                                    aria-label='文档库操作'
                                                     sx={{
                                                         position: 'absolute',
                                                         top: 16,
@@ -436,6 +454,7 @@ const Documents = () => {
                                     showActions={canManageDocumentStore}
                                     onActionMenuClick={handleActionMenuOpen}
                                     actionButtonSx={getDocStoreActionButtonSx(theme)}
+                                    onSortChange={onSortChange}
                                 />
                             )}
                             {/* Pagination and Page Size Controls */}
@@ -472,7 +491,7 @@ const Documents = () => {
                         <ListItemIcon>
                             <IconEdit size={16} />
                         </ListItemIcon>
-                        <ListItemText>Rename</ListItemText>
+                        <ListItemText>重命名</ListItemText>
                     </MenuItem>
                 )}
                 {canDeleteDocumentStore && (
@@ -480,7 +499,7 @@ const Documents = () => {
                         <ListItemIcon>
                             <IconTrash size={16} />
                         </ListItemIcon>
-                        <ListItemText>Delete</ListItemText>
+                        <ListItemText>删除</ListItemText>
                     </MenuItem>
                 )}
             </Menu>

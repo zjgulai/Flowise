@@ -59,11 +59,11 @@ const MAX_DRAWER_WIDTH = typeof window !== 'undefined' ? window.innerWidth : 192
 // ─── Status helpers ──────────────────────────────────────────────────────────
 
 const STATUS_META = {
-    SUCCEEDED: { label: 'OK', color: 'success.dark', Icon: CheckCircleIcon },
-    FAILED: { label: 'Failed', color: 'error.main', Icon: ErrorIcon },
-    SKIPPED: { label: 'Skipped', color: 'grey.500', Icon: IconCircleMinus },
-    QUEUED: { label: 'Queued', color: 'info.main', Icon: IconClock },
-    RUNNING: { label: 'Running', color: 'warning.dark', Icon: IconLoader }
+    SUCCEEDED: { label: '确定', color: 'success.dark', Icon: CheckCircleIcon },
+    FAILED: { label: '失败', color: 'error.main', Icon: ErrorIcon },
+    SKIPPED: { label: '已跳过', color: 'grey.500', Icon: IconCircleMinus },
+    QUEUED: { label: '已排队', color: 'info.main', Icon: IconClock },
+    RUNNING: { label: '运行中', color: 'warning.dark', Icon: IconLoader }
 }
 
 const StatusCell = ({ status }) => {
@@ -146,7 +146,7 @@ const fmtDateInTz = (date, timezone) => {
 const fmtNextRun = (date) => {
     if (!date) return { text: '—', overdue: false }
     const m = moment(date)
-    if (m.isBefore(moment())) return { text: 'due now', overdue: true }
+    if (m.isBefore(moment())) return { text: '已到期', overdue: true }
     return { text: m.fromNow(), overdue: false }
 }
 const fmtDuration = (ms) => {
@@ -166,16 +166,16 @@ const cronHumanize = (cron, timezone) => {
         if (parts.length === 5) {
             const [m, h, dom, mon, dow] = parts
             if (dom === '*' && mon === '*' && dow === '*' && m !== '*' && h !== '*') {
-                return `Every day at ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}${tz}`
+                return `每天 ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}${tz}`
             }
             if (dom === '*' && mon === '*' && dow === '1-5' && m !== '*' && h !== '*') {
-                return `Every weekday at ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}${tz}`
+                return `每个工作日 ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}${tz}`
             }
             if (m === '0' && h === '*' && dom === '*' && mon === '*' && dow === '*') {
-                return `Every hour${tz}`
+                return `每小时${tz}`
             }
             if (m === '*' && h === '*' && dom === '*' && mon === '*' && dow === '*') {
-                return `Every minute${tz}`
+                return `每分钟${tz}`
             }
         }
     } catch {
@@ -332,14 +332,14 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
             } catch (e) {
                 setErrorModal({
                     open: true,
-                    title: 'Could not load execution',
-                    message: e?.response?.data?.message || e?.message || 'Unknown error'
+                    title: '无法加载执行记录',
+                    message: e?.response?.data?.message || e?.message || '未知错误'
                 })
             }
         } else if (row.status === 'FAILED' || row.status === 'SKIPPED') {
             setErrorModal({
                 open: true,
-                title: row.status === 'FAILED' ? 'Run failed before execution started' : 'Run was skipped',
+                title: row.status === 'FAILED' ? '运行在执行开始前失败' : '运行已跳过',
                 message:
                     row.error ||
                     (row.status === 'SKIPPED'
@@ -394,7 +394,7 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
             fetchAll()
         } catch (e) {
             enqueueSnackbar({
-                message: e?.response?.data?.message || e?.message || 'Failed to delete logs',
+                message: e?.response?.data?.message || e?.message || '删除日志失败',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -442,7 +442,7 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
             >
                 {/* Left-edge drag handle: click-and-drag to resize */}
                 <button
-                    aria-label='Resize drawer'
+                    aria-label='调整抽屉大小'
                     style={{
                         position: 'absolute',
                         left: 0,
@@ -487,7 +487,7 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
                         <Stack direction='row' alignItems='center' spacing={1.5}>
                             <IconCalendar size={20} />
                             <Typography variant='h4' sx={{ m: 0 }}>
-                                Schedule History
+                                计划历史
                             </Typography>
                         </Stack>
                         <IconButton onClick={onClose} size='small' aria-label='close'>
@@ -497,7 +497,7 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
 
                     <Stack direction='row' alignItems='center' spacing={1.5} sx={{ mt: 2 }}>
                         <Chip
-                            label={enabled ? 'Active' : 'Disabled'}
+                            label={enabled ? '活跃' : '已禁用'}
                             size='small'
                             sx={{
                                 bgcolor: enabled
@@ -525,7 +525,7 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
                     <Stack direction='row' spacing={3} sx={{ mt: 1 }}>
                         <Box>
                             <Typography variant='caption' color='text.secondary'>
-                                Last run
+                                上次运行
                             </Typography>
                             <Tooltip title={lastLog ? fmtDate(lastLog.scheduledAt) : ''}>
                                 <Typography variant='body2'>{lastLog ? relTime(lastLog.scheduledAt) : '—'}</Typography>
@@ -533,7 +533,7 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
                         </Box>
                         <Box>
                             <Typography variant='caption' color='text.secondary'>
-                                Next run
+                                下次运行
                             </Typography>
                             {(() => {
                                 if (!enabled || !nextRunAt) {
@@ -547,8 +547,8 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
                                     <Tooltip
                                         title={
                                             overdue
-                                                ? `Expected: ${exactInTz} (${tz}) — scheduler may be lagging or the next fire is imminent`
-                                                : `Local time: ${exactLocal}`
+                                                ? `预期: ${exactInTz} (${tz}) — 调度器可能延迟或下一次触发即将开始`
+                                                : `本地时间: ${exactLocal}`
                                         }
                                     >
                                         <Box>
@@ -569,7 +569,7 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
                     </Stack>
 
                     <Stack direction='row' alignItems='center' spacing={1} sx={{ mt: 2 }}>
-                        <Tooltip title='Refresh'>
+                        <Tooltip title='刷新'>
                             <IconButton size='small' onClick={fetchAll} disabled={logsApi.loading}>
                                 <IconRefresh size={16} color={customization?.isDarkMode ? 'white' : undefined} />
                             </IconButton>
@@ -577,10 +577,10 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
                         <FormControlLabel
                             sx={{ m: 0 }}
                             control={<Switch size='small' checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />}
-                            label={<Typography variant='caption'>Auto-refresh</Typography>}
+                            label={<Typography variant='caption'>自动刷新</Typography>}
                         />
                         <Box sx={{ flex: 1 }} />
-                        <Tooltip title={selectedIds.length === 0 ? 'Select rows to delete' : `Delete ${selectedIds.length} selected`}>
+                        <Tooltip title={selectedIds.length === 0 ? '选择要删除的行' : `删除已选中的 ${selectedIds.length} 项`}>
                             {/* span wrapper so Tooltip works on a disabled button */}
                             <span>
                                 <IconButton
@@ -628,8 +628,8 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
                         <Box sx={{ p: 6, textAlign: 'center', color: 'text.secondary' }}>
                             <IconClock size={40} style={{ opacity: 0.4 }} />
                             <Typography variant='body2' sx={{ mt: 2 }}>
-                                No runs yet.
-                                {enabled && nextRunAt ? ` Next fire ${relTime(nextRunAt)}.` : ''}
+                                暂无运行记录。
+                                {enabled && nextRunAt ? ` 下次执行 ${relTime(nextRunAt)}.` : ''}
                             </Typography>
                         </Box>
                     ) : (
@@ -643,13 +643,13 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
                                                 indeterminate={!allOnPageSelected && someOnPageSelected}
                                                 checked={allOnPageSelected}
                                                 onChange={toggleSelectAllOnPage}
-                                                inputProps={{ 'aria-label': 'Select all rows on page' }}
+                                                inputProps={{ 'aria-label': '选择本页所有行' }}
                                             />
                                         </StyledTableCell>
-                                        <StyledTableCell>Status</StyledTableCell>
-                                        <StyledTableCell>Scheduled At</StyledTableCell>
-                                        <StyledTableCell>Duration</StyledTableCell>
-                                        <StyledTableCell>Error</StyledTableCell>
+                                        <StyledTableCell>状态</StyledTableCell>
+                                        <StyledTableCell>计划时间</StyledTableCell>
+                                        <StyledTableCell>持续时间</StyledTableCell>
+                                        <StyledTableCell>错误</StyledTableCell>
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
@@ -733,21 +733,19 @@ const ScheduleHistoryDrawer = ({ open, chatflowid, onClose }) => {
             {/* Bulk-delete confirmation */}
             <Dialog open={deleteDialogOpen} onClose={() => !deleting && setDeleteDialogOpen(false)} maxWidth='sm' fullWidth>
                 <DialogTitle>
-                    Delete {selectedIds.length} log{selectedIds.length === 1 ? '' : 's'}?
+                    删除 {selectedIds.length} 条日志{selectedIds.length === 1 ? '' : ''}？
                 </DialogTitle>
                 <DialogContent>
                     <DialogContentText>
-                        This will also permanently delete the linked execution traces. Schedule trigger logs that never produced an
-                        execution (skipped or pre-execution failures) are deleted but have no associated execution to remove. This action
-                        cannot be undone.
+                        这将同时永久删除关联的执行跟踪。从未产生执行的调度日志（已跳过或执行前失败）将被删除，但不存在关联的执行。此操作无法撤销。
                     </DialogContentText>
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setDeleteDialogOpen(false)} disabled={deleting}>
-                        Cancel
+                        取消
                     </Button>
                     <Button onClick={handleConfirmDelete} color='error' disabled={deleting} variant='contained'>
-                        {deleting ? 'Deleting…' : 'Delete'}
+                        {deleting ? '删除中…' : '删除'}
                     </Button>
                 </DialogActions>
             </Dialog>

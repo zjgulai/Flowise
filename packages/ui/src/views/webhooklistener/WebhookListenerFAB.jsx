@@ -41,7 +41,7 @@ const WebhookListenerFAB = ({ chatflowid, onOpenChange }) => {
 
     return (
         <>
-            <Tooltip title='Webhook Listener'>
+            <Tooltip title='Webhook 监听器'>
                 <Badge
                     overlap='circular'
                     variant='dot'

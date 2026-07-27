@@ -217,7 +217,7 @@ const LoginActivity = () => {
                     <ErrorBoundary error={error} />
                 ) : (
                     <Stack flexDirection='column' sx={{ gap: 3 }}>
-                        <ViewHeader search={false} title='Login Activity'></ViewHeader>
+                        <ViewHeader search={false} title='登录活动'></ViewHeader>
                         <Stack flexDirection='row'>
                             <Box sx={{ p: 2, height: 'auto', width: '100%' }}>
                                 <div
@@ -372,11 +372,11 @@ const LoginActivity = () => {
                                             }}
                                         >
                                             <TableRow>
-                                                <StyledTableCell>Activity</StyledTableCell>
-                                                <StyledTableCell>User</StyledTableCell>
-                                                <StyledTableCell>Date</StyledTableCell>
-                                                <StyledTableCell>Method</StyledTableCell>
-                                                <StyledTableCell>Message</StyledTableCell>
+                                                <StyledTableCell>活动</StyledTableCell>
+                                                <StyledTableCell>用户</StyledTableCell>
+                                                <StyledTableCell>日期</StyledTableCell>
+                                                <StyledTableCell>方法</StyledTableCell>
+                                                <StyledTableCell>消息</StyledTableCell>
                                             </TableRow>
                                         </TableHead>
                                         <TableBody>

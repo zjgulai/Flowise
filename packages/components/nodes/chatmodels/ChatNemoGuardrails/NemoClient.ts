@@ -1,4 +1,5 @@
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages'
+import { buildOriginBoundSecureFetch } from '../providerUtils'
 
 export interface Config {
     baseUrl: string
@@ -17,9 +18,12 @@ export class ClientConfig implements Config {
 
 export class NemoClient {
     private readonly config: Config
+    private readonly transportFetch: ReturnType<typeof buildOriginBoundSecureFetch>
 
     constructor(baseUrl: string, configurationId: string) {
-        this.config = new ClientConfig(baseUrl, configurationId)
+        const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
+        this.config = new ClientConfig(normalizedBaseUrl, configurationId)
+        this.transportFetch = buildOriginBoundSecureFetch(normalizedBaseUrl)
     }
 
     getRoleFromMessage(message: BaseMessage): string {
@@ -63,7 +67,7 @@ export class NemoClient {
             headers: headers
         }
 
-        return await fetch(`${this.config.baseUrl}/v1/chat/completions`, requestOptions)
+        return await this.transportFetch(`${this.config.baseUrl}/v1/chat/completions`, requestOptions)
             .then((response) => response.json())
             .then((body) => body.messages.map((message: any) => new AIMessage(message.content)))
     }

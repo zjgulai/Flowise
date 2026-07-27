@@ -46,13 +46,13 @@ const speechToTextProviders = {
         url: 'https://platform.openai.com/docs/guides/speech-to-text',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['openAIApi']
             },
             {
-                label: 'Language',
+                label: '语言',
                 name: 'language',
                 type: 'string',
                 description:
@@ -61,7 +61,7 @@ const speechToTextProviders = {
                 optional: true
             },
             {
-                label: 'Prompt',
+                label: '提示词',
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
@@ -69,7 +69,7 @@ const speechToTextProviders = {
                 optional: true
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -85,7 +85,7 @@ const speechToTextProviders = {
         url: 'https://www.assemblyai.com/',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['assemblyAIApi']
@@ -93,25 +93,25 @@ const speechToTextProviders = {
         ]
     },
     [SpeechToTextType.LOCALAI_STT]: {
-        label: 'LocalAi STT',
+        label: 'LocalAI STT',
         name: SpeechToTextType.LOCALAI_STT,
         icon: localAiPng,
         url: 'https://localai.io/features/audio-to-text/',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['localAIApi']
             },
             {
-                label: 'Base URL',
+                label: '基础 URL',
                 name: 'baseUrl',
                 type: 'string',
                 description: 'The base URL of the local AI server'
             },
             {
-                label: 'Language',
+                label: '语言',
                 name: 'language',
                 type: 'string',
                 description:
@@ -120,7 +120,7 @@ const speechToTextProviders = {
                 optional: true
             },
             {
-                label: 'Model',
+                label: '模型',
                 name: 'model',
                 type: 'string',
                 description: `The STT model to load. Defaults to whisper-1 if left blank.`,
@@ -128,7 +128,7 @@ const speechToTextProviders = {
                 optional: true
             },
             {
-                label: 'Prompt',
+                label: '提示词',
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
@@ -136,7 +136,7 @@ const speechToTextProviders = {
                 optional: true
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -152,13 +152,13 @@ const speechToTextProviders = {
         url: 'https://azure.microsoft.com/en-us/products/cognitive-services/speech-services',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['azureCognitiveServices']
             },
             {
-                label: 'Language',
+                label: '语言',
                 name: 'language',
                 type: 'string',
                 description: 'The recognition language (e.g., "en-US", "es-ES")',
@@ -166,21 +166,21 @@ const speechToTextProviders = {
                 optional: true
             },
             {
-                label: 'Profanity Filter Mode',
+                label: '亵渎过滤模式',
                 name: 'profanityFilterMode',
                 type: 'options',
                 description: 'How to handle profanity in the transcription',
                 options: [
                     {
-                        label: 'None',
+                        label: '无',
                         name: 'None'
                     },
                     {
-                        label: 'Masked',
+                        label: '已遮罩',
                         name: 'Masked'
                     },
                     {
-                        label: 'Removed',
+                        label: '已移除',
                         name: 'Removed'
                     }
                 ],
@@ -204,7 +204,7 @@ const speechToTextProviders = {
         url: 'https://console.groq.com/',
         inputs: [
             {
-                label: 'Model',
+                label: '模型',
                 name: 'model',
                 type: 'string',
                 description: `The STT model to load. Defaults to whisper-large-v3 if left blank.`,
@@ -212,13 +212,13 @@ const speechToTextProviders = {
                 optional: true
             },
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['groqApi']
             },
             {
-                label: 'Language',
+                label: '语言',
                 name: 'language',
                 type: 'string',
                 description:
@@ -227,7 +227,7 @@ const speechToTextProviders = {
                 optional: true
             },
             {
-                label: 'Temperature',
+                label: '温度',
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
@@ -350,7 +350,7 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
     return (
         <>
             <Box fullWidth sx={{ mb: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <Typography>Providers</Typography>
+                <Typography>提供商</Typography>
                 <FormControl fullWidth>
                     <Select
                         size='small'
@@ -362,7 +362,7 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
                             }
                         }}
                     >
-                        <MenuItem value='none'>None</MenuItem>
+                        <MenuItem value='none'>无</MenuItem>
                         {Object.values(speechToTextProviders).map((provider) => (
                             <MenuItem key={provider.name} value={provider.name}>
                                 {provider.label}

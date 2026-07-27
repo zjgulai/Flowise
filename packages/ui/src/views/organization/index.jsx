@@ -37,13 +37,13 @@ import { IconCircleCheck, IconExclamationCircle } from '@tabler/icons-react'
 // packages/server/src/enterprise/Interface.Enterprise.ts
 const OrgSetupSchema = z
     .object({
-        username: z.string().min(1, 'Name is required'),
-        email: z.string().min(1, 'Email is required').email('Invalid email address'),
+        username: z.string().min(1, '名称是必填项'),
+        email: z.string().min(1, '邮箱是必填项').email('邮箱地址无效'),
         password: passwordSchema,
-        confirmPassword: z.string().min(1, 'Confirm Password is required')
+        confirmPassword: z.string().min(1, '确认密码是必填项')
     })
     .refine((data) => data.password === data.confirmPassword, {
-        message: "Passwords don't match",
+        message: '密码不一致',
         path: ['confirmPassword']
     })
 
@@ -52,35 +52,35 @@ const OrganizationSetupPage = () => {
     const { isEnterpriseLicensed, isOpenSource } = useConfig()
 
     const orgNameInput = {
-        label: 'Organization',
+        label: '组织',
         name: 'organization',
         type: 'text',
         placeholder: 'Acme'
     }
 
     const usernameInput = {
-        label: 'Username',
+        label: '用户名',
         name: 'username',
         type: 'text',
-        placeholder: 'John Doe'
+        placeholder: '张三'
     }
 
     const passwordInput = {
-        label: 'Password',
+        label: '密码',
         name: 'password',
         type: 'password',
         placeholder: '********'
     }
 
     const confirmPasswordInput = {
-        label: 'Confirm Password',
+        label: '确认密码',
         name: 'confirmPassword',
         type: 'password',
         placeholder: '********'
     }
 
     const emailInput = {
-        label: 'EMail',
+        label: '邮箱',
         name: 'email',
         type: 'email',
         placeholder: 'user@company.com'
@@ -97,8 +97,11 @@ const OrganizationSetupPage = () => {
     const [successMsg, setSuccessMsg] = useState(undefined)
 
     const loginApi = useApi(authApi.login)
+    const resolveLoginApi = useApi(authApi.resolveLogin)
     const registerAccountApi = useApi(accountApi.registerAccount)
     const navigate = useNavigate()
+    const [setupAllowed, setSetupAllowed] = useState(false)
+    const [setupCheckFailed, setSetupCheckFailed] = useState(false)
 
     const getDefaultProvidersApi = useApi(loginMethodApi.getDefaultLoginMethods)
     const [configuredSsoProviders, setConfiguredSsoProviders] = useState([])
@@ -145,9 +148,9 @@ const OrganizationSetupPage = () => {
                     : registerAccountApi.error.response.data
             let finalErrMessage = ''
             if (isEnterpriseLicensed) {
-                finalErrMessage = `Error in registering organization. Please contact your administrator. (${errMessage})`
+                finalErrMessage = `注册组织时出错，请联系管理员。(${errMessage})`
             } else {
-                finalErrMessage = `Error in registering account: ${errMessage}`
+                finalErrMessage = `注册账户时出错：${errMessage}`
             }
             setAuthError(finalErrMessage)
             setLoading(false)
@@ -203,6 +206,43 @@ const OrganizationSetupPage = () => {
         window.location.href = `/api/v1/${ssoProvider}/login`
     }
 
+    useEffect(() => {
+        resolveLoginApi.request({})
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+    useEffect(() => {
+        const redirectUrl = resolveLoginApi.data?.redirectUrl
+        if (!redirectUrl) return
+        if (redirectUrl === '/organization-setup') {
+            setSetupAllowed(true)
+            return
+        }
+        navigate(redirectUrl, { replace: true })
+    }, [navigate, resolveLoginApi.data])
+
+    useEffect(() => {
+        if (resolveLoginApi.error) setSetupCheckFailed(true)
+    }, [resolveLoginApi.error])
+
+    if (!setupAllowed) {
+        return (
+            <Box sx={{ width: '100%', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 3 }}>
+                {setupCheckFailed ? (
+                    <Stack sx={{ maxWidth: 480, alignItems: 'center', gap: 2 }}>
+                        <Typography variant='h2'>无法确认账户设置状态</Typography>
+                        <Typography color='text.secondary'>请返回登录页后重试。</Typography>
+                        <StyledButton variant='contained' onClick={() => navigate('/signin', { replace: true })}>
+                            返回登录
+                        </StyledButton>
+                    </Stack>
+                ) : (
+                    <BackdropLoader open={true} />
+                )}
+            </Box>
+        )
+    }
+
     return (
         <>
             <Box
@@ -216,7 +256,7 @@ const OrganizationSetupPage = () => {
                     padding: '24px'
                 }}
             >
-                <Stack flexDirection='column' sx={{ width: '480px', gap: 3 }}>
+                <Stack flexDirection='column' sx={{ width: '100%', maxWidth: '480px', gap: 3 }}>
                     {authError && (
                         <Alert icon={<IconExclamationCircle />} variant='filled' severity='error'>
                             {authError.split(', ').length > 0 ? (
@@ -236,12 +276,10 @@ const OrganizationSetupPage = () => {
                         </Alert>
                     )}
                     <Stack sx={{ gap: 1 }}>
-                        <Typography variant='h1'>Setup Account</Typography>
+                        <Typography variant='h1'>设置账户</Typography>
                     </Stack>
                     {(isOpenSource || isEnterpriseLicensed) && (
-                        <Typography variant='caption'>
-                            Account setup does not make any external connections, your data stays securely on your locally hosted server.
-                        </Typography>
+                        <Typography variant='caption'>账户设置不会建立任何外部连接，您的数据将安全地保存在本地托管服务器上。</Typography>
                     )}
                     <form onSubmit={register}>
                         <Stack sx={{ width: '100%', flexDirection: 'column', alignItems: 'left', justifyContent: 'center', gap: 2 }}>
@@ -250,13 +288,13 @@ const OrganizationSetupPage = () => {
                                     <Box>
                                         <div style={{ display: 'flex', flexDirection: 'row' }}>
                                             <Typography>
-                                                Organization Name:<span style={{ color: 'red' }}>&nbsp;*</span>
+                                                组织名称:<span style={{ color: 'red' }}>&nbsp;*</span>
                                             </Typography>
                                             <div style={{ flexGrow: 1 }}></div>
                                         </div>
                                         <Input
                                             inputParam={orgNameInput}
-                                            placeholder='Organization Name'
+                                            placeholder='组织名称'
                                             onChange={(newValue) => setOrgName(newValue)}
                                             value={orgName}
                                             showDialog={false}
@@ -264,7 +302,7 @@ const OrganizationSetupPage = () => {
                                     </Box>
                                     <Box>
                                         <Divider>
-                                            <Chip label='Account Administrator' size='small' />
+                                            <Chip label='账户管理员' size='small' />
                                         </Divider>
                                     </Box>
                                 </>
@@ -272,25 +310,25 @@ const OrganizationSetupPage = () => {
                             <Box>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Administrator Name<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        管理员姓名<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <div style={{ flexGrow: 1 }}></div>
                                 </div>
                                 <Input
                                     inputParam={usernameInput}
-                                    placeholder='Display Name'
+                                    placeholder='显示名称'
                                     onChange={(newValue) => setUsername(newValue)}
                                     value={username}
                                     showDialog={false}
                                 />
                                 <Typography variant='caption'>
-                                    <i>Is used for display purposes only.</i>
+                                    <i>仅用于显示目的。</i>
                                 </Typography>
                             </Box>
                             <Box>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Administrator Email<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        管理员邮箱<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <div style={{ flexGrow: 1 }}></div>
                                 </div>
@@ -302,28 +340,25 @@ const OrganizationSetupPage = () => {
                                     showDialog={false}
                                 />
                                 <Typography variant='caption'>
-                                    <i>Kindly use a valid email address. Will be used as login id.</i>
+                                    <i>请使用有效的邮箱地址，将作为登录账号使用。</i>
                                 </Typography>
                             </Box>
                             <Box>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Password<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        密码<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <div style={{ flexGrow: 1 }}></div>
                                 </div>
                                 <Input inputParam={passwordInput} onChange={(newValue) => setPassword(newValue)} value={password} />
                                 <Typography variant='caption'>
-                                    <i>
-                                        Password must be at least 8 characters long and contain at least one lowercase letter, one uppercase
-                                        letter, one digit, and one special character.
-                                    </i>
+                                    <i>密码必须至少为 8 个字符，且包含至少一个小写字母、一个大写字母、一个数字和一个特殊字符。</i>
                                 </Typography>
                             </Box>
                             <Box>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Confirm Password<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        确认密码<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                     <div style={{ flexGrow: 1 }}></div>
                                 </div>
@@ -333,13 +368,13 @@ const OrganizationSetupPage = () => {
                                     value={confirmPassword}
                                 />
                                 <Typography variant='caption'>
-                                    <i>Reconfirm your password. Must match the password typed above.</i>
+                                    <i>请再次确认密码，必须与上面输入的密码一致。</i>
                                 </Typography>
                             </Box>
                             <StyledButton variant='contained' style={{ borderRadius: 12, height: 40, marginRight: 5 }} type='submit'>
-                                Sign Up
+                                创建账户
                             </StyledButton>
-                            {configuredSsoProviders && configuredSsoProviders.length > 0 && <Divider sx={{ width: '100%' }}>OR</Divider>}
+                            {configuredSsoProviders && configuredSsoProviders.length > 0 && <Divider sx={{ width: '100%' }}>或</Divider>}
                             {configuredSsoProviders &&
                                 configuredSsoProviders.map(
                                     (ssoProvider) =>
@@ -356,7 +391,7 @@ const OrganizationSetupPage = () => {
                                                     </Icon>
                                                 }
                                             >
-                                                Sign Up With Microsoft
+                                                使用 Microsoft 注册
                                             </Button>
                                         )
                                 )}
@@ -375,7 +410,7 @@ const OrganizationSetupPage = () => {
                                                     </Icon>
                                                 }
                                             >
-                                                Sign Up With Google
+                                                使用 Google 注册
                                             </Button>
                                         )
                                 )}
@@ -394,7 +429,7 @@ const OrganizationSetupPage = () => {
                                                     </Icon>
                                                 }
                                             >
-                                                Sign Up With Auth0 by Okta
+                                                使用 Auth0 注册
                                             </Button>
                                         )
                                 )}

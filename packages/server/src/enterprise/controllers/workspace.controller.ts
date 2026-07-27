@@ -16,10 +16,42 @@ import { UserErrorMessage, UserService } from '../services/user.service'
 import { WorkspaceUserErrorMessage, WorkspaceUserService } from '../services/workspace-user.service'
 import { WorkspaceErrorMessage, WorkspaceService } from '../services/workspace.service'
 import { assertQueryOrganizationMatchesActiveOrg, assertWorkspaceIdAccessibleToUser, getLoggedInUser } from '../utils/tenantRequestGuards'
+import { setTokenOrCookies } from '../middleware/passport/tokenResponse'
+import {
+    assertWorkspaceDeleteRequest,
+    bindWorkspaceCreateRequest,
+    bindWorkspaceUpdateRequest,
+    readWorkspaceShareItemType,
+    validateWorkspaceShareRequest
+} from '../middleware/workspaceMutationGuards'
+
+type SwitchedLoggedInUser = LoggedInUser & { role: string; isSSO: boolean; authVersion?: string }
+
+export async function persistWorkspaceSwitch(req: Request, res: Response, switchedUser: SwitchedLoggedInUser) {
+    req.user = switchedUser
+    const passportSession = (req.session as Request['session'] & { passport?: { user?: LoggedInUser } }).passport
+    if (!passportSession) {
+        throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, GeneralErrorMessage.UNAUTHORIZED)
+    }
+    passportSession.user = switchedUser
+    await new Promise<void>((resolve, reject) => {
+        req.session.save((error) => (error ? reject(error) : resolve()))
+    })
+
+    // Workspace is part of both token identities, so switching must rotate both cookies.
+    return setTokenOrCookies(res, switchedUser, true, req, false, Boolean(switchedUser.ssoProvider))
+}
+
+export function assertWorkspaceSwitchMembershipActive(workspaceUser: { status?: string }, organizationUser: { status?: string }): void {
+    if (workspaceUser.status !== WorkspaceUserStatus.ACTIVE || organizationUser.status !== OrganizationUserStatus.ACTIVE) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+    }
+}
 
 export class WorkspaceController {
     public async create(req: Request, res: Response, next: NextFunction) {
         try {
+            bindWorkspaceCreateRequest(req)
             const workspaceUserService = new WorkspaceUserService()
             const newWorkspace = await workspaceUserService.createWorkspace(req.body)
             return res.status(StatusCodes.CREATED).json(newWorkspace)
@@ -89,10 +121,6 @@ export class WorkspaceController {
             const workspaceUserService = new WorkspaceUserService()
             const { workspaceUser } = await workspaceUserService.readWorkspaceUserByWorkspaceIdUserId(query.id, req.user.id, queryRunner)
             if (!workspaceUser) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, WorkspaceUserErrorMessage.WORKSPACE_USER_NOT_FOUND)
-            workspaceUser.lastLogin = new Date().toISOString()
-            workspaceUser.status = WorkspaceUserStatus.ACTIVE
-            workspaceUser.updatedBy = user.id
-            await workspaceUserService.saveWorkspaceUser(workspaceUser, queryRunner)
 
             const organizationUserService = new OrganizationUserService()
             const { organizationUser } = await organizationUserService.readOrganizationUserByWorkspaceIdUserId(
@@ -102,9 +130,11 @@ export class WorkspaceController {
             )
             if (!organizationUser)
                 throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationUserErrorMessage.ORGANIZATION_USER_NOT_FOUND)
-            organizationUser.status = OrganizationUserStatus.ACTIVE
-            organizationUser.updatedBy = user.id
-            await organizationUserService.saveOrganizationUser(organizationUser, queryRunner)
+            assertWorkspaceSwitchMembershipActive(workspaceUser, organizationUser)
+
+            workspaceUser.lastLogin = new Date().toISOString()
+            workspaceUser.updatedBy = user.id
+            await workspaceUserService.saveWorkspaceUser(workspaceUser, queryRunner)
 
             const roleService = new RoleService()
             const ownerRole = await roleService.readGeneralRoleByName(GeneralRole.OWNER, queryRunner)
@@ -120,22 +150,24 @@ export class WorkspaceController {
             const productId = await getRunningExpressApp().identityManager.getProductIdFromSubscription(subscriptionId)
 
             const workspaceUsers = await workspaceUserService.readWorkspaceUserByUserId(req.user.id, queryRunner)
-            const assignedWorkspaces: IAssignedWorkspace[] = workspaceUsers.map((workspaceUser) => {
-                return {
-                    id: workspaceUser.workspace.id,
-                    name: workspaceUser.workspace.name,
-                    role: workspaceUser.role?.name,
-                    organizationId: workspaceUser.workspace.organizationId
-                } as IAssignedWorkspace
-            })
+            const assignedWorkspaces: IAssignedWorkspace[] = workspaceUsers
+                .filter((assignedWorkspaceUser) => assignedWorkspaceUser.status === WorkspaceUserStatus.ACTIVE)
+                .map((workspaceUser) => {
+                    return {
+                        id: workspaceUser.workspace.id,
+                        name: workspaceUser.workspace.name,
+                        role: workspaceUser.role?.name,
+                        organizationId: workspaceUser.workspace.organizationId
+                    } as IAssignedWorkspace
+                })
 
-            const loggedInUser: LoggedInUser & { role: string; isSSO: boolean } = {
+            const loggedInUser: SwitchedLoggedInUser = {
                 ...req.user,
                 activeOrganizationId: org.id,
                 activeOrganizationSubscriptionId: subscriptionId,
                 activeOrganizationCustomerId: customerId,
                 activeOrganizationProductId: productId,
-                isOrganizationAdmin: workspaceUser.roleId === ownerRole.id,
+                isOrganizationAdmin: organizationUser.roleId === ownerRole.id,
                 activeWorkspaceId: workspace.id,
                 activeWorkspace: workspace.name,
                 assignedWorkspaces,
@@ -146,27 +178,11 @@ export class WorkspaceController {
                 roleId: role.id
             }
 
-            // update the passport session
-            req.user = {
-                ...req.user,
-                ...loggedInUser
-            }
-
-            // Update passport session
-            // @ts-ignore
-            req.session.passport.user = {
-                ...req.user,
-                ...loggedInUser
-            }
-
-            req.session.save((err) => {
-                if (err) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, GeneralErrorMessage.UNHANDLED_EDGE_CASE)
-            })
-
             await queryRunner.commitTransaction()
-            return res.status(StatusCodes.OK).json(loggedInUser)
+
+            return persistWorkspaceSwitch(req, res, { ...req.user, ...loggedInUser })
         } catch (error) {
-            if (queryRunner && !queryRunner.isTransactionActive) {
+            if (queryRunner?.isTransactionActive) {
                 await queryRunner.rollbackTransaction()
             }
             next(error)
@@ -178,12 +194,18 @@ export class WorkspaceController {
     }
 
     public async update(req: Request, res: Response, next: NextFunction) {
+        let queryRunner: QueryRunner | undefined
         try {
+            queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
+            await queryRunner.connect()
+            await bindWorkspaceUpdateRequest(req, queryRunner)
             const workspaceService = new WorkspaceService()
             const workspace = await workspaceService.updateWorkspace(req.body)
             return res.status(StatusCodes.OK).json(workspace)
         } catch (error) {
             next(error)
+        } finally {
+            if (queryRunner && !queryRunner.isReleased) await queryRunner.release()
         }
     }
 
@@ -196,6 +218,7 @@ export class WorkspaceController {
             if (!workspaceId) {
                 throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, WorkspaceErrorMessage.INVALID_WORKSPACE_ID)
             }
+            await assertWorkspaceDeleteRequest(req, queryRunner)
             const workspaceService = new WorkspaceService()
             await queryRunner.startTransaction()
 
@@ -212,22 +235,29 @@ export class WorkspaceController {
     }
 
     public async getSharedWorkspacesForItem(req: Request, res: Response, next: NextFunction) {
+        let queryRunner: QueryRunner | undefined
         try {
             if (typeof req.params === 'undefined' || !req.params.id) {
                 throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, WorkspaceErrorMessage.INVALID_WORKSPACE_ID)
             }
+            const user = getLoggedInUser(req)
+            const itemType = readWorkspaceShareItemType(req.query.itemType)
+            queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
+            await queryRunner.connect()
+            await validateWorkspaceShareRequest(req, req.params.id, itemType, [], queryRunner)
             const workspaceService = new WorkspaceService()
-            return res.json(await workspaceService.getSharedWorkspacesForItem(req.params.id))
+            return res.json(await workspaceService.getSharedWorkspacesForItem(req.params.id, itemType, user.activeOrganizationId))
         } catch (error) {
             next(error)
+        } finally {
+            if (queryRunner && !queryRunner.isReleased) await queryRunner.release()
         }
     }
 
     public async setSharedWorkspacesForItem(req: Request, res: Response, next: NextFunction) {
+        let queryRunner: QueryRunner | undefined
         try {
-            if (!req.user) {
-                throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, `Unauthorized: User not found`)
-            }
+            const user = getLoggedInUser(req)
             if (typeof req.params === 'undefined' || !req.params.id) {
                 throw new InternalFlowiseError(
                     StatusCodes.UNAUTHORIZED,
@@ -240,10 +270,22 @@ export class WorkspaceController {
                     `Error: workspaceController.setSharedWorkspacesForItem - body not provided!`
                 )
             }
+            const itemType = readWorkspaceShareItemType(req.body.itemType)
+            queryRunner = getRunningExpressApp().AppDataSource.createQueryRunner()
+            await queryRunner.connect()
+            const workspaceIds = await validateWorkspaceShareRequest(req, req.params.id, itemType, req.body.workspaceIds, queryRunner)
             const workspaceService = new WorkspaceService()
-            return res.json(await workspaceService.setSharedWorkspacesForItem(req.params.id, req.body))
+            return res.json(
+                await workspaceService.setSharedWorkspacesForItem(
+                    req.params.id,
+                    { itemType, workspaceIds },
+                    { sourceWorkspaceId: user.activeWorkspaceId, organizationId: user.activeOrganizationId }
+                )
+            )
         } catch (error) {
             next(error)
+        } finally {
+            if (queryRunner && !queryRunner.isReleased) await queryRunner.release()
         }
     }
 }

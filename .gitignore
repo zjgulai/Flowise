@@ -15,6 +15,10 @@
 ## pnpm
 .pnpm-store/
 
+## local tool and upload state
+**/.ruff_cache/
+**/*.baiduyun.uploading.cfg
+
 ## build
 **/dist
 **/build
@@ -29,12 +33,23 @@
 # misc
 .DS_Store
 
+## local generated artifacts
+/.codegraph/
+/.playwright-cli/
+/output/
+/test_reports/
+/.superpowers/
+/tmp/
+
 ## env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 .env
+.env*
+!*.example
+!/.env.production.template
 
 ## turbo
 .turbo
@@ -71,6 +86,10 @@
 *.ssh
 *.ssh-key
 .key-mrc
+**/id_rsa*
+**/id_dsa*
+**/id_ecdsa*
+**/id_ed25519*
 
 ## Certificate Authority
 *.ca
@@ -82,7 +101,7 @@
 *.csr
 
 ## Certificate
-*.der 
+*.der
 
 ## Key database file
 *.kdb
@@ -119,4 +138,3 @@ apps/*/
 .claude/plans/
 .claude/settings.local.json
 .claude/agent-memory/*
-

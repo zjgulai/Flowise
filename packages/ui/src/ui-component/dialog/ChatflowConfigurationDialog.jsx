@@ -39,88 +39,88 @@ import McpServer from '@/ui-component/extended/McpServer'
 
 const CONFIGURATION_GROUPS = [
     {
-        label: 'General',
+        label: '通用',
         sections: [
             {
-                label: 'Rate Limit',
+                label: '速率限制',
                 id: 'rateLimit',
                 icon: IconShieldLock,
-                description: 'Limit API requests per time window'
+                description: '限制每个时间窗口的 API 请求数'
             },
             {
-                label: 'Allowed Domains',
+                label: '允许的域名',
                 id: 'allowedDomains',
                 icon: IconWorldWww,
-                description: 'Restrict chatbot to specific domains'
+                description: '将聊天机器人限制在特定域名'
             },
             {
-                label: 'Leads',
+                label: '线索',
                 id: 'leads',
                 icon: IconUserPlus,
-                description: 'Capture visitor contact information'
+                description: '收集访客联系信息'
             }
         ]
     },
     {
-        label: 'Chat',
+        label: '对话',
         sections: [
             {
-                label: 'Starter Prompts',
+                label: '起始提示词',
                 id: 'conversationStarters',
                 icon: IconMessageChatbot,
-                description: 'Suggested prompts for new conversations'
+                description: '新对话的建议提示词'
             },
             {
-                label: 'Follow-up Prompts',
+                label: '跟进提示词',
                 id: 'followUpPrompts',
                 icon: IconArrowForwardUp,
-                description: 'Auto-generate follow-up questions'
+                description: '自动生成跟进问题'
             },
             {
-                label: 'Chat Feedback',
+                label: '聊天反馈',
                 id: 'chatFeedback',
                 icon: IconThumbUp,
-                description: 'Allow users to rate responses'
+                description: '允许用户对回复评分'
             }
         ]
     },
     {
-        label: 'Media & Files',
+        label: '媒体与文件',
         sections: [
             {
-                label: 'Speech to Text',
+                label: '语音转文本',
                 id: 'speechToText',
                 icon: IconMicrophone,
-                description: 'Voice input transcription'
+                description: '语音输入转录'
             },
             {
-                label: 'Text to Speech',
+                label: '文本转语音',
                 id: 'textToSpeech',
                 icon: IconVolume,
-                description: 'Audio response playback'
+                description: '音频回复播放'
             },
             {
-                label: 'File Upload',
+                label: '文件上传',
                 id: 'fileUpload',
                 icon: IconUpload,
-                description: 'Allow file uploads in chat'
+                description: '允许在聊天中上传文件'
             }
         ]
     },
     {
-        label: 'Advanced',
+        label: '高级',
         sections: [
             {
-                label: 'Analytics',
+                label: '分析',
                 id: 'analyseChatflow',
                 icon: IconChartBar,
-                description: 'Connect analytics providers'
+                description: '连接分析提供商'
             },
             {
-                label: 'Post Processing',
+                label: '后处理',
                 id: 'postProcessing',
                 icon: IconCode,
-                description: 'Custom JavaScript post-processing'
+                description: '自定义 JavaScript 后处理'
             },
             {
                 label: 'MCP Server',
@@ -129,10 +129,10 @@ const CONFIGURATION_GROUPS = [
                 description: 'Model Context Protocol server'
             },
             {
-                label: 'Override Config',
+                label: '覆盖配置',
                 id: 'overrideConfig',
                 icon: IconAdjustments,
-                description: 'Override flow configuration via API'
+                description: '通过 API 覆盖流程配置'
             }
         ]
     }

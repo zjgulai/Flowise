@@ -68,7 +68,7 @@ const dashboard = {
             children: [
                 {
                     id: 'chatflows',
-                    title: 'Chatflows',
+                    title: '对话流程',
                     type: 'item',
                     url: '/chatflows',
                     icon: icons.IconHierarchy,
@@ -77,7 +77,7 @@ const dashboard = {
                 },
                 {
                     id: 'agentflows',
-                    title: 'Agentflows',
+                    title: '智能体流程',
                     type: 'item',
                     url: '/agentflows',
                     icon: icons.IconUsersGroup,
@@ -86,7 +86,7 @@ const dashboard = {
                 },
                 {
                     id: 'executions',
-                    title: 'Executions',
+                    title: '执行记录',
                     type: 'item',
                     url: '/executions',
                     icon: icons.IconListCheck,
@@ -95,7 +95,7 @@ const dashboard = {
                 },
                 {
                     id: 'assistants',
-                    title: 'Assistants',
+                    title: '助手',
                     type: 'item',
                     url: '/assistants',
                     icon: icons.IconRobot,
@@ -104,7 +104,7 @@ const dashboard = {
                 },
                 {
                     id: 'marketplaces',
-                    title: 'Marketplaces',
+                    title: '模板市场',
                     type: 'item',
                     url: '/marketplaces',
                     icon: icons.IconBuildingStore,
@@ -113,7 +113,7 @@ const dashboard = {
                 },
                 {
                     id: 'tools',
-                    title: 'Tools',
+                    title: '工具',
                     type: 'item',
                     url: '/tools',
                     icon: icons.IconTool,
@@ -122,7 +122,7 @@ const dashboard = {
                 },
                 {
                     id: 'credentials',
-                    title: 'Credentials',
+                    title: '凭据',
                     type: 'item',
                     url: '/credentials',
                     icon: icons.IconLock,
@@ -131,7 +131,7 @@ const dashboard = {
                 },
                 {
                     id: 'variables',
-                    title: 'Variables',
+                    title: '变量',
                     type: 'item',
                     url: '/variables',
                     icon: icons.IconVariable,
@@ -140,7 +140,7 @@ const dashboard = {
                 },
                 {
                     id: 'apikey',
-                    title: 'API Keys',
+                    title: 'API密钥',
                     type: 'item',
                     url: '/apikey',
                     icon: icons.IconKey,
@@ -149,7 +149,7 @@ const dashboard = {
                 },
                 {
                     id: 'document-stores',
-                    title: 'Document Stores',
+                    title: '文档库',
                     type: 'item',
                     url: '/document-stores',
                     icon: icons.IconFiles,
@@ -160,12 +160,12 @@ const dashboard = {
         },
         {
             id: 'evaluations',
-            title: 'Evaluations',
+            title: '评估',
             type: 'group',
             children: [
                 {
                     id: 'datasets',
-                    title: 'Datasets',
+                    title: '数据集',
                     type: 'item',
                     url: '/datasets',
                     icon: icons.IconDatabase,
@@ -175,7 +175,7 @@ const dashboard = {
                 },
                 {
                     id: 'evaluators',
-                    title: 'Evaluators',
+                    title: '评估器',
                     type: 'item',
                     url: '/evaluators',
                     icon: icons.IconTestPipe,
@@ -185,7 +185,7 @@ const dashboard = {
                 },
                 {
                     id: 'evaluations',
-                    title: 'Evaluations',
+                    title: '评估',
                     type: 'item',
                     url: '/evaluations',
                     icon: icons.IconChartHistogram,
@@ -197,12 +197,12 @@ const dashboard = {
         },
         {
             id: 'management',
-            title: 'User & Workspace Management',
+            title: '用户与空间管理',
             type: 'group',
             children: [
                 {
                     id: 'sso',
-                    title: 'SSO Config',
+                    title: 'SSO配置',
                     type: 'item',
                     url: '/sso-config',
                     icon: icons.IconShieldLock,
@@ -212,7 +212,7 @@ const dashboard = {
                 },
                 {
                     id: 'roles',
-                    title: 'Roles',
+                    title: '角色',
                     type: 'item',
                     url: '/roles',
                     icon: icons.IconLockCheck,
@@ -222,7 +222,7 @@ const dashboard = {
                 },
                 {
                     id: 'users',
-                    title: 'Users',
+                    title: '用户',
                     type: 'item',
                     url: '/users',
                     icon: icons.IconUsers,
@@ -232,7 +232,7 @@ const dashboard = {
                 },
                 {
                     id: 'workspaces',
-                    title: 'Workspaces',
+                    title: '工作空间',
                     type: 'item',
                     url: '/workspaces',
                     icon: icons.IconStack2,
@@ -242,7 +242,7 @@ const dashboard = {
                 },
                 {
                     id: 'login-activity',
-                    title: 'Login Activity',
+                    title: '登录活动',
                     type: 'item',
                     url: '/login-activity',
                     icon: icons.IconClipboardList,
@@ -254,12 +254,12 @@ const dashboard = {
         },
         {
             id: 'others',
-            title: 'Others',
+            title: '其他',
             type: 'group',
             children: [
                 {
                     id: 'logs',
-                    title: 'Logs',
+                    title: '日志',
                     type: 'item',
                     url: '/logs',
                     icon: icons.IconList,
@@ -269,7 +269,7 @@ const dashboard = {
                 },
                 // {
                 //     id: 'files',
-                //     title: 'Files',
+                //     title: '文件',
                 //     type: 'item',
                 //     url: '/files',
                 //     icon: icons.IconFileDatabase,
@@ -278,7 +278,7 @@ const dashboard = {
                 // },
                 {
                     id: 'account',
-                    title: 'Account Settings',
+                    title: '账户设置',
                     type: 'item',
                     url: '/account',
                     icon: icons.IconSettings,

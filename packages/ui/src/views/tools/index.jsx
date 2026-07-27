@@ -97,10 +97,10 @@ const Tools = () => {
     const onUploadFile = (file) => {
         try {
             const dialogProp = {
-                title: 'Add New Tool',
+                title: '添加新工具',
                 type: 'IMPORT',
-                cancelButtonName: 'Cancel',
-                confirmButtonName: 'Save',
+                cancelButtonName: '取消',
+                confirmButtonName: '保存',
                 data: JSON.parse(file)
             }
             setDialogProps(dialogProp)
@@ -128,10 +128,10 @@ const Tools = () => {
 
     const addNew = () => {
         const dialogProp = {
-            title: 'Add New Tool',
+            title: '添加新工具',
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add'
+            cancelButtonName: '取消',
+            confirmButtonName: '添加'
         }
         setDialogProps(dialogProp)
         setShowDialog(true)
@@ -139,10 +139,10 @@ const Tools = () => {
 
     const edit = (selectedTool) => {
         const dialogProp = {
-            title: 'Edit Tool',
+            title: '编辑工具',
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             data: selectedTool
         }
         setDialogProps(dialogProp)
@@ -251,7 +251,7 @@ const Tools = () => {
                 }}
                 variant='contained'
                 value='card'
-                title='Card View'
+                title='卡片视图'
             >
                 <IconLayoutGrid />
             </ToggleButton>
@@ -263,7 +263,7 @@ const Tools = () => {
                 }}
                 variant='contained'
                 value='list'
-                title='List View'
+                title='列表视图'
             >
                 <IconList />
             </ToggleButton>
@@ -281,7 +281,7 @@ const Tools = () => {
                     startIcon={<IconFileUpload />}
                     sx={{ borderRadius: 2, height: 40 }}
                 >
-                    Load
+                    加载
                 </PermissionButton>
                 <input style={{ display: 'none' }} ref={inputRef} type='file' hidden accept='.json' onChange={(e) => handleFileUpload(e)} />
             </Box>
@@ -293,7 +293,7 @@ const Tools = () => {
                     startIcon={<IconPlus />}
                     sx={{ borderRadius: 2, height: 40 }}
                 >
-                    Create
+                    创建
                 </StyledPermissionButton>
             </ButtonGroup>
         </Box>
@@ -310,7 +310,7 @@ const Tools = () => {
                     startIcon={<IconPlus />}
                     sx={{ borderRadius: 2, height: 40 }}
                 >
-                    Add Custom MCP Server
+                    添加自定义 MCP 服务器
                 </StyledPermissionButton>
             </ButtonGroup>
         </Box>
@@ -345,7 +345,7 @@ const Tools = () => {
                     <Box sx={{ p: 2, height: 'auto' }}>
                         <img style={{ objectFit: 'cover', height: '20vh', width: 'auto' }} src={ToolEmptySVG} alt='ToolEmptySVG' />
                     </Box>
-                    <div>No Tools Created Yet</div>
+                    <div>暂无工具</div>
                 </Stack>
             )}
         </>
@@ -383,7 +383,7 @@ const Tools = () => {
                     <Box sx={{ p: 2, height: 'auto' }}>
                         <img style={{ objectFit: 'cover', height: '20vh', width: 'auto' }} src={ToolEmptySVG} alt='ToolEmptySVG' />
                     </Box>
-                    <div>No Custom MCP Servers Added Yet</div>
+                    <div>暂无自定义 MCP 服务器</div>
                 </Stack>
             )}
         </>
@@ -399,9 +399,9 @@ const Tools = () => {
                         <ViewHeader
                             onSearchChange={onSearchChange}
                             search={true}
-                            searchPlaceholder={tabValue === 0 ? 'Search Tools' : 'Search Custom MCP Servers'}
-                            title='Tools'
-                            description='External functions or APIs the agent can use to take action'
+                            searchPlaceholder={tabValue === 0 ? '搜索工具' : '搜索自定义 MCP 服务器'}
+                            title='工具'
+                            description='智能体可用于执行操作的外部函数或 API'
                         />
                         <Box
                             sx={{
@@ -414,8 +414,8 @@ const Tools = () => {
                             }}
                         >
                             <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)} aria-label='tools tabs'>
-                                <Tab label='Custom Tools' />
-                                <Tab label='Custom MCP Servers' />
+                                <Tab label='自定义工具' />
+                                <Tab label='自定义 MCP 服务器' />
                             </Tabs>
                             <Box sx={{ pb: 1 }}>{tabValue === 0 ? renderCustomToolsToolbar() : renderMcpServersToolbar()}</Box>
                         </Box>

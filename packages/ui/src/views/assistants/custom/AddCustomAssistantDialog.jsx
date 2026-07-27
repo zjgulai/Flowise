@@ -127,7 +127,7 @@ const AddCustomAssistantDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                 </Box>
             </DialogContent>
             <DialogActions>
-                <Button onClick={() => onCancel()}>Cancel</Button>
+                <Button onClick={() => onCancel()}>取消</Button>
                 <StyledButton disabled={!customAssistantName} variant='contained' onClick={() => createCustomAssistant()}>
                     {dialogProps.confirmButtonName}
                 </StyledButton>

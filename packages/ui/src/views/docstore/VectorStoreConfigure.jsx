@@ -129,7 +129,7 @@ const VectorStoreConfigure = () => {
 
     const showEmbeddingsList = () => {
         const dialogProp = {
-            title: 'Select Embeddings Provider'
+            title: '选择嵌入提供商'
         }
         setDialogProps(dialogProp)
         setShowEmbeddingsListDialog(true)
@@ -153,7 +153,7 @@ const VectorStoreConfigure = () => {
 
     const showVectorStoreList = () => {
         const dialogProp = {
-            title: 'Select a Vector Store Provider'
+            title: '选择向量存储提供商'
         }
         setDialogProps(dialogProp)
         setShowVectorStoreListDialog(true)
@@ -171,7 +171,7 @@ const VectorStoreConfigure = () => {
 
     const showRecordManagerList = () => {
         const dialogProp = {
-            title: 'Select a Record Manager'
+            title: '选择记录管理器'
         }
         setDialogProps(dialogProp)
         setShowRecordManagerListDialog(true)
@@ -228,7 +228,7 @@ const VectorStoreConfigure = () => {
 
         if (!canSubmit) {
             enqueueSnackbar({
-                message: 'Please fill in all mandatory fields.',
+                message: '请填写所有必填字段。',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'warning',
@@ -569,7 +569,7 @@ const VectorStoreConfigure = () => {
                                                 Upsert
                                             </Button>
                                         )}
-                                    <IconButton onClick={showUpsertHistoryDrawer} size='small' color='inherit' title='Upsert History'>
+                                    <IconButton onClick={showUpsertHistoryDrawer} size='small' color='inherit' title='更新历史'>
                                         <IconClock />
                                     </IconButton>
                                 </ViewHeader>

@@ -127,7 +127,7 @@ const Files = () => {
                 <ErrorBoundary error={error} />
             ) : (
                 <Stack flexDirection='column' sx={{ gap: 3 }}>
-                    <ViewHeader onSearchChange={onSearchChange} search={true} searchPlaceholder='Search File' title='Files' />
+                    <ViewHeader onSearchChange={onSearchChange} search={true} searchPlaceholder='Search File' title='文件' />
                     <FilesTable data={files} filterFunction={filterFiles} handleDelete={handleDeleteFile} isLoading={isLoading} />
                     {!isLoading && (!getAllFilesApi.data || getAllFilesApi.data.length === 0) && (
                         <Stack sx={{ alignItems: 'center', justifyContent: 'center' }} flexDirection='column'>

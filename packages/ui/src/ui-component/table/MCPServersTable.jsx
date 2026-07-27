@@ -94,10 +94,10 @@ export const MCPServersTable = ({ data, isLoading, onSelect }) => {
                     }}
                 >
                     <TableRow>
-                        <StyledTableCell>Name</StyledTableCell>
-                        <StyledTableCell>Server URL</StyledTableCell>
-                        <StyledTableCell>Status</StyledTableCell>
-                        <StyledTableCell>Tools</StyledTableCell>
+                        <StyledTableCell>名称</StyledTableCell>
+                        <StyledTableCell>服务器 URL</StyledTableCell>
+                        <StyledTableCell>状态</StyledTableCell>
+                        <StyledTableCell>工具</StyledTableCell>
                         <StyledTableCell>&nbsp;</StyledTableCell>
                     </TableRow>
                 </TableHead>
@@ -177,7 +177,7 @@ export const MCPServersTable = ({ data, isLoading, onSelect }) => {
                                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                                 <IconTool size={14} />
                                                 <Typography sx={{ fontSize: 13 }}>
-                                                    {toolCount} {toolCount === 1 ? 'tool' : 'tools'}
+                                                    {toolCount} {toolCount === 1 ? '工具' : '工具'}
                                                 </Typography>
                                             </Box>
                                         </StyledTableCell>

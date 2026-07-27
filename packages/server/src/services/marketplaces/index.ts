@@ -10,6 +10,7 @@ import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { getErrorMessage } from '../../errors/utils'
 import { IReactFlowEdge, IReactFlowNode } from '../../Interface'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+import logger from '../../utils/logger'
 import { stripProtectedFields } from '../../utils/stripProtectedFields'
 import chatflowsService from '../chatflows'
 
@@ -26,9 +27,24 @@ const getCategories = (fileDataObj: ITemplate) => {
     return Array.from(new Set(fileDataObj?.nodes?.map((node) => node.data.category).filter((category) => category)))
 }
 
+const getMissingComponentNodeNames = (fileDataObj: ITemplate, componentNodes: Record<string, unknown>) => {
+    return Array.from(
+        new Set(
+            (fileDataObj?.nodes || [])
+                .map((node) => node?.data?.name)
+                .filter((name): name is string => Boolean(name) && !Object.prototype.hasOwnProperty.call(componentNodes, name))
+        )
+    )
+}
+
+const getSafeMarketplaceIconSrc = (iconSrc: unknown) => {
+    return typeof iconSrc === 'string' && iconSrc.startsWith('/') && !iconSrc.startsWith('//') ? iconSrc : undefined
+}
+
 // Get all templates for marketplaces
 const getAllTemplates = async () => {
     try {
+        const componentNodes = getRunningExpressApp().nodesPool.componentNodes
         let marketplaceDir = path.join(__dirname, '..', '..', '..', 'marketplaces', 'chatflows')
         let jsonsInDir = fs.readdirSync(marketplaceDir).filter((file) => path.extname(file) === '.json')
         let templates: any[] = []
@@ -36,6 +52,11 @@ const getAllTemplates = async () => {
             const filePath = path.join(__dirname, '..', '..', '..', 'marketplaces', 'chatflows', file)
             const fileData = fs.readFileSync(filePath)
             const fileDataObj = JSON.parse(fileData.toString()) as ITemplate
+            const missingNodeNames = getMissingComponentNodeNames(fileDataObj, componentNodes)
+            if (missingNodeNames.length > 0) {
+                logger.warn(`[server]: Skipping marketplace template ${file}: missing component nodes ${missingNodeNames.join(', ')}`)
+                return
+            }
 
             const template = {
                 id: uuidv4(),
@@ -61,6 +82,7 @@ const getAllTemplates = async () => {
                 ...fileDataObj,
                 id: uuidv4(),
                 type: 'Tool',
+                iconSrc: getSafeMarketplaceIconSrc(fileDataObj?.iconSrc),
                 framework: fileDataObj?.framework,
                 badge: fileDataObj?.badge,
                 usecases: fileDataObj?.usecases,
@@ -98,6 +120,11 @@ const getAllTemplates = async () => {
             const filePath = path.join(__dirname, '..', '..', '..', 'marketplaces', 'agentflowsv2', file)
             const fileData = fs.readFileSync(filePath)
             const fileDataObj = JSON.parse(fileData.toString())
+            const missingNodeNames = getMissingComponentNodeNames(fileDataObj, componentNodes)
+            if (missingNodeNames.length > 0) {
+                logger.warn(`[server]: Skipping marketplace template ${file}: missing component nodes ${missingNodeNames.join(', ')}`)
+                return
+            }
             const template = {
                 id: uuidv4(),
                 templateName: file.split('.json')[0],

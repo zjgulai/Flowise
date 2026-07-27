@@ -180,21 +180,21 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
             handleDeleteFlow()
         } else if (setting === 'viewMessages') {
             setViewMessagesDialogProps({
-                title: 'View Messages',
+                title: '查看消息',
                 chatflow: chatflow,
                 isChatflow: isAgentflowV2 ? false : true
             })
             setViewMessagesDialogOpen(true)
         } else if (setting === 'viewLeads') {
             setViewLeadsDialogProps({
-                title: 'View Leads',
+                title: '查看线索',
                 chatflow: chatflow
             })
             setViewLeadsDialogOpen(true)
         } else if (setting === 'saveAsTemplate') {
             if (canvas.isDirty) {
                 enqueueSnackbar({
-                    message: 'Please save the flow before exporting as template',
+                    message: '导出为模板前请先保存流程',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -209,19 +209,19 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                 return
             }
             setExportAsTemplateDialogProps({
-                title: 'Export As Template',
+                title: '导出为模板',
                 chatflow: chatflow
             })
             setExportAsTemplateDialogOpen(true)
         } else if (setting === 'viewUpsertHistory') {
             setUpsertHistoryDialogProps({
-                title: 'View Upsert History',
+                title: '查看更新历史',
                 chatflow: chatflow
             })
             setUpsertHistoryDialogOpen(true)
         } else if (setting === 'chatflowConfiguration') {
             setChatflowConfigurationDialogProps({
-                title: `${title} Configuration`,
+                title: `${title} 配置`,
                 chatflow: chatflow
             })
             setChatflowConfigurationDialogOpen(true)
@@ -307,7 +307,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
         }
 
         setAPIDialogProps({
-            title: 'Embed in website or use as API',
+            title: '嵌入网站或作为 API 使用',
             chatflowid: chatflow.id,
             chatflowApiKeyId: chatflow.apikeyid,
             isFormDataRequired,
@@ -346,7 +346,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
             // if configuration dialog is open, update its data
             if (chatflowConfigurationDialogOpen) {
                 setChatflowConfigurationDialogProps({
-                    title: `${title} Configuration`,
+                    title: `${title} 配置`,
                     chatflow
                 })
             }
@@ -375,7 +375,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
         if (toggleScheduleEnabledApi.data) {
             setScheduleEnabled(toggleScheduleEnabledApi.data.enabled ?? false)
             enqueueSnackbar({
-                message: `Schedule ${toggleScheduleEnabledApi.data.enabled ? 'enabled' : 'disabled'} successfully`,
+                message: `调度已${toggleScheduleEnabledApi.data.enabled ? '启用' : '禁用'}`,
                 options: { variant: 'success' }
             })
         }
@@ -385,7 +385,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
     useEffect(() => {
         if (toggleScheduleEnabledApi.error) {
             enqueueSnackbar({
-                message: String(toggleScheduleEnabledApi.error?.message || toggleScheduleEnabledApi.error || 'Failed to toggle schedule'),
+                message: String(toggleScheduleEnabledApi.error?.message || toggleScheduleEnabledApi.error || '切换调度失败'),
                 options: { variant: 'error' }
             })
         }
@@ -401,7 +401,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
             <Stack flexDirection='row' justifyContent='space-between' sx={{ width: '100%' }}>
                 <Stack flexDirection='row' sx={{ width: '100%', maxWidth: '50%' }}>
                     <Box>
-                        <ButtonBase title='Back' sx={{ borderRadius: '50%' }}>
+                        <ButtonBase title='返回' sx={{ borderRadius: '50%' }}>
                             <Avatar
                                 variant='rounded'
                                 sx={{
@@ -445,7 +445,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                                 </Typography>
                                 {chatflow?.id && (
                                     <Available permission={savePermission}>
-                                        <ButtonBase title='Edit Name' sx={{ borderRadius: '50%' }}>
+                                        <ButtonBase title='编辑名称' sx={{ borderRadius: '50%' }}>
                                             <Avatar
                                                 variant='rounded'
                                                 sx={{
@@ -489,7 +489,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                                         }
                                     }}
                                 />
-                                <ButtonBase title='Save Name' sx={{ borderRadius: '50%' }}>
+                                <ButtonBase title='保存名称' sx={{ borderRadius: '50%' }}>
                                     <Avatar
                                         variant='rounded'
                                         sx={{
@@ -510,7 +510,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                                         <IconCheck stroke={1.5} size='1.3rem' />
                                     </Avatar>
                                 </ButtonBase>
-                                <ButtonBase title='Cancel' sx={{ borderRadius: '50%' }}>
+                                <ButtonBase title='取消' sx={{ borderRadius: '50%' }}>
                                     <Avatar
                                         variant='rounded'
                                         sx={{
@@ -540,10 +540,10 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                         <Tooltip
                             title={
                                 scheduleEnabled
-                                    ? 'Schedule active — click to disable'
+                                    ? '调度已激活 — 点击禁用'
                                     : scheduleCanEnable
-                                    ? 'Schedule inactive — click to enable'
-                                    : scheduleCanEnableReason || 'Fix the schedule configuration to enable'
+                                    ? '调度未激活 — 点击启用'
+                                    : scheduleCanEnableReason || '修复调度配置以启用'
                             }
                         >
                             <Box
@@ -614,7 +614,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                             </Avatar>
                         </ButtonBase>
                     </Available>
-                    <ButtonBase ref={settingsRef} title='Settings' sx={{ borderRadius: '50%' }}>
+                    <ButtonBase ref={settingsRef} title='设置' sx={{ borderRadius: '50%' }}>
                         <Avatar
                             variant='rounded'
                             sx={{
@@ -647,9 +647,9 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
             <SaveChatflowDialog
                 show={flowDialogOpen}
                 dialogProps={{
-                    title: `Save New ${title}`,
-                    confirmButtonName: 'Save',
-                    cancelButtonName: 'Cancel'
+                    title: `保存新 ${title}`,
+                    confirmButtonName: '保存',
+                    cancelButtonName: '取消'
                 }}
                 onCancel={() => setFlowDialogOpen(false)}
                 onConfirm={onConfirmSaveName}

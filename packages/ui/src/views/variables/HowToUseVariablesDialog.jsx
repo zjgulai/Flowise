@@ -24,12 +24,10 @@ const HowToUseVariablesDialog = ({ show, onCancel }) => {
             aria-describedby='alert-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
-                How To Use Variables
+                如何使用变量
             </DialogTitle>
             <DialogContent>
-                <p style={{ marginBottom: '10px' }}>
-                    Variables can be used in Custom Tool, Custom Function, Custom Loader, If Else Function with the $ prefix.
-                </p>
+                <p style={{ marginBottom: '10px' }}>变量可在自定义工具、自定义函数、自定义加载器和 If Else 函数中使用，前缀为 $。</p>
                 <CodeEditor
                     disabled={true}
                     value={`$vars.<variable-name>`}
@@ -38,9 +36,7 @@ const HowToUseVariablesDialog = ({ show, onCancel }) => {
                     lang={'js'}
                     basicSetup={{ highlightActiveLine: false, highlightActiveLineGutter: false }}
                 />
-                <p style={{ marginBottom: '10px' }}>
-                    Variables can also be used in Text Field parameter of any node. For example, in System Message of Agent:
-                </p>
+                <p style={{ marginBottom: '10px' }}>变量也可用于任何节点的文本字段参数。例如，在智能体的系统消息中：</p>
                 <CodeEditor
                     disabled={true}
                     value={`You are a {{$vars.personality}} AI assistant`}
@@ -49,12 +45,9 @@ const HowToUseVariablesDialog = ({ show, onCancel }) => {
                     lang={'js'}
                     basicSetup={{ highlightActiveLine: false, highlightActiveLineGutter: false }}
                 />
+                <p style={{ marginBottom: '10px' }}>如果变量类型为静态，将按原值读取；如果为运行时，将从 .env 文件读取。</p>
                 <p style={{ marginBottom: '10px' }}>
-                    If variable type is Static, the value will be retrieved as it is. If variable type is Runtime, the value will be
-                    retrieved from .env file.
-                </p>
-                <p style={{ marginBottom: '10px' }}>
-                    You can also override variable values in API overrideConfig using <b>vars</b>:
+                    您也可以在 API overrideConfig 中使用 <b>vars</b> 覆盖变量值：
                 </p>
                 <CodeEditor
                     disabled={true}

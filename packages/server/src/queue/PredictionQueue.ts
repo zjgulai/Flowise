@@ -63,47 +63,61 @@ export class PredictionQueue extends BaseQueue {
     }
 
     async processJob(data: IExecuteFlowParams | IGenerateAgentflowv2Params) {
-        if (this.redisPublisher) {
-            await this.redisPublisher.connect()
-        }
-        if (this.appDataSource) data.appDataSource = this.appDataSource
-        if (this.telemetry) data.telemetry = this.telemetry
-        if (this.cachePool) data.cachePool = this.cachePool
-        if (this.usageCacheManager) data.usageCacheManager = this.usageCacheManager
-        if (this.componentNodes) data.componentNodes = this.componentNodes
-        if (this.redisPublisher) data.sseStreamer = this.redisPublisher
+        const isAgentFlowGenerator = Object.prototype.hasOwnProperty.call(data, 'isAgentFlowGenerator')
+        const isExecuteCustomFunction = Object.prototype.hasOwnProperty.call(data, 'isExecuteCustomFunction')
+        const abortControllerId =
+            !isAgentFlowGenerator && !isExecuteCustomFunction && data.chatflow?.id && data.chatId
+                ? data.abortControllerId || `${data.chatflow.id}_${data.chatId}`
+                : undefined
 
-        if (Object.prototype.hasOwnProperty.call(data, 'isAgentFlowGenerator')) {
-            logger.info(`Generating Agentflow...`)
-            const { prompt, componentNodes, toolNodes, selectedChatModel, question } = data as IGenerateAgentflowv2Params
-            const options: Record<string, any> = {
-                appDataSource: this.appDataSource,
-                databaseEntities: databaseEntities,
-                logger: logger
-            }
-            return await generateAgentflowv2_json({ prompt, componentNodes, toolNodes, selectedChatModel }, question, options)
-        }
-
-        if (Object.prototype.hasOwnProperty.call(data, 'isExecuteCustomFunction')) {
-            const executeCustomFunctionData = data as any
-            logger.info(`[${executeCustomFunctionData.orgId}]: Executing Custom Function...`)
-            return await executeCustomNodeFunction({
-                appDataSource: this.appDataSource,
-                componentNodes: this.componentNodes,
-                data: executeCustomFunctionData.data,
-                workspaceId: executeCustomFunctionData.workspaceId,
-                orgId: executeCustomFunctionData.orgId,
-                canViewVariables: executeCustomFunctionData.canViewVariables
-            })
-        }
-
-        if (this.abortControllerPool) {
-            const abortControllerId = `${data.chatflow.id}_${data.chatId}`
+        // Register before the first await so an already-delivered queue abort
+        // tombstone is consumed before any provider or database work starts.
+        if (this.abortControllerPool && abortControllerId) {
             const signal = new AbortController()
             this.abortControllerPool.add(abortControllerId, signal)
             data.signal = signal
         }
 
-        return await executeFlow(data)
+        try {
+            if (this.redisPublisher) {
+                await this.redisPublisher.connect()
+            }
+            if (this.appDataSource) data.appDataSource = this.appDataSource
+            if (this.telemetry) data.telemetry = this.telemetry
+            if (this.cachePool) data.cachePool = this.cachePool
+            if (this.usageCacheManager) data.usageCacheManager = this.usageCacheManager
+            if (this.componentNodes) data.componentNodes = this.componentNodes
+            if (this.redisPublisher) data.sseStreamer = this.redisPublisher
+
+            if (isAgentFlowGenerator) {
+                logger.info(`Generating Agentflow...`)
+                const { prompt, componentNodes, toolNodes, selectedChatModel, question } = data as IGenerateAgentflowv2Params
+                const options: Record<string, any> = {
+                    appDataSource: this.appDataSource,
+                    databaseEntities: databaseEntities,
+                    logger: logger
+                }
+                return await generateAgentflowv2_json({ prompt, componentNodes, toolNodes, selectedChatModel }, question, options)
+            }
+
+            if (isExecuteCustomFunction) {
+                const executeCustomFunctionData = data as any
+                logger.info(`[${executeCustomFunctionData.orgId}]: Executing Custom Function...`)
+                return await executeCustomNodeFunction({
+                    appDataSource: this.appDataSource,
+                    componentNodes: this.componentNodes,
+                    data: executeCustomFunctionData.data,
+                    workspaceId: executeCustomFunctionData.workspaceId,
+                    orgId: executeCustomFunctionData.orgId,
+                    canViewVariables: executeCustomFunctionData.canViewVariables
+                })
+            }
+
+            return await executeFlow(data)
+        } finally {
+            if (this.abortControllerPool && abortControllerId) {
+                this.abortControllerPool.remove(abortControllerId)
+            }
+        }
     }
 }

@@ -59,15 +59,23 @@ const Agentflows = () => {
         setCurrentPage(page)
         setPageLimit(pageLimit)
         localStorage.setItem('agentFlowPageSize', pageLimit)
-        refresh(page, pageLimit, agentflowVersion)
+        refresh(page, pageLimit, agentflowVersion, search)
     }
 
-    const refresh = (page, limit, nextView) => {
+    const refresh = (page, limit, nextView, searchTerm = search, sort = {}) => {
         const params = {
             page: page || currentPage,
-            limit: limit || pageLimit
+            limit: limit || pageLimit,
+            search: searchTerm.trim(),
+            orderBy: sort.orderBy || localStorage.getItem('agentcanvas_orderBy') || 'updatedDate',
+            order: sort.order || localStorage.getItem('agentcanvas_order') || 'desc'
         }
         getAllAgentflows.request(nextView === 'v2' ? 'AGENTFLOW' : 'MULTIAGENT', params)
+    }
+
+    const onSortChange = (orderBy, order) => {
+        setCurrentPage(1)
+        refresh(1, pageLimit, agentflowVersion, search, { orderBy, order })
     }
 
     const handleChange = (event, nextView) => {
@@ -80,11 +88,13 @@ const Agentflows = () => {
         if (nextView === null) return
         localStorage.setItem('agentFlowVersion', nextView)
         setAgentflowVersion(nextView)
-        refresh(1, pageLimit, nextView)
+        setCurrentPage(1)
+        refresh(1, pageLimit, nextView, search)
     }
 
     const onSearchChange = (event) => {
         setSearch(event.target.value)
+        setCurrentPage(1)
     }
 
     function filterFlows(data) {
@@ -116,10 +126,11 @@ const Agentflows = () => {
     }
 
     useEffect(() => {
-        refresh(currentPage, pageLimit, agentflowVersion)
+        const searchTimer = setTimeout(() => refresh(1, pageLimit, agentflowVersion, search), search ? 300 : 0)
 
+        return () => clearTimeout(searchTimer)
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [search])
 
     useEffect(() => {
         if (getAllAgentflows.error) {
@@ -189,14 +200,15 @@ const Agentflows = () => {
                     ).then((results) => {
                         setScheduleStatuses((prev) => {
                             const next = { ...prev }
-                            results.forEach(({ id, data }) => {
+                            results.forEach(({ id, data, error }) => {
                                 if (next[id]) {
                                     next[id] = {
                                         ...next[id],
                                         enabled: data?.enabled === true,
                                         nextRunAt: data?.record?.nextRunAt || null,
                                         cronExpression: data?.record?.cronExpression || null,
-                                        loading: false
+                                        loading: false,
+                                        error: error === true
                                     }
                                 }
                             })
@@ -219,9 +231,9 @@ const Agentflows = () => {
                     <ViewHeader
                         onSearchChange={onSearchChange}
                         search={true}
-                        searchPlaceholder='Search Name or Category'
-                        title='Agentflows'
-                        description='Multi-agent systems, workflow orchestration'
+                        searchPlaceholder='搜索名称或分类'
+                        title='智能体流程'
+                        description='多智能体系统，工作流编排'
                     >
                         <ToggleButtonGroup
                             sx={{ borderRadius: 2, maxHeight: 40 }}
@@ -272,7 +284,7 @@ const Agentflows = () => {
                                 }}
                                 variant='contained'
                                 value='card'
-                                title='Card View'
+                                title='卡片视图'
                             >
                                 <IconLayoutGrid />
                             </ToggleButton>
@@ -284,7 +296,7 @@ const Agentflows = () => {
                                 }}
                                 variant='contained'
                                 value='list'
-                                title='List View'
+                                title='列表视图'
                             >
                                 <IconList />
                             </ToggleButton>
@@ -296,7 +308,7 @@ const Agentflows = () => {
                             startIcon={<IconPlus />}
                             sx={{ borderRadius: 2, height: 40 }}
                         >
-                            Add New
+                            新建
                         </StyledPermissionButton>
                     </ViewHeader>
 
@@ -324,11 +336,10 @@ const Agentflows = () => {
                                 }}
                             />
                             <Box sx={{ flex: 1 }}>
-                                <strong>V1 Agentflows are deprecated.</strong> We recommend migrating to V2 for improved performance and
-                                continued support.
+                                <strong>V1 智能体流程已弃用。</strong> 建议迁移到 V2 以获得更好的性能和持续支持。
                             </Box>
                             <IconButton
-                                aria-label='dismiss'
+                                aria-label='关闭 V1 弃用提示'
                                 size='small'
                                 onClick={handleDismissDeprecationNotice}
                                 sx={{
@@ -345,7 +356,11 @@ const Agentflows = () => {
                     {!isLoading && total > 0 && (
                         <>
                             {!view || view === 'card' ? (
-                                <Box display='grid' gridTemplateColumns='repeat(3, 1fr)' gap={gridSpacing}>
+                                <Box
+                                    display='grid'
+                                    gridTemplateColumns={{ xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' }}
+                                    gap={gridSpacing}
+                                >
                                     {getAllAgentflows.data?.data.filter(filterFlows).map((data, index) => (
                                         <ItemCard
                                             key={index}
@@ -371,6 +386,7 @@ const Agentflows = () => {
                                     setError={setError}
                                     currentPage={currentPage}
                                     pageLimit={pageLimit}
+                                    onSortChange={onSortChange}
                                 />
                             )}
                             {/* Pagination and Page Size Controls */}
@@ -387,7 +403,7 @@ const Agentflows = () => {
                                     alt='AgentsEmptySVG'
                                 />
                             </Box>
-                            <div>No Agents Yet</div>
+                            <div>暂无智能体</div>
                         </Stack>
                     )}
                 </Stack>

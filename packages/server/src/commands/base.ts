@@ -160,6 +160,8 @@ export abstract class BaseCommand extends Command {
         GLOBAL_AGENT_NO_PROXY: Flags.string(),
 
         // Document Loaders
+        PUPPETEER_EXECUTABLE_PATH: Flags.string(),
+        PLAYWRIGHT_EXECUTABLE_PATH: Flags.string(),
         PUPPETEER_EXECUTABLE_FILE_PATH: Flags.string(),
         PLAYWRIGHT_EXECUTABLE_FILE_PATH: Flags.string(),
 

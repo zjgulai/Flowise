@@ -83,6 +83,27 @@ describe('logger.ts', () => {
             infoSpy.mockRestore()
         })
 
+        it('never logs the acceptance-login request, even in debug mode without sanitize fields', () => {
+            process.env.DEBUG = 'true'
+            delete process.env.LOG_SANITIZE_BODY_FIELDS
+            delete process.env.LOG_SANITIZE_HEADER_FIELDS
+            const req = {
+                url: '/api/v1/auth/acceptance-login',
+                method: 'POST',
+                params: {},
+                body: { code: 'fixed-test-fixture' },
+                query: {},
+                headers: {}
+            } as any
+            const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => {})
+
+            expressRequestLogger(req, {} as any, next)
+
+            expect(next).toHaveBeenCalled()
+            expect(infoSpy).not.toHaveBeenCalled()
+            infoSpy.mockRestore()
+        })
+
         it('does not log when URL does not match /api/v1/', () => {
             const req = { url: '/health', method: 'GET', params: {} } as any
             const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => {})

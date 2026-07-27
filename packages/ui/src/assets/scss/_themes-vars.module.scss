@@ -1,56 +1,56 @@
 // paper & background
-$paper: #ffffff;
+$paper: #faf8f5;
 
-// primary
-$primaryLight: #e3f2fd;
-$primaryMain: #2196f3;
-$primaryDark: #1e88e5;
-$primary200: #90caf9;
-$primary800: #1565c0;
+// primary (翡翠绿)
+$primaryLight: #d4ede3;
+$primaryMain: #2a7b5f;
+$primaryDark: #1e5c45;
+$primary200: #a8d8c4;
+$primary800: #1a4a38;
 
-// secondary
-$secondaryLight: #ede7f6;
-$secondaryMain: #673ab7;
-$secondaryDark: #5e35b1;
-$secondary200: #b39ddb;
-$secondary800: #4527a0;
+// secondary (暖金)
+$secondaryLight: #f0e6ce;
+$secondaryMain: #c4a35a;
+$secondaryDark: #a3823d;
+$secondary200: #d9c99e;
+$secondary800: #8c6b2f;
 
-// success Colors
-$successLight: #cdf5d8;
-$success200: #69f0ae;
-$successMain: #00e676;
-$successDark: #00c853;
+// success Colors (竹青)
+$successLight: #d4ede3;
+$success200: #a8d8c4;
+$successMain: #2a7b5f;
+$successDark: #1e5c45;
 
-// error
-$errorLight: #f3d2d2;
-$errorMain: #f44336;
-$errorDark: #c62828;
+// error (朱红)
+$errorLight: #fadcd9;
+$errorMain: #d13a2e;
+$errorDark: #a82d22;
 
-// orange
-$orangeLight: #fbe9e7;
-$orangeMain: #ffab91;
-$orangeDark: #d84315;
+// orange (琥珀)
+$orangeLight: #f5e6d3;
+$orangeMain: #d4a373;
+$orangeDark: #b38252;
 
-// brown
-$tealLight: #76c893;
-$tealMain: #52b69a;
-$tealDark: #34a0a4;
+// brown ( teal -> 墨绿)
+$tealLight: #a8d8c4;
+$tealMain: #2a7b5f;
+$tealDark: #1e5c45;
 
-// warning
-$warningLight: #fff8e1;
-$warningMain: #ffe57f;
-$warningDark: #ffc107;
+// warning (琥珀)
+$warningLight: #f5e6d3;
+$warningMain: #d4a373;
+$warningDark: #b38252;
 
-// grey
-$grey50: #fafafa;
-$grey100: #f5f5f5;
-$grey200: #eeeeee;
-$grey300: #e0e0e0;
-$grey400: #c4c4c4;
-$grey500: #9e9e9e;
-$grey600: #757575;
-$grey700: #616161;
-$grey900: #212121;
+// grey (暖灰)
+$grey50: #faf8f5;
+$grey100: #f5f0eb;
+$grey200: #ebe5de;
+$grey300: #ddd5cb;
+$grey400: #c4b8aa;
+$grey500: #9e8f7e;
+$grey600: #7a6e60;
+$grey700: #5c5248;
+$grey900: #3a332d;
 
 // transparent
 $transparent: #ffffff00;
@@ -58,31 +58,31 @@ $transparent: #ffffff00;
 // ==============================|| DARK THEME VARIANTS ||============================== //
 
 // paper & background
-$darkBackground: #191b1f;
-$darkPaper: #191b1f;
+$darkBackground: #1e1b18;
+$darkPaper: #1e1b18;
 
 // dark 800 & 900
-$darkLevel1: #252525; // level 1
-$darkLevel2: #242424; // level 2
+$darkLevel1: #2a2520; // level 1
+$darkLevel2: #332d27; // level 2
 
 // primary dark
-$darkPrimaryLight: #23262c;
-$darkPrimaryMain: #23262c;
-$darkPrimaryDark: #191b1f;
-$darkPrimary200: #c9d4e9;
-$darkPrimary800: #32353b;
+$darkPrimaryLight: #2a3d35;
+$darkPrimaryMain: #2a7b5f;
+$darkPrimaryDark: #1e1b18;
+$darkPrimary200: #a8d8c4;
+$darkPrimary800: #3d5a4d;
 
 // secondary dark
-$darkSecondaryLight: #454c59;
-$darkSecondaryMain: #7c4dff;
-$darkSecondaryDark: #ffffff;
-$darkSecondary200: #32353b;
-$darkSecondary800: #6200ea;
+$darkSecondaryLight: #4a4033;
+$darkSecondaryMain: #c4a35a;
+$darkSecondaryDark: #faf8f5;
+$darkSecondary200: #3d3528;
+$darkSecondary800: #8c6b2f;
 
 // text variants
-$darkTextTitle: #d7dcec;
-$darkTextPrimary: #bdc8f0;
-$darkTextSecondary: #8492c4;
+$darkTextTitle: #f5f0eb;
+$darkTextPrimary: #ddd5cb;
+$darkTextSecondary: #c4b8aa;
 
 // ==============================|| JAVASCRIPT ||============================== //
 

@@ -68,7 +68,7 @@ const PostProcessing = ({ dialogProps }) => {
         const dialogProps = {
             value,
             inputParam: {
-                label: 'Post Processing Function',
+                label: '后处理函数',
                 name: 'postProcessingFunction',
                 type: 'code',
                 placeholder: sampleFunction,
@@ -167,7 +167,7 @@ const PostProcessing = ({ dialogProps }) => {
                             height: 25,
                             width: 25
                         }}
-                        title='Expand'
+                        title='展开'
                         color='primary'
                         onClick={() => onExpandDialogClicked(postProcessingFunction)}
                     >

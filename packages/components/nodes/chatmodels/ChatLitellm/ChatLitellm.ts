@@ -4,6 +4,8 @@ import { BaseLLMParams } from '@langchain/core/language_models/llms'
 import { ICommonObject, IMultiModalOption, INode, INodeData, INodeParams } from '../../../src/Interface'
 import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
 import { ChatOpenAI } from '../ChatOpenAI/FlowiseChatOpenAI'
+import { checkDenyList } from '../../../src/httpSecurity'
+import { buildSecureProviderConfiguration } from '../providerUtils'
 
 class ChatLitellm_ChatModels implements INode {
     label: string
@@ -119,17 +121,17 @@ class ChatLitellm_ChatModels implements INode {
         const apiKey = getCredentialParam('litellmApiKey', credentialData, nodeData)
 
         const obj: Partial<OpenAIChatInput> &
-            BaseLLMParams & { openAIApiKey?: string } & { configuration?: { baseURL?: string; defaultHeaders?: ICommonObject } } = {
+            BaseLLMParams & { openAIApiKey?: string } & {
+                configuration?: ReturnType<typeof buildSecureProviderConfiguration>
+            } = {
             temperature: parseFloat(temperature),
             modelName,
             streaming: streaming ?? true
         }
 
-        if (basePath) {
-            obj.configuration = {
-                baseURL: basePath
-            }
-        }
+        if (!basePath?.trim()) throw new Error('LiteLLM Base URL is required')
+        await checkDenyList(basePath)
+        obj.configuration = buildSecureProviderConfiguration(basePath)
 
         if (maxTokens) obj.maxTokens = parseInt(maxTokens, 10)
         if (topP) obj.topP = parseFloat(topP)

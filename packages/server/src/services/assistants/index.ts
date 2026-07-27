@@ -284,6 +284,7 @@ const getAssistantById = async (assistantId: string, workspaceId: string): Promi
         }
         return dbResponse
     } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
         throw new InternalFlowiseError(
             StatusCodes.INTERNAL_SERVER_ERROR,
             `Error: assistantsService.getAssistantById - ${getErrorMessage(error)}`

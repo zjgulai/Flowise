@@ -100,7 +100,7 @@ const ExpandedChunkDialog = ({ show, dialogProps, onCancel, onChunkEdit, onDelet
                             </PermissionIconButton>
                         )}
                         {isEdit && !isReadOnly && (
-                            <Button onClick={() => onEditCancel()} color='primary' title='Cancel' sx={{ ml: 2 }}>
+                            <Button onClick={() => onEditCancel()} color='primary' title='取消' sx={{ ml: 2 }}>
                                 Cancel
                             </Button>
                         )}
@@ -109,7 +109,7 @@ const ExpandedChunkDialog = ({ show, dialogProps, onCancel, onChunkEdit, onDelet
                                 permissionId={'documentStores:preview-process'}
                                 onClick={() => onEditSaved(true)}
                                 color='primary'
-                                title='Save'
+                                title='保存'
                                 variant='contained'
                                 sx={{ ml: 2, mr: 1 }}
                             >
@@ -128,7 +128,7 @@ const ExpandedChunkDialog = ({ show, dialogProps, onCancel, onChunkEdit, onDelet
                                 <IconTrash />
                             </PermissionIconButton>
                         )}
-                        <IconButton onClick={onCancel} size='small' color='inherit' title='Close' sx={{ ml: 1 }}>
+                        <IconButton onClick={onCancel} size='small' color='inherit' title='关闭' sx={{ ml: 1 }}>
                             <IconX />
                         </IconButton>
                     </div>

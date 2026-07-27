@@ -56,6 +56,7 @@ const getPublicExecutionById = async (executionId: string): Promise<Execution | 
         const stringifiedExecutionData = JSON.stringify(executionDataWithoutCredentialId)
         return { ...res, executionData: stringifiedExecutionData }
     } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
         throw new InternalFlowiseError(
             StatusCodes.INTERNAL_SERVER_ERROR,
             `Error: executionsService.getPublicExecutionById - ${getErrorMessage(error)}`

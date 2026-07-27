@@ -1,8 +1,8 @@
+import './globalAgent'
 import { ExpressAdapter } from '@bull-board/express'
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express, { Request, Response } from 'express'
-import 'global-agent/bootstrap'
 import http from 'http'
 import path from 'path'
 import { DataSource } from 'typeorm'
@@ -30,12 +30,20 @@ import flowiseApiV1Router from './routes'
 import { UsageCacheManager } from './UsageCacheManager'
 import { getEncryptionKey, getNodeModulesPackagePath } from './utils'
 import { API_KEY_BLACKLIST_URLS, WHITELIST_URLS } from './utils/constants'
+import {
+    createSecurityHeadersMiddleware,
+    CSP_REPORT_ENDPOINT,
+    getCspSecurityHeaders,
+    resolveTrustProxy,
+    validateCspReportTrustProxy
+} from './utils/csp'
+import { createCspReportRouter } from './utils/cspReport'
 import logger, { expressRequestLogger } from './utils/logger'
 import { RateLimiterManager } from './utils/rateLimit'
 import { SSEStreamer } from './utils/SSEStreamer'
 import { Telemetry } from './utils/telemetry'
 import { validateAPIKey } from './utils/validateKey'
-import { getCorsOptions, getIframeSecurityHeaders, sanitizeMiddleware, validateCorsConfig } from './utils/XSS'
+import { getAllowedIframeOrigins, getCorsOptions, getIframeSecurityHeaders, sanitizeMiddleware, validateCorsConfig } from './utils/XSS'
 
 declare global {
     namespace Express {
@@ -166,6 +174,9 @@ export class App {
             logger.info('🎉 [server]: All initialization steps completed successfully!')
         } catch (error) {
             logger.error('❌ [server]: Error during Data Source initialization:', error)
+            await this.stopApp()
+            if (this.AppDataSource.isInitialized) await this.AppDataSource.destroy()
+            throw error
         }
     }
 
@@ -177,39 +188,42 @@ export class App {
         const captureRawBody = (req: Request, _res: Response, buf: Buffer) => {
             ;(req as any).rawBody = buf
         }
-        this.app.use(express.json({ limit: flowise_file_size_limit, verify: captureRawBody }))
-        this.app.use(express.urlencoded({ limit: flowise_file_size_limit, extended: true, verify: captureRawBody }))
-
         // Enhanced trust proxy settings for load balancer
-        let trustProxy: string | boolean | number | undefined = process.env.TRUST_PROXY
-        if (typeof trustProxy === 'undefined' || trustProxy.trim() === '' || trustProxy === 'true') {
-            // Default to trust all proxies
-            trustProxy = true
-        } else if (trustProxy === 'false') {
-            // Disable trust proxy
-            trustProxy = false
-        } else if (!isNaN(Number(trustProxy))) {
-            // Number: Trust specific number of proxies
-            trustProxy = Number(trustProxy)
-        }
+        const trustProxy = resolveTrustProxy(process.env.TRUST_PROXY)
 
         this.app.set('trust proxy', trustProxy)
 
-        // Allow access from specified domains
+        // Resolve security configuration before installing request handlers.
         validateCorsConfig()
+        const allowedIframeOrigins = getAllowedIframeOrigins()
+        const iframeSecurityHeaders = getIframeSecurityHeaders(allowedIframeOrigins)
+        const cspSecurityHeaders = getCspSecurityHeaders(allowedIframeOrigins)
+        const securityHeaders =
+            process.env.NODE_ENV === 'production'
+                ? {
+                      ...iframeSecurityHeaders,
+                      ...cspSecurityHeaders,
+                      'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+                      'X-Content-Type-Options': 'nosniff',
+                      'Referrer-Policy': 'strict-origin-when-cross-origin'
+                  }
+                : iframeSecurityHeaders
+        const cspReportOnlyEnabled = Boolean(cspSecurityHeaders['Content-Security-Policy-Report-Only'])
+        validateCspReportTrustProxy(trustProxy, cspReportOnlyEnabled)
+        this.app.use(createSecurityHeadersMiddleware(securityHeaders))
+
+        if (process.env.NODE_ENV === 'production' && cspReportOnlyEnabled) {
+            this.app.use(CSP_REPORT_ENDPOINT, createCspReportRouter())
+        }
+
+        this.app.use(express.json({ limit: flowise_file_size_limit, verify: captureRawBody }))
+        this.app.use(express.urlencoded({ limit: flowise_file_size_limit, extended: true, verify: captureRawBody }))
+
+        // Allow access from specified domains
         this.app.use(cors(getCorsOptions()))
 
         // Parse cookies
         this.app.use(cookieParser())
-
-        // Allow embedding from specified domains.
-        const iframeSecurityHeaders = getIframeSecurityHeaders()
-        this.app.use((req, res, next) => {
-            for (const [headerName, headerValue] of Object.entries(iframeSecurityHeaders)) {
-                res.setHeader(headerName, headerValue)
-            }
-            next()
-        })
 
         // Switch off the default 'X-Powered-By: Express' header
         this.app.disable('x-powered-by')

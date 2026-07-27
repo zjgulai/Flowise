@@ -441,7 +441,11 @@ const ShareChatbot = ({ isSessionMemory, isAgentCanvas }) => {
                 >
                     <IconCopy />
                 </IconButton>
-                <IconButton title='Open New Tab' color='primary' onClick={() => window.open(`${baseURL}/chatbot/${chatflowid}`, '_blank')}>
+                <IconButton
+                    title='在新标签页打开'
+                    color='primary'
+                    onClick={() => window.open(`${baseURL}/chatbot/${chatflowid}`, '_blank')}
+                >
                     <IconArrowUpRightCircle />
                 </IconButton>
                 <div style={{ flex: 1 }} />

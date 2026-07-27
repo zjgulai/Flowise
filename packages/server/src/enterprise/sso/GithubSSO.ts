@@ -1,7 +1,7 @@
 import SSOBase from './SSOBase'
 import passport from 'passport'
 import { LoggedInUser } from '../Interface.Enterprise'
-import { setTokenOrCookies } from '../middleware/passport'
+import { setTokenOrCookies } from '../middleware/passport/tokenResponse'
 import { Strategy as GitHubStrategy, Profile } from 'passport-github'
 
 class GithubSSO extends SSOBase {

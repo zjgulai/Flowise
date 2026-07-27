@@ -40,7 +40,7 @@ const OpenAIAssistantLayout = () => {
 
     const loadExisting = () => {
         const dialogProp = {
-            title: 'Load Existing Assistant'
+            title: '加载现有助手'
         }
         setLoadDialogProps(dialogProp)
         setShowLoadDialog(true)
@@ -58,7 +58,7 @@ const OpenAIAssistantLayout = () => {
 
     const addNew = (selectedOpenAIAssistantId, credential) => {
         const dialogProp = {
-            title: 'Add New Assistant',
+            title: '添加新助手',
             type: 'ADD',
             cancelButtonName: 'Cancel',
             confirmButtonName: 'Add',
@@ -119,7 +119,7 @@ const OpenAIAssistantLayout = () => {
                             onSearchChange={onSearchChange}
                             search={true}
                             searchPlaceholder='Search Assistants'
-                            title='OpenAI Assistant'
+                            title='OpenAI 助手'
                             description='Create assistants using OpenAI Assistant API'
                             onBack={() => navigate(-1)}
                         >

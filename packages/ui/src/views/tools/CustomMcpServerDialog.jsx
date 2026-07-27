@@ -207,7 +207,7 @@ const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
                     {readOnly && (
                         <HintChip
                             icon={IconEye}
-                            label='READ-ONLY'
+                            label='只读'
                             tooltip='This tool does not modify any data'
                             bg={isDarkMode ? 'rgba(46,125,50,0.18)' : 'rgba(46,125,50,0.12)'}
                             fg={isDarkMode ? '#81C784' : '#2E7D32'}
@@ -276,7 +276,7 @@ const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
                                     mb: 0.75
                                 }}
                             >
-                                Parameters
+                                参数
                             </Typography>
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
                                 {paramNames.map((pname) => {
@@ -429,7 +429,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
 
     const validateServerUrl = (url) => {
         if (!url) {
-            setServerUrlError('Server URL is required')
+            setServerUrlError('服务器 URL 必填')
             return false
         }
         // In EDIT mode the form is prefilled with the masked URL. Leaving it
@@ -441,17 +441,17 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
             return true
         }
         if (url.includes(MASK_TOKEN)) {
-            setServerUrlError('URL still contains the masked placeholder. Clear the field and retype the full URL.')
+            setServerUrlError('URL 仍包含脱敏占位符。请清空字段并重新输入完整 URL。')
             return false
         }
         try {
             const parsed = new URL(url)
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-                setServerUrlError('Only http and https URLs are allowed')
+                setServerUrlError('仅允许 http 和 https URL')
                 return false
             }
         } catch {
-            setServerUrlError('Enter a valid URL (e.g. https://example.com/mcp)')
+            setServerUrlError('请输入有效的 URL（例如 https://example.com/mcp）')
             return false
         }
         setServerUrlError('')
@@ -565,7 +565,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
             createdId = resp?.data?.id
             if (!createdId) throw new Error('Create returned no id')
         } catch (error) {
-            showSnackbar(`Failed to add MCP Server: ${getErrorMsg(error)}`, 'error')
+            showSnackbar(`添加 MCP 服务器失败: ${getErrorMsg(error)}`, 'error')
             onCancel()
             return
         }
@@ -583,11 +583,11 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                     /* ignore */
                 }
             }
-            showSnackbar(`MCP Server added and connected! Discovered ${toolsCount} tools`)
+            showSnackbar(`MCP 服务器已添加并连接！已发现 ${toolsCount} 个工具`)
             if (typeof onCreated === 'function') onCreated(createdId)
             else onConfirm(createdId) // fallback if parent didn't wire onCreated
         } catch (error) {
-            showSnackbar(`Added, but failed to connect: ${getErrorMsg(error)}`, 'error')
+            showSnackbar(`已添加，但连接失败: ${getErrorMsg(error)}`, 'error')
             if (typeof onCreated === 'function') onCreated(createdId)
         } finally {
             setAuthorizing(false)
@@ -611,7 +611,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                 // (user typed over part of the placeholder). Exact MASK_TOKEN is
                 // the documented "keep existing" signal — pass it through.
                 if (value && value !== MASK_TOKEN && value.includes(MASK_TOKEN)) {
-                    showSnackbar(`Header "${key}" value still contains redacted characters. Clear and retype the full value.`, 'error')
+                    showSnackbar(`请求头 "${key}" 值仍包含脱敏字符。请清空后重新输入完整值。`, 'error')
                     return
                 }
                 hdrs[key] = value
@@ -625,7 +625,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
         try {
             await customMcpServersApi.updateCustomMcpServer(serverId, body)
         } catch (error) {
-            showSnackbar(`Failed to save MCP Server: ${getErrorMsg(error)}`, 'error')
+            showSnackbar(`保存 MCP 服务器失败: ${getErrorMsg(error)}`, 'error')
             onCancel()
             return
         }
@@ -647,11 +647,11 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
             }
             setStatus(resp?.data?.status || MCP_SERVER_STATUS.AUTHORIZED)
             setIsEditing(false)
-            showSnackbar(`Saved and reconnected! Discovered ${toolsCount} tools`)
+            showSnackbar(`已保存并重新连接！已发现 ${toolsCount} 个工具`)
         } catch (error) {
             setStatus(MCP_SERVER_STATUS.ERROR)
             setIsEditing(false)
-            showSnackbar(`Saved, but failed to reconnect: ${getErrorMsg(error)}`, 'error')
+            showSnackbar(`已保存，但重新连接失败: ${getErrorMsg(error)}`, 'error')
         } finally {
             setAuthorizing(false)
             // Notify parent to refresh the list — status changed either way.
@@ -672,7 +672,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                         const parsed = JSON.parse(resp.data.tools) || {}
                         const tools = Array.isArray(parsed?.tools) ? parsed.tools : []
                         setDiscoveredTools(tools)
-                        showSnackbar(`Connected! Discovered ${tools.length} tools`)
+                        showSnackbar(`已连接！已发现 ${tools.length} 个工具`)
                     } catch {
                         setDiscoveredTools([])
                     }
@@ -680,7 +680,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
             }
         } catch (error) {
             setStatus(MCP_SERVER_STATUS.ERROR)
-            showSnackbar(`Authorization failed: ${getErrorMsg(error)}`, 'error')
+            showSnackbar(`授权失败: ${getErrorMsg(error)}`, 'error')
         } finally {
             setAuthorizing(false)
             if (typeof onAuthorize === 'function') onAuthorize(targetId)
@@ -718,20 +718,20 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
 
     const deleteServer = async () => {
         const isConfirmed = await confirm({
-            title: 'Delete MCP Server',
-            description: `Delete MCP server "${serverName}"?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除 MCP 服务器',
+            description: `删除 MCP 服务器 "${serverName}"？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         })
         if (isConfirmed) {
             try {
                 const resp = await customMcpServersApi.deleteCustomMcpServer(serverId)
                 if (resp.data) {
-                    showSnackbar('MCP Server deleted')
+                    showSnackbar('MCP 服务器已删除')
                     onConfirm()
                 }
             } catch (error) {
-                showSnackbar(`Failed to delete MCP Server: ${getErrorMsg(error)}`, 'error')
+                showSnackbar(`删除 MCP 服务器失败: ${getErrorMsg(error)}`, 'error')
                 onCancel()
             }
         }
@@ -750,14 +750,14 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                 <Box sx={{ display: 'flex', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Typography variant='h4' sx={{ fontWeight: 600 }}>
-                            {dialogProps.type === 'ADD' ? 'Add Custom MCP Server' : serverName || 'Custom MCP Server'}
+                            {dialogProps.type === 'ADD' ? '添加自定义 MCP 服务器' : serverName || '自定义 MCP 服务器'}
                         </Typography>
                         {dialogProps.type === 'EDIT' && <StatusBadge status={status} />}
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         {dialogProps.type === 'EDIT' && !isEditing && (
                             <StyledButton variant='outlined' size='small' startIcon={<IconEdit size={16} />} onClick={startEditing}>
-                                Edit
+                                编辑
                             </StyledButton>
                         )}
                     </Box>
@@ -769,13 +769,13 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
                         <Box>
                             <Typography variant='overline' sx={{ color: 'text.secondary' }}>
-                                Server Name
+                                服务器名称
                             </Typography>
                             <Typography variant='body1'>{serverName}</Typography>
                         </Box>
                         <Box>
                             <Typography variant='overline' sx={{ color: 'text.secondary' }}>
-                                Server URL
+                                服务器 URL
                             </Typography>
                             <Typography variant='body1' sx={{ wordBreak: 'break-all' }}>
                                 {serverUrl}
@@ -784,23 +784,21 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                         {iconSrc && (
                             <Box>
                                 <Typography variant='overline' sx={{ color: 'text.secondary' }}>
-                                    Icon Source
+                                    图标来源
                                 </Typography>
                                 <Typography variant='body1'>{iconSrc}</Typography>
                             </Box>
                         )}
                         <Box>
                             <Typography variant='overline' sx={{ color: 'text.secondary' }}>
-                                Authentication
+                                认证
                             </Typography>
-                            <Typography variant='body1'>
-                                {authType === MCP_AUTH_TYPE.NONE ? 'No Authentication' : 'Custom Headers'}
-                            </Typography>
+                            <Typography variant='body1'>{authType === MCP_AUTH_TYPE.NONE ? '无认证' : '自定义请求头'}</Typography>
                         </Box>
                         {authType === MCP_AUTH_TYPE.CUSTOM_HEADERS && headers.some((h) => h.key) && (
                             <Box>
                                 <Typography variant='overline' sx={{ color: 'text.secondary' }}>
-                                    Headers
+                                    请求头
                                 </Typography>
                                 {headers
                                     .filter((h) => h.key)
@@ -820,16 +818,16 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                         <Box>
                             <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
                                 <Typography variant='overline'>
-                                    Server Name
+                                    服务器名称
                                     <span style={{ color: 'red' }}>&nbsp;*</span>
                                 </Typography>
-                                <TooltipWithParser title='Display name for the MCP server (max 40 characters)' />
+                                <TooltipWithParser title='MCP 服务器的显示名称（最多 40 个字符）' />
                             </Stack>
                             <OutlinedInput
                                 id='serverName'
                                 type='string'
                                 fullWidth
-                                placeholder='My Server Name'
+                                placeholder='我的服务器名称'
                                 value={serverName}
                                 name='serverName'
                                 inputProps={{ maxLength: 40 }}
@@ -839,10 +837,10 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                         <Box>
                             <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
                                 <Typography variant='overline'>
-                                    Server URL
+                                    服务器 URL
                                     <span style={{ color: 'red' }}>&nbsp;*</span>
                                 </Typography>
-                                <TooltipWithParser title='The HTTP(S) endpoint of the MCP server (SSE or Streamable HTTP)' />
+                                <TooltipWithParser title='MCP 服务器的 HTTP(S) 端点（SSE 或可流式 HTTP）' />
                             </Stack>
                             <OutlinedInput
                                 id='serverUrl'
@@ -862,7 +860,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                         </Box>
                         <Box>
                             <Stack sx={{ position: 'relative' }} direction='row'>
-                                <Typography variant='overline'>Icon Source</Typography>
+                                <Typography variant='overline'>图标来源</Typography>
                             </Stack>
                             <OutlinedInput
                                 id='iconSrc'
@@ -878,13 +876,13 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                         {/* Authentication */}
                         <Box>
                             <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                                <Typography variant='overline'>Authentication</Typography>
-                                <TooltipWithParser title='Authentication method to connect to the MCP server' />
+                                <Typography variant='overline'>认证</Typography>
+                                <TooltipWithParser title='连接 MCP 服务器的认证方法' />
                             </Stack>
                             <FormControl fullWidth>
                                 <Select value={authType} onChange={(e) => setAuthType(e.target.value)} size='small'>
-                                    <MenuItem value={MCP_AUTH_TYPE.NONE}>No Authentication</MenuItem>
-                                    <MenuItem value={MCP_AUTH_TYPE.CUSTOM_HEADERS}>Custom Headers</MenuItem>
+                                    <MenuItem value={MCP_AUTH_TYPE.NONE}>无认证</MenuItem>
+                                    <MenuItem value={MCP_AUTH_TYPE.CUSTOM_HEADERS}>自定义请求头</MenuItem>
                                 </Select>
                             </FormControl>
                         </Box>
@@ -893,7 +891,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                                 {headers.map((header, index) => (
                                     <Box key={index} sx={{ display: 'flex', gap: 2, alignItems: 'flex-end' }}>
                                         <Box sx={{ flex: 1 }}>
-                                            {index === 0 && <Typography variant='overline'>Header Key</Typography>}
+                                            {index === 0 && <Typography variant='overline'>请求头键名</Typography>}
                                             <OutlinedInput
                                                 fullWidth
                                                 placeholder='Authorization'
@@ -906,7 +904,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                                             />
                                         </Box>
                                         <Box sx={{ flex: 1 }}>
-                                            {index === 0 && <Typography variant='overline'>Header Value</Typography>}
+                                            {index === 0 && <Typography variant='overline'>请求头值</Typography>}
                                             <OutlinedInput
                                                 fullWidth
                                                 placeholder='Bearer <token>'
@@ -938,7 +936,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                                         startIcon={<IconPlus size={16} />}
                                         onClick={() => setHeaders([...headers, { key: '', value: '' }])}
                                     >
-                                        Add Header
+                                        添加请求头
                                     </Button>
                                 </Box>
                             </Box>
@@ -951,7 +949,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                     <Accordion defaultExpanded>
                         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Typography variant='overline'>Discovered Tools</Typography>
+                                <Typography variant='overline'>已发现的工具</Typography>
                                 <Chip
                                     label={discoveredTools.length}
                                     size='small'
@@ -968,7 +966,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                                     size='small'
                                     value={toolSearch}
                                     onChange={(e) => setToolSearch(e.target.value)}
-                                    placeholder='Filter tools by name, title, or description'
+                                    placeholder='按名称、标题或描述筛选工具'
                                     startAdornment={
                                         <InputAdornment position='start' sx={{ color: 'text.secondary' }}>
                                             <IconSearch size={16} stroke={1.75} />
@@ -992,15 +990,15 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.75, px: 0.5 }}>
                                     <Typography variant='caption' sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
                                         {toolSearch
-                                            ? `${filteredTools.length} of ${discoveredTools.length} tools`
-                                            : `${discoveredTools.length} tools`}
+                                            ? `已显示 ${filteredTools.length} 个，共 ${discoveredTools.length} 个工具`
+                                            : `共 ${discoveredTools.length} 个工具`}
                                     </Typography>
                                     <Button
                                         size='small'
                                         onClick={() => setExpandedToolIndex(expandedToolIndex === 'all' ? null : 'all')}
                                         sx={{ fontSize: '0.7rem', minWidth: 0, textTransform: 'none' }}
                                     >
-                                        {expandedToolIndex === 'all' ? 'Collapse all' : 'Expand all'}
+                                        {expandedToolIndex === 'all' ? '全部折叠' : '全部展开'}
                                     </Button>
                                 </Box>
                             )}
@@ -1014,7 +1012,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                                         py: 2
                                     }}
                                 >
-                                    No tools match &ldquo;{toolSearch}&rdquo;
+                                    无匹配的工具 &ldquo;{toolSearch}&rdquo;
                                 </Typography>
                             ) : (
                                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
@@ -1047,7 +1045,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                 <Box>
                     {dialogProps.type === 'EDIT' && (
                         <StyledPermissionButton permissionId={'tools:delete'} color='error' variant='contained' onClick={deleteServer}>
-                            Delete
+                            删除
                         </StyledPermissionButton>
                     )}
                 </Box>
@@ -1059,14 +1057,14 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                             disabled={authorizing}
                             startIcon={authorizing ? <CircularProgress size={16} /> : <IconPlugConnected />}
                         >
-                            {authorizing ? 'Connecting...' : 'Authorize'}
+                            {authorizing ? '连接中...' : '授权'}
                         </StyledButton>
                     )}
                     {isEditing && (
                         <>
                             {dialogProps.type === 'EDIT' && (
                                 <Button variant='outlined' onClick={cancelEditing}>
-                                    Cancel
+                                    取消
                                 </Button>
                             )}
                             <StyledPermissionButton
@@ -1078,11 +1076,11 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
                             >
                                 {dialogProps.type === 'ADD'
                                     ? authorizing
-                                        ? 'Connecting…'
-                                        : 'Add & Connect'
+                                        ? '连接中…'
+                                        : '添加并连接'
                                     : authorizing
-                                    ? 'Reconnecting…'
-                                    : 'Save & Reconnect'}
+                                    ? '重新连接中…'
+                                    : '保存并重新连接'}
                             </StyledPermissionButton>
                         </>
                     )}

@@ -4,6 +4,7 @@ import { isInvalidName, isInvalidUUID } from '../utils/validation.util'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { StatusCodes } from 'http-status-codes'
 import { LoginMethod, LoginMethodStatus } from '../database/entities/login-method.entity'
+import { isSupportedSSOProvider } from '../sso/supportedProviders'
 import { decrypt, encrypt } from '../utils/encryption.util'
 import { UserErrorMessage, UserService } from './user.service'
 import { OrganizationErrorMessage, OrganizationService } from './organization.service'
@@ -39,7 +40,9 @@ export class LoginMethodService {
     }
 
     public validateLoginMethodName(name: string | undefined) {
-        if (isInvalidName(name)) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, LoginMethodErrorMessage.INVALID_LOGIN_METHOD_NAME)
+        if (isInvalidName(name) || !isSupportedSSOProvider(name)) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, LoginMethodErrorMessage.INVALID_LOGIN_METHOD_NAME)
+        }
     }
 
     public validateLoginMethodStatus(status: string | undefined) {
@@ -101,8 +104,11 @@ export class LoginMethodService {
     }
 
     public async createLoginMethod(data: Partial<LoginMethod>) {
+        this.validateLoginMethodName(data.name)
+        this.validateLoginMethodStatus(data.status)
+
         let queryRunner: QueryRunner | undefined
-        let newLoginMethod: Partial<LoginMethod>
+        let newLoginMethod: Partial<LoginMethod> | undefined
         try {
             queryRunner = this.dataSource.createQueryRunner()
             await queryRunner.connect()
@@ -110,29 +116,44 @@ export class LoginMethodService {
             if (!createdBy) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
             const organization = await this.organizationService.readOrganizationById(data.organizationId, queryRunner)
             if (!organization) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationErrorMessage.ORGANIZATION_NOT_FOUND)
-            this.validateLoginMethodName(data.name)
-            this.validateLoginMethodStatus(data.status)
-            data.config = await this.encryptLoginMethodConfig(data.config)
-            data.updatedBy = createdBy.id
+            const loginMethodData: Partial<LoginMethod> = {
+                organizationId: organization.id,
+                name: data.name,
+                config: await this.encryptLoginMethodConfig(data.config),
+                status: data.status,
+                createdBy: createdBy.id,
+                updatedBy: createdBy.id
+            }
 
-            newLoginMethod = await queryRunner.manager.create(LoginMethod, data)
+            newLoginMethod = queryRunner.manager.create(LoginMethod, loginMethodData)
             await queryRunner.startTransaction()
             newLoginMethod = await this.saveLoginMethod(newLoginMethod, queryRunner)
             await queryRunner.commitTransaction()
         } catch (error) {
-            if (queryRunner && !queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
+            if (queryRunner?.isTransactionActive) await queryRunner.rollbackTransaction()
             throw error
         } finally {
             if (queryRunner && !queryRunner.isReleased) await queryRunner.release()
         }
 
-        return newLoginMethod
+        return newLoginMethod as LoginMethod
     }
 
     public async createOrUpdateConfig(body: any) {
-        let organizationId: string = body.organizationId
-        let providers: any[] = body.providers
-        let userId: string = body.userId
+        const organizationId: string = body.organizationId
+        const providers: any[] = body.providers
+        const userId: string = body.userId
+
+        if (!Array.isArray(providers)) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, LoginMethodErrorMessage.INVALID_LOGIN_METHOD_CONFIG)
+        }
+        for (const provider of providers) {
+            if (!provider || typeof provider !== 'object' || Array.isArray(provider)) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, LoginMethodErrorMessage.INVALID_LOGIN_METHOD_CONFIG)
+            }
+            this.validateLoginMethodName(provider.providerName)
+            this.validateLoginMethodStatus(provider.status)
+        }
 
         let queryRunner
         try {
@@ -144,10 +165,7 @@ export class LoginMethodService {
             const organization = await this.organizationService.readOrganizationById(organizationId, queryRunner)
             if (!organization) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationErrorMessage.ORGANIZATION_NOT_FOUND)
 
-            for (let provider of providers) {
-                this.validateLoginMethodName(provider.providerName)
-                this.validateLoginMethodStatus(provider.status)
-
+            for (const provider of providers) {
                 const name = provider.providerName
                 const loginMethod = await queryRunner.manager.findOneBy(LoginMethod, { organizationId, name })
                 let configToSave: Record<string, unknown>
@@ -183,6 +201,9 @@ export class LoginMethodService {
     }
 
     public async updateLoginMethod(newLoginMethod: Partial<LoginMethod>) {
+        if (newLoginMethod.name) this.validateLoginMethodName(newLoginMethod.name)
+        if (newLoginMethod.status) this.validateLoginMethodStatus(newLoginMethod.status)
+
         const queryRunner = this.dataSource.createQueryRunner()
         await queryRunner.connect()
 
@@ -194,9 +215,7 @@ export class LoginMethodService {
             const organization = await this.organizationService.readOrganizationById(newLoginMethod.organizationId, queryRunner)
             if (!organization) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationErrorMessage.ORGANIZATION_NOT_FOUND)
         }
-        if (newLoginMethod.name) this.validateLoginMethodName(newLoginMethod.name)
         if (newLoginMethod.config) newLoginMethod.config = await this.encryptLoginMethodConfig(newLoginMethod.config)
-        if (newLoginMethod.status) this.validateLoginMethodStatus(newLoginMethod.status)
         newLoginMethod.createdBy = oldLoginMethod.createdBy
 
         let updateLoginMethod = queryRunner.manager.merge(LoginMethod, newLoginMethod)

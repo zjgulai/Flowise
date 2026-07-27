@@ -93,6 +93,7 @@ export const Input = ({ inputParam, value, nodes, edges, nodeId, onChange, onBlu
                         minRows={inputParam.rows ?? 1}
                         value={myValue}
                         name={inputParam.name}
+                        autoComplete={inputParam.autoComplete}
                         onChange={(e) => {
                             setMyValue(e.target.value)
                             onChange(e.target.value)
@@ -132,6 +133,8 @@ export const Input = ({ inputParam, value, nodes, edges, nodeId, onChange, onBlu
                         rows={inputParam.rows ?? 1}
                         value={myValue}
                         name={inputParam.name}
+                        autoComplete={inputParam.autoComplete}
+                        aria-label={inputParam.ariaLabel}
                         inputRef={inputElementRef}
                         onChange={(e) => {
                             setMyValue(e.target.value)
@@ -153,7 +156,11 @@ export const Input = ({ inputParam, value, nodes, edges, nodeId, onChange, onBlu
                                         edge='end'
                                         onClick={handleTogglePasswordVisibility}
                                         onMouseDown={(e) => e.preventDefault()}
-                                        aria-label={isPasswordVisible ? 'Hide' : 'Show'}
+                                        aria-label={
+                                            isPasswordVisible
+                                                ? inputParam.hidePasswordLabel || '隐藏密码'
+                                                : inputParam.showPasswordLabel || '显示密码'
+                                        }
                                     >
                                         {isPasswordVisible ? <IconEyeOff size={18} /> : <IconEye size={18} />}
                                     </IconButton>

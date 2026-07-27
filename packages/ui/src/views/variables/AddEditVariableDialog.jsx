@@ -28,12 +28,12 @@ import { Dropdown } from '@/ui-component/dropdown/Dropdown'
 
 const variableTypes = [
     {
-        label: 'Static',
+        label: '静态',
         name: 'static',
         description: 'Variable value will be read from the value entered below'
     },
     {
-        label: 'Runtime',
+        label: '运行时',
         name: 'runtime',
         description: 'Variable value will be read from .env file'
     }
@@ -195,7 +195,7 @@ const AddEditVariableDialog = ({ show, dialogProps, onCancel, onConfirm, setErro
                 <Box sx={{ p: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
                         <Typography>
-                            Variable Name<span style={{ color: 'red' }}>&nbsp;*</span>
+                            变量 名称<span style={{ color: 'red' }}>&nbsp;*</span>
                         </Typography>
 
                         <div style={{ flexGrow: 1 }}></div>
@@ -214,7 +214,7 @@ const AddEditVariableDialog = ({ show, dialogProps, onCancel, onConfirm, setErro
                 <Box sx={{ p: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
                         <Typography>
-                            Type<span style={{ color: 'red' }}>&nbsp;*</span>
+                            类型<span style={{ color: 'red' }}>&nbsp;*</span>
                         </Typography>
                         <div style={{ flexGrow: 1 }}></div>
                     </div>
@@ -231,7 +231,7 @@ const AddEditVariableDialog = ({ show, dialogProps, onCancel, onConfirm, setErro
                     <Box sx={{ p: 2 }}>
                         <div style={{ display: 'flex', flexDirection: 'row' }}>
                             <Typography>
-                                Value<span style={{ color: 'red' }}>&nbsp;*</span>
+                                值<span style={{ color: 'red' }}>&nbsp;*</span>
                             </Typography>
                             <div style={{ flexGrow: 1 }}></div>
                         </div>

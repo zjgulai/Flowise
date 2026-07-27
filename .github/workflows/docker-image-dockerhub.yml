@@ -3,142 +3,221 @@ name: Docker Image CI - Docker Hub
 on:
     workflow_dispatch:
         inputs:
-            node_version:
-                description: 'Node.js version to build this image with.'
-                type: choice
-                required: true
-                default: '24'
-                options:
-                    - '20'
-                    - '24'
             tag_version:
-                description: 'Tag version of the image to be pushed.'
+                description: 'Reviewed SemVer release alias; an immutable Git-SHA tag is published alongside it.'
                 type: string
                 required: true
-                default: 'latest'
+            expected_image_config_digest:
+                description: 'Independently reviewed sha256 config digest from the protected build-only release artifact.'
+                type: string
+                required: true
 
 permissions:
     contents: read
 
+concurrency:
+    group: flowise-dockerhub-release-${{ github.ref }}
+    cancel-in-progress: false
+
 jobs:
-    prepare:
+    validate:
         runs-on: ubuntu-latest
+        timeout-minutes: 5
         outputs:
-            node_version: ${{ steps.defaults.outputs.node_version }}
-            tag_version: ${{ steps.defaults.outputs.tag_version }}
+            tag_version: ${{ steps.tag.outputs.tag_version }}
+            expected_image_config_digest: ${{ steps.tag.outputs.expected_image_config_digest }}
         steps:
-            - name: Set default values
-              id: defaults
+            - name: Validate the release tag before credentials are available
+              id: tag
+              env:
+                  EXPECTED_IMAGE_CONFIG_DIGEST: ${{ inputs.expected_image_config_digest }}
+                  TAG_VERSION: ${{ inputs.tag_version }}
               run: |
-                  echo "node_version=${{ github.event.inputs.node_version || '24' }}" >> $GITHUB_OUTPUT
-                  echo "tag_version=${{ github.event.inputs.tag_version || 'latest' }}" >> $GITHUB_OUTPUT
+                  set -euo pipefail
+                  [[ ${#TAG_VERSION} -le 128 ]]
+                  [[ "$TAG_VERSION" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+                  [[ "$EXPECTED_IMAGE_CONFIG_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+                  printf 'tag_version=%s\n' "$TAG_VERSION" >> "$GITHUB_OUTPUT"
+                  printf 'expected_image_config_digest=%s\n' "$EXPECTED_IMAGE_CONFIG_DIGEST" >> "$GITHUB_OUTPUT"
 
-    build:
-        needs: prepare
-        runs-on: ${{ matrix.runner }}
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - image: flowiseai/flowise
-                      dockerfile: ./docker/Dockerfile
-                      platform: linux/amd64
-                      runner: ubuntu-latest
-                    - image: flowiseai/flowise
-                      dockerfile: ./docker/Dockerfile
-                      platform: linux/arm64
-                      runner: ubuntu-24.04-arm
-                    - image: flowiseai/flowise-worker
-                      dockerfile: docker/worker/Dockerfile
-                      platform: linux/amd64
-                      runner: ubuntu-latest
-                    - image: flowiseai/flowise-worker
-                      dockerfile: docker/worker/Dockerfile
-                      platform: linux/arm64
-                      runner: ubuntu-24.04-arm
+    publish:
+        if: github.ref == 'refs/heads/main'
+        needs: validate
+        runs-on: ubuntu-latest
+        timeout-minutes: 120
+        environment:
+            name: dockerhub-release
+        env:
+            IMAGE_TAG: flowise-chinese:git-${{ github.sha }}
+            PUBLISH_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+            PUBLISH_ENABLED: ${{ vars.DOCKERHUB_RELEASE_ENABLED }}
+            PUBLISH_TAG: ${{ needs.validate.outputs.tag_version }}
+            EXPECTED_IMAGE_CONFIG_DIGEST: ${{ needs.validate.outputs.expected_image_config_digest }}
+            PUPPETEER_SKIP_DOWNLOAD: true
+            SMOKE_NAME: flowise-ci-smoke-dockerhub-${{ github.run_id }}-${{ github.run_attempt }}
         steps:
-            - name: Prepare env
-              run: |
-                  platform=${{ matrix.platform }}
-                  echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
-                  image=${{ matrix.image }}
-                  echo "IMAGE_SLUG=${image//\//-}" >> $GITHUB_ENV
-
-            - name: Checkout
-              uses: actions/checkout@v6.0.2
-
-            - name: Set up Docker Buildx
-              uses: docker/setup-buildx-action@v4.0.0
-
-            - name: Login to Docker Hub
-              uses: docker/login-action@v4
+            - name: Checkout the exact source revision
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
-                  username: ${{ secrets.DOCKERHUB_USERNAME }}
-                  password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-            - name: Build and push by digest
-              id: build
-              uses: docker/build-push-action@v6.19.2
+                  fetch-depth: 0
+            - name: Require explicit control-plane release enablement
+              run: |
+                  set -euo pipefail
+                  test "$PUBLISH_ENABLED" = 'true'
+                  [[ "$PUBLISH_IMAGE" =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$ ]]
+                  [[ "$PUBLISH_IMAGE" != flowiseai/* ]]
+            - name: Verify release automation is tracked by Git
+              run: |
+                  set -euo pipefail
+                  git ls-files --error-unmatch -- \
+                      .github/workflows/docker-image-dockerhub.yml \
+                      .github/workflows/production-readonly-monitor.yml \
+                      .github/workflows/test_docker_build.yml \
+                      scripts/deployment-bundle.mjs \
+                      scripts/deployment-bundle.test.mjs \
+                      scripts/flowise-production-release.py \
+                      scripts/release-manifest.mjs \
+                      scripts/release-manifest.test.mjs \
+                      scripts/publish-verified-image.sh \
+                      scripts/test_flowise_production_release.py \
+                      scripts/verify-dockerhub-immutability.mjs \
+                      scripts/verify-release-candidate.sh \
+                      scripts/verify-security.sh >/dev/null
+            - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+              with:
+                  version: 10.26.0
+            - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+              with:
+                  node-version: '24.18.0'
+                  cache: 'pnpm'
+                  cache-dependency-path: pnpm-lock.yaml
+            - name: Verify source, dependencies and release contracts
+              run: |
+                  set -euo pipefail
+                  before="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+                  pnpm install --frozen-lockfile
+                  after="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+                  test "$before" = "$after"
+                  pnpm audit --prod --audit-level high
+                  pnpm test:release
+                  bash scripts/verify-release-source.sh
+                  bash scripts/verify-security.sh
+            - name: Resolve immutable OCI metadata
+              id: metadata
+              run: |
+                  set -euo pipefail
+                  printf 'source=%s/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" >> "$GITHUB_OUTPUT"
+                  printf 'created=%s\n' "$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+                  printf 'source_date_epoch=%s\n' "$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+            # The reviewed release contract is linux/amd64 only. Arm64 and the
+            # legacy worker image stay disabled until they have equivalent gates.
+            - name: Build the canonical current-source candidate without pushing
+              uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+              env:
+                  SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}
               with:
                   context: .
-                  file: ${{ matrix.dockerfile }}
-                  platforms: ${{ matrix.platform }}
+                  file: Dockerfile
+                  platforms: linux/amd64
+                  load: true
+                  push: false
+                  provenance: false
+                  tags: flowise-chinese:git-${{ github.sha }}
                   build-args: |
-                      NODE_VERSION=${{ needs.prepare.outputs.node_version }}
-                  outputs: type=image,name=${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
-
-            - name: Export digest
+                      BUILD_SOURCE=${{ steps.metadata.outputs.source }}
+                      BUILD_REVISION=${{ github.sha }}
+                      BUILD_VERSION=git-${{ github.sha }}
+                      BUILD_CREATED=${{ steps.metadata.outputs.created }}
+            - name: Verify the exact offline candidate before registry credentials
+              env:
+                  BUNDLE_DIR: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/image.tar.gz
+                  EVIDENCE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/evidence.txt
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/release-manifest.json
               run: |
-                  mkdir -p ${{ runner.temp }}/digests
-                  digest="${{ steps.build.outputs.digest }}"
-                  touch "${{ runner.temp }}/digests/${digest#sha256:}"
-
-            - name: Upload digest
-              uses: actions/upload-artifact@v4
-              with:
-                  name: digests-${{ env.IMAGE_SLUG }}-${{ env.PLATFORM_PAIR }}
-                  path: ${{ runner.temp }}/digests/*
-                  if-no-files-found: error
-                  retention-days: 1
-
-    merge:
-        needs: [prepare, build]
-        runs-on: ubuntu-latest
-        strategy:
-            fail-fast: false
-            matrix:
-                image:
-                    - flowiseai/flowise
-                    - flowiseai/flowise-worker
-        steps:
-            - name: Prepare env
+                  install -d -m 0700 "$BUNDLE_DIR"
+                  bash scripts/verify-release-candidate.sh \
+                      --image-tag "$IMAGE_TAG" \
+                      --source "${{ steps.metadata.outputs.source }}" \
+                      --revision "$GITHUB_SHA" \
+                      --version "git-${GITHUB_SHA}" \
+                      --created "${{ steps.metadata.outputs.created }}" \
+                      --archive "$ARCHIVE_PATH" \
+                      --manifest "$MANIFEST_PATH" \
+                      --evidence "$EVIDENCE_PATH" \
+                      --smoke-name "$SMOKE_NAME"
+            - name: Require the independently reviewed candidate identity
+              env:
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/release-manifest.json
               run: |
-                  image=${{ matrix.image }}
-                  echo "IMAGE_SLUG=${image//\//-}" >> $GITHUB_ENV
-
-            - name: Download digests
-              uses: actions/download-artifact@v4
-              with:
-                  path: ${{ runner.temp }}/digests
-                  pattern: digests-${{ env.IMAGE_SLUG }}-linux-*
-                  merge-multiple: true
-
-            - name: Set up Docker Buildx
-              uses: docker/setup-buildx-action@v4.0.0
-
-            - name: Login to Docker Hub
-              uses: docker/login-action@v4
+                  set -euo pipefail
+                  actual_config_digest="$(jq -er '.image.config_digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$MANIFEST_PATH")"
+                  test "$actual_config_digest" = "$EXPECTED_IMAGE_CONFIG_DIGEST"
+            - name: Require the reviewed release alias to identify this Git revision
+              run: |
+                  set -euo pipefail
+                  git tag --format='%(refname:short)' --points-at "$GITHUB_SHA" | grep -Fqx -- "$PUBLISH_TAG"
+            - name: Bind the publish namespace to the protected Docker Hub identity
+              env:
+                  REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+              run: |
+                  set -euo pipefail
+                  test -n "$REGISTRY_USERNAME"
+                  registry_username="${REGISTRY_USERNAME,,}"
+                  test "${PUBLISH_IMAGE%%/*}" = "$registry_username"
+            - name: Verify Docker Hub server-side immutable-tag enforcement
+              env:
+                  IMMUTABILITY_SETTINGS_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-repository-settings.json
+                  REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+                  REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+              run: |
+                  set -euo pipefail
+                  umask 077
+                  namespace="${PUBLISH_IMAGE%%/*}"
+                  repository="${PUBLISH_IMAGE#*/}"
+                  hub_token=$(jq -cn \
+                      --arg identifier "$REGISTRY_USERNAME" \
+                      --arg secret "$REGISTRY_PASSWORD" \
+                      '{identifier: $identifier, secret: $secret}' | \
+                      curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+                          --header 'Content-Type: application/json' \
+                          --data-binary @- \
+                          https://hub.docker.com/v2/auth/token | jq -er '.access_token')
+                  unset REGISTRY_PASSWORD
+                  curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+                      --header "Authorization: Bearer $hub_token" \
+                      "https://hub.docker.com/v2/namespaces/${namespace}/repositories/${repository}" \
+                      --output "$IMMUTABILITY_SETTINGS_PATH"
+                  unset hub_token
+                  node scripts/verify-dockerhub-immutability.mjs \
+                      --repository "$PUBLISH_IMAGE" \
+                      --git-tag "git-$GITHUB_SHA" \
+                      --release-tag "$PUBLISH_TAG" \
+                      --settings "$IMMUTABILITY_SETTINGS_PATH"
+            - name: Login to Docker Hub after protected-environment approval
+              uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
               with:
                   username: ${{ secrets.DOCKERHUB_USERNAME }}
                   password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-            - name: Create manifest list and push
-              working-directory: ${{ runner.temp }}/digests
+            - name: Publish the verified image without overwriting existing tags
+              env:
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/image.tar.gz
+                  IMMUTABILITY_SETTINGS_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-repository-settings.json
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/release-manifest.json
               run: |
-                  docker buildx imagetools create \
-                      -t ${{ matrix.image }}:${{ needs.prepare.outputs.tag_version }} \
-                      $(printf '${{ matrix.image }}@sha256:%s ' *)
-
-            - name: Inspect image
-              run: |
-                  docker buildx imagetools inspect ${{ matrix.image }}:${{ needs.prepare.outputs.tag_version }}
+                  set -euo pipefail
+                  bash scripts/publish-verified-image.sh \
+                      --image-tag "$IMAGE_TAG" \
+                      --publish-image "$PUBLISH_IMAGE" \
+                      --git-sha "$GITHUB_SHA" \
+                      --release-tag "$PUBLISH_TAG" \
+                      --manifest "$MANIFEST_PATH" \
+                      --archive "$ARCHIVE_PATH" \
+                      --immutability-settings "$IMMUTABILITY_SETTINGS_PATH"
+            - name: Remove Docker Hub policy evidence
+              if: always()
+              env:
+                  IMMUTABILITY_SETTINGS_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-repository-settings.json
+              run: rm -f -- "$IMMUTABILITY_SETTINGS_PATH"

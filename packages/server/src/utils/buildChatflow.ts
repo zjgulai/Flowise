@@ -72,6 +72,7 @@ import { OMIT_QUEUE_JOB_DATA } from './constants'
 import { executeAgentFlow } from './buildAgentflow'
 import { Workspace } from '../enterprise/database/entities/workspace.entity'
 import { Organization } from '../enterprise/database/entities/organization.entity'
+import { REQUEST_SCOPED_ABORT_ID_PREFIX, throwIfPredictionAborted, waitForQueuedPrediction } from './predictionCancellation'
 
 const shouldAutoPlayTTS = (textToSpeechConfig: string | undefined | null): boolean => {
     if (!textToSpeechConfig) return false
@@ -321,6 +322,8 @@ export const executeFlow = async ({
     subscriptionId,
     productId
 }: IExecuteFlowParams) => {
+    throwIfPredictionAborted(signal?.signal)
+
     // Ensure incomingInput has all required properties with default values
     incomingInput = {
         history: [],
@@ -987,7 +990,13 @@ const checkIfStreamValid = async (
  * @param {Request} req
  * @param {boolean} isInternal
  */
-export const utilBuildChatflow = async (req: Request, isInternal: boolean = false, chatType?: ChatType): Promise<any> => {
+export const utilBuildChatflow = async (
+    req: Request,
+    isInternal: boolean = false,
+    chatType?: ChatType,
+    options: { signal?: AbortSignal } = {}
+): Promise<any> => {
+    throwIfPredictionAborted(options.signal)
     const appServer = getRunningExpressApp()
 
     const chatflowid = req.params.id
@@ -1006,7 +1015,8 @@ export const utilBuildChatflow = async (req: Request, isInternal: boolean = fals
     const incomingInput: IncomingInput = req.body || {} // Ensure incomingInput is never undefined
     const chatId = incomingInput.chatId ?? incomingInput.overrideConfig?.sessionId ?? uuidv4()
     const files = (req.files as Express.Multer.File[]) || []
-    const abortControllerId = `${chatflow.id}_${chatId}`
+    const abortControllerId =
+        chatType === ChatType.MCP ? `${REQUEST_SCOPED_ABORT_ID_PREFIX}mcp:${chatflow.id}_${chatId}` : `${chatflow.id}_${chatId}`
     const isTool = req.get('flowise-tool') === 'true'
     const isEvaluation: boolean = req.headers['X-Flowise-Evaluation'] || req.body.evaluation
     let evaluationRunId = ''
@@ -1024,8 +1034,17 @@ export const utilBuildChatflow = async (req: Request, isInternal: boolean = fals
     }
 
     let organizationId = ''
+    const executionController = new AbortController()
+    const abortExecution = () => executionController.abort()
+    if (options.signal?.aborted) {
+        abortExecution()
+    } else {
+        options.signal?.addEventListener('abort', abortExecution, { once: true })
+    }
 
     try {
+        throwIfPredictionAborted(executionController.signal)
+
         // Validate API Key if its external API request
         if (!isInternal) {
             const isKeyValidated = await validateFlowAPIKey(req, chatflow)
@@ -1078,8 +1097,11 @@ export const utilBuildChatflow = async (req: Request, isInternal: boolean = fals
             orgId,
             workspaceId,
             subscriptionId,
-            productId
+            productId,
+            abortControllerId
         }
+
+        throwIfPredictionAborted(executionController.signal)
 
         if (process.env.MODE === MODE.QUEUE) {
             const predictionQueue = appServer.queueManager.getQueue('prediction')
@@ -1087,8 +1109,17 @@ export const utilBuildChatflow = async (req: Request, isInternal: boolean = fals
             logger.debug(`[server]: [${orgId}/${chatflow.id}/${chatId}]: Job added to queue: ${job.id}`)
 
             const queueEvents = predictionQueue.getQueueEvents()
-            const result = await job.waitUntilFinished(queueEvents)
-            appServer.abortControllerPool.remove(abortControllerId)
+            const result = await waitForQueuedPrediction(
+                job,
+                queueEvents,
+                appServer.queueManager.getPredictionQueueEventsProducer(),
+                abortControllerId,
+                executionController.signal,
+                (error) =>
+                    logger.error(`[server]: [${orgId}/${chatflow.id}/${chatId}]: Failed to publish queued prediction abort`, {
+                        error
+                    })
+            )
             if (!result) {
                 throw new Error('Job execution failed')
             }
@@ -1097,26 +1128,30 @@ export const utilBuildChatflow = async (req: Request, isInternal: boolean = fals
             return result
         } else {
             // Add abort controller to the pool
-            const signal = new AbortController()
-            appServer.abortControllerPool.add(abortControllerId, signal)
-            executeData.signal = signal
+            appServer.abortControllerPool.add(abortControllerId, executionController)
+            executeData.signal = executionController
 
-            const result = await executeFlow(executeData)
+            try {
+                const result = await executeFlow(executeData)
 
-            appServer.abortControllerPool.remove(abortControllerId)
-            await updatePredictionsUsage(orgId, subscriptionId, workspaceId, appServer.usageCacheManager)
-            incrementSuccessMetricCounter(appServer.metricsProvider, isInternal, isAgentFlow)
-            return result
+                await updatePredictionsUsage(orgId, subscriptionId, workspaceId, appServer.usageCacheManager)
+                incrementSuccessMetricCounter(appServer.metricsProvider, isInternal, isAgentFlow)
+                return result
+            } finally {
+                appServer.abortControllerPool.remove(abortControllerId)
+            }
         }
     } catch (e) {
         logger.error(`[server]:${organizationId}/${chatflow.id}/${chatId} Error:`, e)
-        appServer.abortControllerPool.remove(`${chatflow.id}_${chatId}`)
+        appServer.abortControllerPool.remove(abortControllerId)
         incrementFailedMetricCounter(appServer.metricsProvider, isInternal, isAgentFlow)
         if (e instanceof InternalFlowiseError && e.statusCode === StatusCodes.UNAUTHORIZED) {
             throw e
         } else {
             throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, getErrorMessage(e))
         }
+    } finally {
+        options.signal?.removeEventListener('abort', abortExecution)
     }
 }
 

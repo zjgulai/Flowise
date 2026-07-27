@@ -149,7 +149,7 @@ const ExportDialog = ({ show, onCancel, onExport }) => {
             </DialogContent>
             {!isExporting && (
                 <DialogActions>
-                    <Button onClick={onCancel}>Cancel</Button>
+                    <Button onClick={onCancel}>取消</Button>
                     <Button
                         disabled={selectedData.length === 0}
                         variant='contained'
@@ -471,7 +471,7 @@ const ProfileSection = ({ handleLogout }) => {
                                                     <ListItemIcon>
                                                         <IconFileExport stroke={1.5} size='1.3rem' />
                                                     </ListItemIcon>
-                                                    <ListItemText primary={<Typography variant='body2'>Export</Typography>} />
+                                                    <ListItemText primary={<Typography variant='body2'>导出</Typography>} />
                                                 </PermissionListItemButton>
                                                 <PermissionListItemButton
                                                     permissionId='workspace:import'
@@ -483,7 +483,7 @@ const ProfileSection = ({ handleLogout }) => {
                                                     <ListItemIcon>
                                                         <IconFileUpload stroke={1.5} size='1.3rem' />
                                                     </ListItemIcon>
-                                                    <ListItemText primary={<Typography variant='body2'>Import</Typography>} />
+                                                    <ListItemText primary={<Typography variant='body2'>导入</Typography>} />
                                                 </PermissionListItemButton>
                                                 <input ref={inputRef} type='file' hidden onChange={fileChange} accept='.json' />
                                                 <ListItemButton
@@ -496,7 +496,7 @@ const ProfileSection = ({ handleLogout }) => {
                                                     <ListItemIcon>
                                                         <IconInfoCircle stroke={1.5} size='1.3rem' />
                                                     </ListItemIcon>
-                                                    <ListItemText primary={<Typography variant='body2'>Version</Typography>} />
+                                                    <ListItemText primary={<Typography variant='body2'>版本</Typography>} />
                                                 </ListItemButton>
                                                 {isAuthenticated && !currentUser.isSSO && (
                                                     <ListItemButton
@@ -519,7 +519,7 @@ const ProfileSection = ({ handleLogout }) => {
                                                     <ListItemIcon>
                                                         <IconLogout stroke={1.5} size='1.3rem' />
                                                     </ListItemIcon>
-                                                    <ListItemText primary={<Typography variant='body2'>Logout</Typography>} />
+                                                    <ListItemText primary={<Typography variant='body2'>退出</Typography>} />
                                                 </ListItemButton>
                                             </List>
                                         </Box>

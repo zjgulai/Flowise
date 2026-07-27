@@ -391,7 +391,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
     const handleOpenDialog = () => {
         setOpenDialog(true)
         setDialogProps({
-            title: 'What would you like to build?',
+            title: '您想构建什么？',
             description:
                 'Enter your prompt to generate an agentflow. Performance may vary with different models. Only nodes and edges are generated, you will need to fill in the input fields for each node.'
         })
@@ -414,7 +414,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                 size='small'
                 color='primary'
                 aria-label='add'
-                title='Add Node'
+                title='添加节点'
                 onClick={handleToggle}
             >
                 {open ? <IconMinus /> : <IconPlus />}
@@ -433,7 +433,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                     size='small'
                     color='primary'
                     aria-label='generate'
-                    title='Generate Agentflow'
+                    title='生成 Agent 流程'
                 >
                     <IconSparkles />
                 </StyledFab>
@@ -472,7 +472,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                 <MainCard border={false} elevation={16} content={false} boxShadow shadow={theme.shadows[16]}>
                                     <Box sx={{ p: 2 }}>
                                         <Stack>
-                                            <Typography variant='h4'>Add Nodes</Typography>
+                                            <Typography variant='h4'>添加节点</Typography>
                                         </Stack>
                                         <OutlinedInput
                                             // eslint-disable-next-line
@@ -481,7 +481,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                             id='input-search-node'
                                             value={searchValue}
                                             onChange={(e) => filterSearch(e.target.value)}
-                                            placeholder='Search nodes'
+                                            placeholder='搜索节点'
                                             startAdornment={
                                                 <InputAdornment position='start'>
                                                     <IconSearch stroke={1.5} size='1rem' color={theme.palette.grey[500]} />
@@ -497,7 +497,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                             color: theme.palette.grey[900]
                                                         }
                                                     }}
-                                                    title='Clear Search'
+                                                    title='清除搜索'
                                                 >
                                                     <IconX
                                                         stroke={1.5}
@@ -520,7 +520,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                 variant='fullWidth'
                                                 value={tabValue}
                                                 onChange={handleTabChange}
-                                                aria-label='tabs'
+                                                aria-label='标签页'
                                             >
                                                 {['LangChain', 'LlamaIndex', 'Utilities'].map((item, index) => (
                                                     <Tab

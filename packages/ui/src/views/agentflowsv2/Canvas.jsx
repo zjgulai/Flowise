@@ -186,10 +186,10 @@ const AgentflowCanvas = () => {
 
     const handleDeleteFlow = async () => {
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete ${canvasTitle} ${chatflow.name}?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: `删除`,
+            description: `删除 ${canvasTitle === 'Agent' ? '智能体' : '对话流程'} ${chatflow.name}？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -665,7 +665,7 @@ const AgentflowCanvas = () => {
                     position: { x: 100, y: 100 },
                     data: {
                         ...initNode(clonedStartNodeData, 'startAgentflow_0', true),
-                        label: 'Start'
+                        label: '开始'
                     }
                 }
                 setNodes([startNode])
@@ -752,8 +752,8 @@ const AgentflowCanvas = () => {
                                         onClick={() => {
                                             setIsSnappingEnabled(!isSnappingEnabled)
                                         }}
-                                        title='toggle snapping'
-                                        aria-label='toggle snapping'
+                                        title='切换吸附'
+                                        aria-label='切换吸附'
                                     >
                                         {isSnappingEnabled ? <IconMagnetFilled /> : <IconMagnetOff />}
                                     </button>
@@ -762,8 +762,8 @@ const AgentflowCanvas = () => {
                                         onClick={() => {
                                             setIsBackgroundEnabled(!isBackgroundEnabled)
                                         }}
-                                        title='toggle background'
-                                        aria-label='toggle background'
+                                        title='切换背景'
+                                        aria-label='切换背景'
                                     >
                                         {isBackgroundEnabled ? <IconArtboard /> : <IconArtboardOff />}
                                     </button>
@@ -803,8 +803,8 @@ const AgentflowCanvas = () => {
                                             }
                                         }}
                                         size='small'
-                                        aria-label='sync'
-                                        title='Sync Nodes'
+                                        aria-label='同步'
+                                        title='同步节点'
                                         onClick={() => syncNodes()}
                                     >
                                         <IconRefreshAlert />

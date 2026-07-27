@@ -53,13 +53,13 @@ const textToSpeechProviders = {
         url: 'https://platform.openai.com/docs/guides/text-to-speech',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['openAIApi']
             },
             {
-                label: 'Voice',
+                label: '语音',
                 name: 'voice',
                 type: 'voice_select',
                 description: 'The voice to use when generating the audio',
@@ -75,13 +75,13 @@ const textToSpeechProviders = {
         url: 'https://elevenlabs.io/',
         inputs: [
             {
-                label: 'Connect Credential',
+                label: '连接凭据',
                 name: 'credential',
                 type: 'credential',
                 credentialNames: ['elevenLabsApi']
             },
             {
-                label: 'Voice',
+                label: '语音',
                 name: 'voice',
                 type: 'voice_select',
                 description: 'The voice to use for text-to-speech',
@@ -419,7 +419,7 @@ const TextToSpeech = ({ dialogProps }) => {
     return (
         <>
             <Box fullWidth sx={{ mb: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <Typography>Providers</Typography>
+                <Typography>提供商</Typography>
                 <FormControl fullWidth>
                     <Select
                         size='small'
@@ -431,7 +431,7 @@ const TextToSpeech = ({ dialogProps }) => {
                             }
                         }}
                     >
-                        <MenuItem value='none'>None</MenuItem>
+                        <MenuItem value='none'>无</MenuItem>
                         {Object.values(textToSpeechProviders).map((provider) => (
                             <MenuItem key={provider.name} value={provider.name}>
                                 {provider.label}
@@ -590,10 +590,7 @@ const TextToSpeech = ({ dialogProps }) => {
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <Typography>
                                 Automatically play audio
-                                <TooltipWithParser
-                                    style={{ marginLeft: 10 }}
-                                    title='When enabled, bot responses will be automatically converted to speech and played'
-                                />
+                                <TooltipWithParser style={{ marginLeft: 10 }} title='启用后，机器人回复将自动转换为语音并播放' />
                             </Typography>
                         </div>
                         <SwitchInput

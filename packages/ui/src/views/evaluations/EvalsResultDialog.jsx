@@ -124,7 +124,7 @@ const EvalsResultDialog = ({ show, dialogProps, onCancel, openDetailsDrawer }) =
                         >
                             <TableRow>
                                 <TableCell rowSpan='2'>&nbsp;</TableCell>
-                                <TableCell rowSpan='2'>Input</TableCell>
+                                <TableCell rowSpan='2'>输入</TableCell>
                                 <TableCell rowSpan='2'>Expected Output</TableCell>
                                 {dialogProps.data &&
                                     dialogProps.data.evaluation.chatflowId?.map((chatflowId, index) => (
@@ -170,7 +170,7 @@ const EvalsResultDialog = ({ show, dialogProps, onCancel, openDetailsDrawer }) =
                                                 Actual Output
                                             </TableCell>
                                             {dialogProps.data.customEvalsDefined && dialogProps.data.showCustomEvals && (
-                                                <TableCell>Evaluator</TableCell>
+                                                <TableCell>评估器</TableCell>
                                             )}
                                             {dialogProps.data.evaluation?.evaluationType === 'llm' && <TableCell>LLM Evaluation</TableCell>}
                                         </React.Fragment>

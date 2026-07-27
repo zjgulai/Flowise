@@ -80,7 +80,7 @@ const createStandardOutputs = (nodeData, newNodeId) => {
         return [
             {
                 name: 'output',
-                label: 'Output',
+                label: '输出',
                 type: 'options',
                 description: nodeData.outputs[0].description ?? '',
                 options: outputOptions,
@@ -1173,7 +1173,7 @@ export const getCustomConditionOutputs = (value, nodeId, existingEdges, isDataGr
     }
     const newOutput = {
         name: 'output',
-        label: 'Output',
+        label: '输出',
         type: 'options',
         options
     }

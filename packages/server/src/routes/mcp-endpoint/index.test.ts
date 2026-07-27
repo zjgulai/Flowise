@@ -20,20 +20,24 @@ import request from 'supertest'
 // Mock the controller so no real service / DB / rate-limiter code runs.
 // Each handler simply calls next() or sends 200 so we can focus on the
 // middleware under test (body-size limit and CORS).
-// jest.resetModules() preserves jest.mock() factory registrations, so this
-// single top-level mock is picked up by every fresh require('./index').
+// Register the same factory both at file load and after each resetModules()
+// so every fresh require('./index') deterministically receives the mock.
 // ---------------------------------------------------------------------------
-jest.mock('../../controllers/mcp-endpoint', () => ({
-    __esModule: true,
-    default: {
-        getRateLimiterMiddleware: (_req: Request, _res: Response, next: () => void) => next(),
-        authenticateToken: (_req: Request, _res: Response, next: () => void) => next(),
-        handlePost: (_req: Request, res: Response) => res.status(200).json({ ok: true }),
-        handleGet: (_req: Request, res: Response) => res.status(200).end(),
-        handleSseMessage: (_req: Request, res: Response) => res.status(200).json({ ok: true }),
-        handleDelete: (_req: Request, res: Response) => res.status(200).json({ ok: true })
+function mockMcpEndpointControllerFactory() {
+    return {
+        __esModule: true,
+        default: {
+            getRateLimiterMiddleware: (_req: Request, _res: Response, next: () => void) => next(),
+            authenticateToken: (_req: Request, _res: Response, next: () => void) => next(),
+            handlePost: (_req: Request, res: Response) => res.status(200).json({ ok: true }),
+            handleGet: (_req: Request, res: Response) => res.status(200).end(),
+            handleSseMessage: (_req: Request, res: Response) => res.status(200).json({ ok: true }),
+            handleDelete: (_req: Request, res: Response) => res.status(200).json({ ok: true })
+        }
     }
-}))
+}
+
+jest.mock('../../controllers/mcp-endpoint', mockMcpEndpointControllerFactory)
 
 // ---------------------------------------------------------------------------
 // Helper: build a fresh Express app with a freshly-required router so that
@@ -43,6 +47,7 @@ jest.mock('../../controllers/mcp-endpoint', () => ({
 // ---------------------------------------------------------------------------
 function buildApp(): express.Application {
     jest.resetModules()
+    jest.doMock('../../controllers/mcp-endpoint', mockMcpEndpointControllerFactory)
     const mcpRouter = require('./index').default
     const app = express()
     app.use('/mcp', mcpRouter)

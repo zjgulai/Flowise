@@ -18,6 +18,7 @@ import jwt from 'jsonwebtoken'
 import path from 'path'
 import Stripe from 'stripe'
 import { LoginMethodStatus } from './enterprise/database/entities/login-method.entity'
+import { isAdminOnlyModeEnabled } from './enterprise/utils/adminOnlyPolicy'
 import { ErrorMessage, LoggedInUser } from './enterprise/Interface.Enterprise'
 import { Permissions } from './enterprise/rbac/Permissions'
 import { LoginMethodService } from './enterprise/services/login-method.service'
@@ -27,15 +28,16 @@ import AzureSSO from './enterprise/sso/AzureSSO'
 import GithubSSO from './enterprise/sso/GithubSSO'
 import GoogleSSO from './enterprise/sso/GoogleSSO'
 import SSOBase from './enterprise/sso/SSOBase'
+import { isSupportedSSOProvider, SUPPORTED_SSO_PROVIDERS } from './enterprise/sso/supportedProviders'
 import { InternalFlowiseError } from './errors/internalFlowiseError'
 import { Platform, UserPlan } from './Interface'
 import { StripeManager } from './StripeManager'
 import { UsageCacheManager } from './UsageCacheManager'
 import { GeneralErrorMessage, LICENSE_QUOTAS } from './utils/constants'
 import { getRunningExpressApp } from './utils/getRunningExpressApp'
+import logger from './utils/logger'
 import { ENTERPRISE_FEATURE_FLAGS } from './utils/quotaUsage'
 
-const allSSOProviders = ['azure', 'google', 'auth0', 'github']
 export class IdentityManager {
     private static instance: IdentityManager
     private stripeManager?: StripeManager
@@ -157,7 +159,12 @@ export class IdentityManager {
     }
 
     public initializeSSO = async (app: express.Application) => {
+        if (isAdminOnlyModeEnabled()) {
+            this.disableAllSSOProviders(app)
+            return
+        }
         if (this.getPlatformType() === Platform.CLOUD || this.getPlatformType() === Platform.ENTERPRISE) {
+            this.disableAllSSOProviders(app)
             const loginMethodService = new LoginMethodService()
             let queryRunner
             try {
@@ -167,18 +174,23 @@ export class IdentityManager {
                 if (this.getPlatformType() === Platform.ENTERPRISE) {
                     const organizationService = new OrganizationService()
                     const organizations = await organizationService.readOrganization(queryRunner)
-                    if (organizations.length > 0) {
+                    if (organizations.length === 1) {
                         organizationId = organizations[0].id
                     } else {
-                        this.initializeEmptySSO(app)
                         return
                     }
                 }
                 const loginMethods = await loginMethodService.readLoginMethodByOrganizationId(organizationId, queryRunner)
                 if (loginMethods && loginMethods.length > 0) {
                     for (let method of loginMethods) {
+                        if (!isSupportedSSOProvider(method.name)) {
+                            logger.warn('sso_provider_initialization_skipped_invalid_provider')
+                            continue
+                        }
                         if (method.status === LoginMethodStatus.ENABLE) {
-                            method.config = JSON.parse(await loginMethodService.decryptLoginMethodConfig(method.config))
+                            const decryptedConfig = JSON.parse(await loginMethodService.decryptLoginMethodConfig(method.config))
+                            method.config =
+                                this.getPlatformType() === Platform.ENTERPRISE ? { ...decryptedConfig, organizationId } : decryptedConfig
                             this.initializeSsoProvider(app, method.name, method.config)
                         }
                     }
@@ -186,26 +198,32 @@ export class IdentityManager {
             } finally {
                 if (queryRunner) await queryRunner.release()
             }
+        } else {
+            this.disableAllSSOProviders(app)
         }
         // iterate through the remaining providers and initialize them with configEnabled as false
         this.initializeEmptySSO(app)
     }
 
     initializeEmptySSO(app: Application) {
-        allSSOProviders.map((providerName) => {
+        SUPPORTED_SSO_PROVIDERS.forEach((providerName) => {
             if (!this.ssoProviders.has(providerName)) {
                 this.initializeSsoProvider(app, providerName, undefined)
             }
         })
     }
 
+    private disableAllSSOProviders(app: Application) {
+        SUPPORTED_SSO_PROVIDERS.forEach((providerName) => this.initializeSsoProvider(app, providerName, undefined))
+    }
+
     initializeSsoProvider(app: Application, providerName: string, providerConfig: any) {
+        if (isAdminOnlyModeEnabled()) providerConfig = undefined
         if (this.ssoProviders.has(providerName)) {
             const provider = this.ssoProviders.get(providerName)
             if (provider) {
                 if (providerConfig && providerConfig.configEnabled === true) {
                     provider.setSSOConfig(providerConfig)
-                    provider.initialize()
                 } else {
                     // if false, disable the provider
                     provider.setSSOConfig(undefined)

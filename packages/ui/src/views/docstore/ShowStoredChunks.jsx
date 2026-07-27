@@ -189,13 +189,11 @@ const ShowStoredChunks = () => {
     }
 
     useEffect(() => {
-        setLoading(true)
         getChunksApi.request(storeId, fileId, currentPage)
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     const changePage = (newPage) => {
-        setLoading(true)
         setCurrentPage(newPage)
         getChunksApi.request(storeId, fileId, newPage)
     }
@@ -249,7 +247,7 @@ const ShowStoredChunks = () => {
         <>
             <MainCard style={{ position: 'relative' }}>
                 {error ? (
-                    <ErrorBoundary error={error} />
+                    <ErrorBoundary error={error} onBack={() => navigate('/document-stores')} backLabel='返回文档库列表' />
                 ) : (
                     <Stack flexDirection='column' sx={{ gap: 1 }}>
                         <ViewHeader
@@ -411,7 +409,7 @@ const ShowStoredChunks = () => {
                 onChunkEdit={(newPageContent, newMetadata, selectedChunk) => onChunkEdit(newPageContent, newMetadata, selectedChunk)}
                 onDeleteChunk={(selectedChunk) => onDeleteChunk(selectedChunk)}
             ></ExpandedChunkDialog>
-            {loading && <BackdropLoader open={loading} />}
+            {(loading || getChunksApi.loading) && <BackdropLoader open={loading || getChunksApi.loading} />}
         </>
     )
 }

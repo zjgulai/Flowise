@@ -80,7 +80,7 @@ export const MarketplaceTable = ({
                             <StyledTableCell sx={{ minWidth: '100px' }} component='th' scope='row' key='1'>
                                 Type
                             </StyledTableCell>
-                            <StyledTableCell key='2'>Description</StyledTableCell>
+                            <StyledTableCell key='2'>描述</StyledTableCell>
                             <StyledTableCell sx={{ minWidth: '100px' }} key='3'>
                                 Framework
                             </StyledTableCell>
@@ -237,7 +237,7 @@ export const MarketplaceTable = ({
                                                             <PermissionIconButton
                                                                 display={'feat:workspaces'}
                                                                 permissionId={'templates:custom-share'}
-                                                                title='Share'
+                                                                title='分享'
                                                                 color='primary'
                                                                 onClick={() => onShare(row)}
                                                             >
@@ -247,7 +247,7 @@ export const MarketplaceTable = ({
                                                         {onDelete && (
                                                             <PermissionIconButton
                                                                 permissionId={'templates:custom-delete'}
-                                                                title='Delete'
+                                                                title='删除'
                                                                 color='error'
                                                                 onClick={() => onDelete(row)}
                                                             >

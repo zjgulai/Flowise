@@ -349,7 +349,7 @@ curl -X POST ${baseURL}/api/v1/document-store/upsert/${dialogProps.storeId} \\
                         }}
                     />
                     <Box sx={{ flex: 1 }}>
-                        <strong>Note:</strong> Upsert API can only be used when the existing document loader has been upserted before.
+                        <strong>注意：</strong>仅当现有文档加载器已执行过更新插入时，才能使用 Upsert API。
                     </Box>
                 </Box>
 

@@ -170,13 +170,24 @@ const deleteChatflow = async (
     }
 }
 
-const getAllChatflows = async (type?: ChatflowType, workspaceId?: string, page: number = -1, limit: number = -1) => {
+const getAllChatflows = async (
+    type?: ChatflowType,
+    workspaceId?: string,
+    page: number = -1,
+    limit: number = -1,
+    search?: string,
+    orderBy?: 'name' | 'updatedDate',
+    order?: 'asc' | 'desc'
+) => {
     try {
         const appServer = getRunningExpressApp()
 
+        const sortColumn = orderBy === 'name' ? 'chat_flow.name' : 'chat_flow.updatedDate'
+        const sortDirection = order === 'asc' ? 'ASC' : 'DESC'
         const queryBuilder = appServer.AppDataSource.getRepository(ChatFlow)
             .createQueryBuilder('chat_flow')
-            .orderBy('chat_flow.updatedDate', 'DESC')
+            .orderBy(sortColumn, sortDirection)
+            .addOrderBy('chat_flow.id', 'ASC')
 
         if (page > 0 && limit > 0) {
             queryBuilder.skip((page - 1) * limit)
@@ -193,6 +204,14 @@ const getAllChatflows = async (type?: ChatflowType, workspaceId?: string, page: 
             queryBuilder.andWhere('chat_flow.type = :type', { type: 'CHATFLOW' })
         }
         if (workspaceId) queryBuilder.andWhere('chat_flow.workspaceId = :workspaceId', { workspaceId })
+        if (search) {
+            const idSearchExpression =
+                appServer.AppDataSource.options.type === 'postgres' ? 'LOWER(CAST(chat_flow.id AS TEXT))' : 'LOWER(chat_flow.id)'
+            queryBuilder.andWhere(
+                `(LOWER(chat_flow.name) LIKE :search OR LOWER(COALESCE(chat_flow.category, '')) LIKE :search OR ${idSearchExpression} LIKE :search)`,
+                { search: `%${search.toLowerCase()}%` }
+            )
+        }
         const [data, total] = await queryBuilder.getManyAndCount()
 
         if (page > 0 && limit > 0) {

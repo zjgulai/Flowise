@@ -3,7 +3,7 @@ const config = {
     basename: '',
     defaultPath: '/chatflows',
     // You can specify multiple fallback fonts
-    fontFamily: `'Inter', 'Roboto', 'Arial', sans-serif`,
+    fontFamily: `'Inter', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'Roboto', 'Arial', sans-serif`,
     borderRadius: 12
 }
 

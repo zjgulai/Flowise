@@ -1,1 +1,2 @@
 pnpm-lock.yaml
+docker/seccomp/chromium.json

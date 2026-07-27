@@ -6,6 +6,13 @@ import { parse } from 'css-what'
 import { SelectorType } from 'cheerio'
 import { ICommonObject, INodeOutputsValue, IDocument, INode, INodeData, INodeParams } from '../../../src/Interface'
 import { handleEscapeCharacters, webCrawl, xmlScrape } from '../../../src/utils'
+import { secureFetch } from '../../../src/httpSecurity'
+import {
+    assertWebScraperUrlAllowed,
+    isWebScraperPolicyError,
+    toWebScraperPolicyError,
+    WEB_SCRAPER_SECURE_FETCH_POLICY
+} from '../webScraperSecurity'
 
 class Cheerio_DocumentLoaders implements INode {
     label: string
@@ -147,6 +154,7 @@ class Cheerio_DocumentLoaders implements INode {
         }
 
         async function cheerioLoader(url: string): Promise<any> {
+            await assertWebScraperUrlAllowed(url)
             try {
                 let docs: IDocument[] = []
                 if (url.endsWith('.pdf')) {
@@ -155,6 +163,26 @@ class Cheerio_DocumentLoaders implements INode {
                     return docs
                 }
                 const loader = new CheerioWebBaseLoader(url, params)
+                loader.scrape = async () => {
+                    const { load } = await CheerioWebBaseLoader.imports()
+                    const response = await secureFetch(
+                        url,
+                        {
+                            signal: loader.timeout ? AbortSignal.timeout(loader.timeout) : undefined,
+                            headers: loader.headers
+                        } as any,
+                        5,
+                        undefined,
+                        WEB_SCRAPER_SECURE_FETCH_POLICY
+                    ).catch((error) => {
+                        // secureFetch owns the redirect chain and pins every DNS
+                        // result. Any failure here is therefore security relevant
+                        // and must not be converted into a successful empty scrape.
+                        throw toWebScraperPolicyError(error)
+                    })
+                    const html = loader.textDecoder?.decode(await response.arrayBuffer()) ?? (await response.text())
+                    return load(html)
+                }
                 if (textSplitter) {
                     docs = await loader.load()
                     docs = await textSplitter.splitDocuments(docs)
@@ -163,6 +191,7 @@ class Cheerio_DocumentLoaders implements INode {
                 }
                 return docs
             } catch (err) {
+                if (isWebScraperPolicyError(err)) throw err
                 if (process.env.DEBUG === 'true')
                     options.logger.error(`[${orgId}]: Error in CheerioWebBaseLoader: ${err.message}, on page: ${url}`)
                 return []
@@ -177,12 +206,19 @@ class Cheerio_DocumentLoaders implements INode {
             // so when limit is 0 we can fetch all the links
             if (limit === null || limit === undefined) limit = 10
             else if (limit < 0) throw new Error('Limit cannot be less than 0')
-            const pages: string[] =
-                selectedLinks && selectedLinks.length > 0
-                    ? selectedLinks.slice(0, limit === 0 ? undefined : limit)
-                    : relativeLinksMethod === 'webCrawl'
-                    ? await webCrawl(url, limit)
-                    : await xmlScrape(url, limit)
+            let pages: string[]
+            if (selectedLinks && selectedLinks.length > 0) {
+                pages = selectedLinks.slice(0, limit === 0 ? undefined : limit)
+            } else {
+                // Link discovery performs network requests before the per-page
+                // loader runs, so it must use the same mandatory public-network
+                // policy on the entry URL, every crawl hop, and every redirect.
+                await assertWebScraperUrlAllowed(url)
+                pages =
+                    relativeLinksMethod === 'webCrawl'
+                        ? await webCrawl(url, limit, WEB_SCRAPER_SECURE_FETCH_POLICY)
+                        : await xmlScrape(url, limit, WEB_SCRAPER_SECURE_FETCH_POLICY)
+            }
             if (process.env.DEBUG === 'true')
                 options.logger.info(`[${orgId}]: CheerioWebBaseLoader pages: ${JSON.stringify(pages)}, length: ${pages.length}`)
             if (!pages || pages.length === 0) throw new Error('No relative links found')

@@ -152,7 +152,7 @@ const ConfirmDeleteMessageDialog = ({ show, dialogProps, onCancel, onConfirm }) 
                 {dialogProps.isChatflow && (
                     <FormControlLabel
                         control={<Checkbox checked={hardDelete} onChange={(event) => setHardDelete(event.target.checked)} />}
-                        label='Remove messages from 3rd party Memory Node'
+                        label='从第三方记忆节点移除消息'
                     />
                 )}
             </DialogContent>
@@ -899,7 +899,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                 marginRight: 10
                             }}
                         >
-                            <b style={{ marginRight: 10 }}>Source</b>
+                            <b style={{ marginRight: 10 }}>来源</b>
                             <MultiDropdown
                                 key={JSON.stringify(chatTypeFilter)}
                                 name='chatType'
@@ -917,7 +917,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                         name: 'MCP'
                                     },
                                     {
-                                        label: 'Scheduled',
+                                        label: '已计划',
                                         name: 'SCHEDULED'
                                     },
                                     {
@@ -925,7 +925,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                         name: 'WEBHOOK'
                                     },
                                     {
-                                        label: 'Evaluations',
+                                        label: '评估',
                                         name: 'EVALUATION'
                                     }
                                 ]}
@@ -949,11 +949,11 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                 name='feedbackType'
                                 options={[
                                     {
-                                        label: 'Positive',
+                                        label: '正面',
                                         name: 'THUMBS_UP'
                                     },
                                     {
-                                        label: 'Negative',
+                                        label: '否定',
                                         name: 'THUMBS_DOWN'
                                     }
                                 ]}
@@ -1028,11 +1028,11 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                             marginTop: 20
                         }}
                     >
-                        <StatsCard title='Total Sessions' stat={`${stats.totalSessions ?? 0}`} />
-                        <StatsCard title='Total Messages' stat={`${stats.totalMessages ?? 0}`} />
-                        <StatsCard title='Total Feedback Received' stat={`${stats.totalFeedback ?? 0}`} />
+                        <StatsCard title='总会话数' stat={`${stats.totalSessions ?? 0}`} />
+                        <StatsCard title='总消息数' stat={`${stats.totalMessages ?? 0}`} />
+                        <StatsCard title='收到的总反馈' stat={`${stats.totalFeedback ?? 0}`} />
                         <StatsCard
-                            title='Positive Feedback'
+                            title='正面反馈'
                             stat={`${(((stats.positiveFeedback ?? 0) / (stats.totalFeedback ?? 1)) * 100 || 0).toFixed(2)}%`}
                         />
                     </div>
@@ -1409,7 +1409,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                                                         )}
                                                                                         {agent.instructions && <p>{agent.instructions}</p>}
                                                                                         {agent.messages.length === 0 &&
-                                                                                            !agent.instructions && <p>Finished</p>}
+                                                                                            !agent.instructions && <p>已完成</p>}
                                                                                         {agent.sourceDocuments &&
                                                                                             agent.sourceDocuments.length > 0 && (
                                                                                                 <div

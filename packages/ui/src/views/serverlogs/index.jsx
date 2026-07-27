@@ -207,7 +207,7 @@ const Logs = () => {
                 <ErrorBoundary error={error} />
             ) : (
                 <Stack flexDirection='column' sx={{ gap: 2 }}>
-                    <ViewHeader title='Logs' />
+                    <ViewHeader title='日志' />
                     {isLoading ? (
                         <Box display='flex' flexDirection='column' gap={gridSpacing}>
                             <Skeleton width='25%' height={32} />
@@ -242,7 +242,7 @@ const Logs = () => {
                                 {selectedTimeSearch === 'Custom' && (
                                     <>
                                         <Stack sx={{ alignItems: 'center', justifyContent: 'flex-start', gap: 2 }} flexDirection='row'>
-                                            <b>From</b>
+                                            <b>来自</b>
                                             <DatePicker
                                                 selected={startDate}
                                                 onChange={(date) => onStartDateSelected(date)}
@@ -258,7 +258,7 @@ const Logs = () => {
                                             />
                                         </Stack>
                                         <Stack sx={{ alignItems: 'center', justifyContent: 'flex-start', gap: 2 }} flexDirection='row'>
-                                            <b>To</b>
+                                            <b>到</b>
                                             <DatePicker
                                                 selected={endDate}
                                                 onChange={(date) => onEndDateSelected(date)}
@@ -301,7 +301,7 @@ const Logs = () => {
                                             alt='LogsEmptySVG'
                                         />
                                     </Box>
-                                    <div>No Logs Yet</div>
+                                    <div>暂无日志</div>
                                 </Stack>
                             )}
                         </>

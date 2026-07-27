@@ -40,7 +40,16 @@ const StyledTableRow = styled(TableRow)(() => ({
     }
 }))
 
-export const DocumentStoreTable = ({ data, isLoading, onRowClick, images, showActions, onActionMenuClick, actionButtonSx }) => {
+export const DocumentStoreTable = ({
+    data,
+    isLoading,
+    onRowClick,
+    images,
+    showActions,
+    onActionMenuClick,
+    actionButtonSx,
+    onSortChange
+}) => {
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
 
@@ -57,6 +66,7 @@ export const DocumentStoreTable = ({ data, isLoading, onRowClick, images, showAc
         setOrderBy(property)
         localStorage.setItem(localStorageKeyOrder, newOrder)
         localStorage.setItem(localStorageKeyOrderBy, property)
+        onSortChange?.(property, newOrder)
     }
 
     const sortedData = data
@@ -82,14 +92,14 @@ export const DocumentStoreTable = ({ data, isLoading, onRowClick, images, showAc
                             <StyledTableCell>&nbsp;</StyledTableCell>
                             <StyledTableCell>
                                 <TableSortLabel active={orderBy === 'name'} direction={order} onClick={() => handleRequestSort('name')}>
-                                    Name
+                                    名称
                                 </TableSortLabel>
                             </StyledTableCell>
-                            <StyledTableCell>Description</StyledTableCell>
-                            <StyledTableCell>Connected flows</StyledTableCell>
-                            <StyledTableCell>Total characters</StyledTableCell>
-                            <StyledTableCell>Total chunks</StyledTableCell>
-                            <StyledTableCell>Loader Types</StyledTableCell>
+                            <StyledTableCell>描述</StyledTableCell>
+                            <StyledTableCell>关联流程</StyledTableCell>
+                            <StyledTableCell>字符总数</StyledTableCell>
+                            <StyledTableCell>分块总数</StyledTableCell>
+                            <StyledTableCell>加载器类型</StyledTableCell>
                             {showActions && (
                                 <StyledTableCell align='right' sx={{ width: 44, pr: 1 }}>
                                     &nbsp;
@@ -244,7 +254,7 @@ export const DocumentStoreTable = ({ data, isLoading, onRowClick, images, showAc
                                                                     fontWeight: 200
                                                                 }}
                                                             >
-                                                                + {images.length - 3} More
+                                                                + {images.length - 3} 更多
                                                             </Typography>
                                                         )}
                                                     </Box>
@@ -254,7 +264,7 @@ export const DocumentStoreTable = ({ data, isLoading, onRowClick, images, showAc
                                                 <StyledTableCell align='right' sx={{ width: 44, mr: 1 }}>
                                                     <IconButton
                                                         size='small'
-                                                        aria-label='Document store options'
+                                                        aria-label='文档库操作'
                                                         sx={actionButtonSx}
                                                         onClick={(event) => {
                                                             event.stopPropagation()
@@ -284,7 +294,8 @@ DocumentStoreTable.propTypes = {
     onRowClick: PropTypes.func,
     showActions: PropTypes.bool,
     onActionMenuClick: PropTypes.func,
-    actionButtonSx: PropTypes.object
+    actionButtonSx: PropTypes.object,
+    onSortChange: PropTypes.func
 }
 
 DocumentStoreTable.displayName = 'DocumentStoreTable'
