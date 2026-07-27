@@ -59,6 +59,7 @@ const MAX_DOCKER_TOTAL_UNCOMPRESSED_MEMBER_BYTES = 16 * 1024 * 1024 * 1024
 const MAX_DOCKER_END_ZERO_BLOCKS = 20
 const MAX_DOCKER_TAR_STREAM_BYTES = MAX_DOCKER_TOTAL_MEMBER_BYTES + MAX_DOCKER_ARCHIVE_MEMBERS * 1024 + MAX_DOCKER_END_ZERO_BLOCKS * 512
 const CLASSIC_DOCKER_LAYER_PATH_PATTERN = /^(?:([0-9a-f]{64})\/)?layer\.tar$/
+const SHA256_BLOB_PATH_PATTERN = /^blobs\/sha256\/([0-9a-f]{64})$/
 
 const sha256 = (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`
 
@@ -477,7 +478,7 @@ const isDockerMetadataCandidate = (memberPath) =>
     ['manifest.json', 'index.json', 'oci-layout', 'repositories'].includes(memberPath) ||
     /^[0-9a-f]{64}\.json$/.test(memberPath) ||
     /^[0-9a-f]{64}\/(?:json|VERSION)$/.test(memberPath) ||
-    /^blobs\/sha256\/[0-9a-f]{64}$/.test(memberPath)
+    SHA256_BLOB_PATH_PATTERN.test(memberPath)
 
 const readDockerArchive = async (archivePath, maxTotalUncompressedBytes) => {
     const uncompressedBudget = new DockerUncompressedBudget(maxTotalUncompressedBytes ?? MAX_DOCKER_TOTAL_UNCOMPRESSED_MEMBER_BYTES)
@@ -618,16 +619,61 @@ const archiveParentDirectories = (memberPath) => {
     return directories
 }
 
-const validateExactArchiveMembers = (members, expectedFiles, allowedDirectories) => {
+const validateExactArchiveMembers = (
+    members,
+    expectedFiles,
+    allowedDirectories,
+    { allowUnreferencedContentAddressedBlobs = false } = {}
+) => {
     for (const member of members) {
         const allowed = member.type === 'file' ? expectedFiles.has(member.path) : allowedDirectories.has(member.path)
-        if (!allowed) throw new Error(`Docker archive contains an unexpected member: ${member.path}`)
+        if (allowed) continue
+        if (allowUnreferencedContentAddressedBlobs && member.type === 'file') {
+            const blobMatch = SHA256_BLOB_PATH_PATTERN.exec(member.path)
+            if (blobMatch) {
+                if (member.rawDigest !== `sha256:${blobMatch[1]}`) {
+                    throw new Error(`Docker archive unreferenced blob digest mismatch: ${member.path}`)
+                }
+                continue
+            }
+        }
+        throw new Error(`Docker archive contains an unexpected member: ${member.path}`)
     }
     for (const expectedFile of expectedFiles) {
         if (members.filter((member) => member.path === expectedFile && member.type === 'file').length !== 1) {
             throw new Error(`Docker archive expected member is unavailable: ${expectedFile}`)
         }
     }
+}
+
+const validateLegacyRepositories = ({ membersByPath, entry, layerMembers }) => {
+    const repositoriesMember = membersByPath.get('repositories')
+    if (!repositoriesMember) return false
+    if (repositoriesMember.type !== 'file' || repositoriesMember.compression !== 'none' || !repositoriesMember.content) {
+        throw new Error('Docker archive legacy repositories metadata is unavailable')
+    }
+
+    const repositories = parseArchiveJson(repositoriesMember.content, 'Docker archive legacy repositories metadata')
+    const imageTag = entry.RepoTags[0]
+    const tagSeparator = imageTag.lastIndexOf(':')
+    const repositoryName = imageTag.slice(0, tagSeparator)
+    const tagName = imageTag.slice(tagSeparator + 1)
+    const repositoryNames =
+        repositories && typeof repositories === 'object' && !Array.isArray(repositories) ? Object.keys(repositories) : []
+    const tags = repositoryNames.length === 1 && repositoryNames[0] === repositoryName ? repositories[repositoryName] : null
+    const tagNames = tags && typeof tags === 'object' && !Array.isArray(tags) ? Object.keys(tags) : []
+    const expectedTopDiffId = digestHex(layerMembers.at(-1).payloadDigest)
+
+    if (
+        repositoryNames.length !== 1 ||
+        repositoryNames[0] !== repositoryName ||
+        tagNames.length !== 1 ||
+        tagNames[0] !== tagName ||
+        tags[tagName] !== expectedTopDiffId
+    ) {
+        throw new Error('Docker archive legacy repositories metadata mismatch')
+    }
+    return true
 }
 
 const validateContainerdLayout = ({ members, membersByPath, entry, configPath, layerMembers }) => {
@@ -705,8 +751,11 @@ const validateContainerdLayout = ({ members, membersByPath, entry, configPath, l
     }
 
     const expectedFiles = new Set(['manifest.json', 'index.json', 'oci-layout', descriptorPath, configPath, ...entry.Layers])
+    if (validateLegacyRepositories({ membersByPath, entry, layerMembers })) expectedFiles.add('repositories')
     const allowedDirectories = new Set([...expectedFiles].flatMap((path) => archiveParentDirectories(path)))
-    validateExactArchiveMembers(members, expectedFiles, allowedDirectories)
+    validateExactArchiveMembers(members, expectedFiles, allowedDirectories, {
+        allowUnreferencedContentAddressedBlobs: true
+    })
 }
 
 const validateClassicLayout = ({ members, membersByPath, entry, configPath, layerMembers }) => {

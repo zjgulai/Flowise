@@ -184,6 +184,7 @@ const createDockerArchiveFixture = ({
     layerCompression = 'none',
     layerPayloads = [Buffer.from('deterministic layer fixture\n')],
     layout = 'classic',
+    legacyRepositories = null,
     omitLayer = false,
     omitRootfs = false,
     alterLayer = false,
@@ -288,6 +289,17 @@ const createDockerArchiveFixture = ({
             { path: 'manifest.json', content: archiveManifestBytes },
             { path: 'oci-layout', content: '{"imageLayoutVersion":"1.0.0"}\n' }
         )
+        if (legacyRepositories !== null) {
+            const repositoryTag = (repoTags ?? [tag])[0]
+            const tagSeparator = repositoryTag.lastIndexOf(':')
+            const repositoryName = repositoryTag.slice(0, tagSeparator)
+            const tagName = repositoryTag.slice(tagSeparator + 1)
+            const repositories =
+                legacyRepositories === true
+                    ? { [repositoryName]: { [tagName]: layerDiffIds.at(-1).slice('sha256:'.length) } }
+                    : legacyRepositories
+            entries.push({ path: 'repositories', content: `${JSON.stringify(repositories)}\n` })
+        }
     } else {
         entries.push(
             { path: 'manifest.json', content: archiveManifestBytes },
@@ -505,6 +517,150 @@ test('Docker archive verification supports classic and containerd save layouts w
         } finally {
             fixture.cleanup()
         }
+    }
+})
+
+test('Docker archive verification accepts only digest-bound unreferenced blobs in containerd layouts', async () => {
+    const orphanContent = Buffer.from('unreferenced content-addressed Docker blob\n')
+    const orphanDigest = createHash('sha256').update(orphanContent).digest('hex')
+    const validFixture = createDockerArchiveFixture({
+        layout: 'containerd',
+        extraEntries: [{ path: `blobs/sha256/${orphanDigest}`, content: orphanContent }]
+    })
+    try {
+        const result = await verifyDockerArchive({
+            archivePath: validFixture.archivePath,
+            imageTag: validFixture.tag,
+            revision: validFixture.revision,
+            source: validFixture.source,
+            version: validFixture.version,
+            created: validFixture.created,
+            platform: 'linux/amd64'
+        })
+        assert.equal(result.imageConfigDigest, validFixture.actualConfigDigest)
+    } finally {
+        validFixture.cleanup()
+    }
+
+    const mismatchedFixture = createDockerArchiveFixture({
+        layout: 'containerd',
+        extraEntries: [{ path: `blobs/sha256/${'f'.repeat(64)}`, content: orphanContent }]
+    })
+    try {
+        await assert.rejects(
+            () =>
+                verifyDockerArchive({
+                    archivePath: mismatchedFixture.archivePath,
+                    imageTag: mismatchedFixture.tag,
+                    revision: mismatchedFixture.revision,
+                    source: mismatchedFixture.source,
+                    version: mismatchedFixture.version,
+                    created: mismatchedFixture.created,
+                    platform: 'linux/amd64'
+                }),
+            /unreferenced blob digest mismatch/
+        )
+    } finally {
+        mismatchedFixture.cleanup()
+    }
+
+    const classicFixture = createDockerArchiveFixture({
+        extraEntries: [{ path: `blobs/sha256/${orphanDigest}`, content: orphanContent }]
+    })
+    try {
+        await assert.rejects(
+            () =>
+                verifyDockerArchive({
+                    archivePath: classicFixture.archivePath,
+                    imageTag: classicFixture.tag,
+                    revision: classicFixture.revision,
+                    source: classicFixture.source,
+                    version: classicFixture.version,
+                    created: classicFixture.created,
+                    platform: 'linux/amd64'
+                }),
+            /unexpected member/
+        )
+    } finally {
+        classicFixture.cleanup()
+    }
+})
+
+test('Docker archive verification strictly binds optional legacy repositories metadata', async () => {
+    const revision = '1'.repeat(40)
+    for (const tag of [`flowise-chinese:git-${revision}`, `registry.example.invalid:5443/team/flowise:git-${revision}`]) {
+        const legacyBlob = Buffer.from(`Docker 28 legacy compatibility blob for ${tag}\n`)
+        const legacyBlobDigest = createHash('sha256').update(legacyBlob).digest('hex')
+        const fixture = createDockerArchiveFixture({
+            layout: 'containerd',
+            tag,
+            legacyRepositories: true,
+            extraEntries: [{ path: `blobs/sha256/${legacyBlobDigest}`, content: legacyBlob }]
+        })
+        try {
+            const result = await verifyDockerArchive({
+                archivePath: fixture.archivePath,
+                imageTag: fixture.tag,
+                revision: fixture.revision,
+                source: fixture.source,
+                version: fixture.version,
+                created: fixture.created,
+                platform: 'linux/amd64'
+            })
+            assert.equal(result.imageConfigDigest, fixture.actualConfigDigest)
+        } finally {
+            fixture.cleanup()
+        }
+    }
+
+    const tagName = `git-${revision}`
+    for (const legacyRepositories of [
+        { unexpected: { [tagName]: 'f'.repeat(64) } },
+        { 'flowise-chinese': { unexpected: 'f'.repeat(64) } },
+        { 'flowise-chinese': { [tagName]: 'f'.repeat(64) } },
+        { 'flowise-chinese': { [tagName]: 'f'.repeat(64), unexpected: 'f'.repeat(64) } },
+        { 'flowise-chinese': { [tagName]: 'f'.repeat(64) }, unexpected: {} }
+    ]) {
+        const fixture = createDockerArchiveFixture({ layout: 'containerd', legacyRepositories })
+        try {
+            await assert.rejects(
+                () =>
+                    verifyDockerArchive({
+                        archivePath: fixture.archivePath,
+                        imageTag: fixture.tag,
+                        revision: fixture.revision,
+                        source: fixture.source,
+                        version: fixture.version,
+                        created: fixture.created,
+                        platform: 'linux/amd64'
+                    }),
+                /legacy repositories metadata mismatch/
+            )
+        } finally {
+            fixture.cleanup()
+        }
+    }
+
+    const malformedFixture = createDockerArchiveFixture({
+        layout: 'containerd',
+        extraEntries: [{ path: 'repositories', content: 'not-json\n' }]
+    })
+    try {
+        await assert.rejects(
+            () =>
+                verifyDockerArchive({
+                    archivePath: malformedFixture.archivePath,
+                    imageTag: malformedFixture.tag,
+                    revision: malformedFixture.revision,
+                    source: malformedFixture.source,
+                    version: malformedFixture.version,
+                    created: malformedFixture.created,
+                    platform: 'linux/amd64'
+                }),
+            /legacy repositories metadata is not valid JSON/
+        )
+    } finally {
+        malformedFixture.cleanup()
     }
 })
 
