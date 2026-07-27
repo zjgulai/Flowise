@@ -44,7 +44,8 @@ jobs:
             - run: pnpm build
               env:
                   NODE_OPTIONS: '--max_old_space_size=4096'
-            - run: pnpm test:coverage
+            - name: Run coverage serially within hosted-runner memory limits
+              run: pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand
             - name: Cypress install
               run: pnpm cypress install
             - name: Install dependencies (Cypress Action)

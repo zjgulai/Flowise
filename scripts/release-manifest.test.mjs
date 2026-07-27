@@ -28,6 +28,7 @@ const SECURITY_SCRIPT_PATH = fileURLToPath(new URL('./verify-security.sh', impor
 const RELEASE_CANDIDATE_SCRIPT_PATH = fileURLToPath(new URL('./verify-release-candidate.sh', import.meta.url))
 const CHROMIUM_SANDBOX_SCRIPT_PATH = fileURLToPath(new URL('./verify-chromium-sandbox.sh', import.meta.url))
 const PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH = fileURLToPath(new URL('./publish-verified-image.sh', import.meta.url))
+const MAIN_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/main.yml', import.meta.url))
 const DOCKER_BUILD_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/test_docker_build.yml', import.meta.url))
 const DOCKERHUB_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-dockerhub.yml', import.meta.url))
 const READONLY_MONITOR_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/production-readonly-monitor.yml', import.meta.url))
@@ -924,6 +925,19 @@ test('dirty manifest is rejected by require-clean verification', () => {
         )
     } finally {
         fixture.cleanup()
+    }
+})
+
+test('main CI retains full coverage while bounding workspace and Jest concurrency for hosted-runner memory safety', () => {
+    const workflow = readFileSync(MAIN_WORKFLOW_PATH, 'utf8')
+
+    assert.match(workflow, /^\s*run:\s*pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand\s*$/m)
+    assert.doesNotMatch(workflow, /^\s*run:\s*pnpm test:coverage\s*$/m)
+
+    for (const workspace of ['agentflow', 'observe', 'components', 'server']) {
+        const packageJsonPath = fileURLToPath(new URL(`../packages/${workspace}/package.json`, import.meta.url))
+        const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
+        assert.equal(packageJson.scripts?.['test:coverage'], 'jest --coverage', `${workspace} must retain full coverage`)
     }
 })
 
