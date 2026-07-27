@@ -3860,7 +3860,10 @@ def _validate_transition_observation_cas(initial: dict[str, Any], current: dict[
         "current_journal_inventory",
     )
     try:
-        drifted = any(initial[name] != current[name] for name in compared) or initial["key"] != current["key"]
+        drifted = any(initial[name] != current[name] for name in compared) or not hmac.compare_digest(
+            initial["key"],
+            current["key"],
+        )
     except (KeyError, TypeError) as error:
         raise DeployError("TRANSITION_OBSERVATION_CAS_MISMATCH") from error
     if drifted:
@@ -4063,9 +4066,18 @@ def issue_transition_permit(
                 or verified.path != permit_path.absolute()
             ):
                 raise DeployError("TRANSITION_PERMIT_ROUNDTRIP_MISMATCH")
-        except Exception:
+        except Exception as publication_error:
             guard = permit_path.parent / f".{run_id}.{secrets.token_hex(12)}.failed"
-            _quarantine_transition_permit(permit_path, guard)
+            try:
+                _quarantine_transition_permit(permit_path, guard)
+            except Exception as quarantine_error:
+                if isinstance(publication_error, DeployError):
+                    raise DeployError(
+                        f"{publication_error}:TRANSITION_PERMIT_QUARANTINE_FAILED"
+                    ) from quarantine_error
+                raise DeployError(
+                    "TRANSITION_PERMIT_ROUNDTRIP_AND_QUARANTINE_FAILED"
+                ) from quarantine_error
             raise
         return {
             "status": "transition_permit_issued",

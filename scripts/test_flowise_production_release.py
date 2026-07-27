@@ -1013,6 +1013,9 @@ class ProductionReleaseTests(unittest.TestCase):
         def mutate_current_journal(value):
             value["current_journal_inventory"]["control_json_count"] += 1
 
+        def mutate_key(value):
+            value["key"] = b"z" * 32
+
         for label, mutate in (
             ("container", mutate_container),
             ("network", mutate_network),
@@ -1021,6 +1024,7 @@ class ProductionReleaseTests(unittest.TestCase):
             ("database", mutate_database),
             ("legacy-journal", mutate_legacy_journal),
             ("current-journal", mutate_current_journal),
+            ("persistent-key", mutate_key),
         ):
             current = copy.deepcopy(initial)
             mutate(current)
@@ -1376,20 +1380,18 @@ class ProductionReleaseTests(unittest.TestCase):
         )
         permit_bytes = canonical(permit_document)
         real_link = os.link
-        link_calls = 0
         fsync_calls = 0
 
-        def link_once(source, destination, **kwargs):
-            nonlocal link_calls
-            link_calls += 1
-            if link_calls == 1:
-                return real_link(source, destination, **kwargs)
-            raise OSError("injected guard-link failure")
+        def fail_guard_link(source, destination, **kwargs):
+            if Path(destination).name.startswith(f".{RUN_ID}."):
+                raise OSError("injected guard-link failure")
+            return real_link(source, destination, **kwargs)
 
-        def fail_post_unlink_fsync(_path):
+        def fail_post_unlink_fsync(path):
             nonlocal fsync_calls
             fsync_calls += 1
-            if fsync_calls == 3:
+            hidden = [item for item in Path(path).iterdir() if item.name.startswith(f".{RUN_ID}.")]
+            if destination.exists() and not hidden:
                 raise OSError("injected post-unlink fsync failure")
 
         def verify_consumer(path, expected_digest, *, bundle, run_id):
@@ -1401,7 +1403,7 @@ class ProductionReleaseTests(unittest.TestCase):
             with mock.patch.object(RELEASE, "TRANSITION_PERMITS_DIR", permit_dir), mock.patch.object(
                 RELEASE, "_ensure_transition_permit_directory", return_value=permit_dir
             ), mock.patch.object(RELEASE.os, "fchown"), mock.patch.object(
-                RELEASE.os, "link", side_effect=link_once
+                RELEASE.os, "link", side_effect=fail_guard_link
             ), mock.patch.object(
                 RELEASE, "fsync_dir", side_effect=fail_post_unlink_fsync
             ), mock.patch.object(
@@ -1416,6 +1418,7 @@ class ProductionReleaseTests(unittest.TestCase):
             self.assertEqual(destination.stat().st_size, len(permit_bytes))
             self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o000)
             self.assertEqual(destination.stat().st_nlink, 1)
+            self.assertEqual(fsync_calls, 3)
             with self.assertRaises(RELEASE.DeployError):
                 RELEASE.read_regular(destination, expected_mode=0o600)
 
@@ -1433,11 +1436,16 @@ class ProductionReleaseTests(unittest.TestCase):
         )
         permit_bytes = canonical(permit_document)
         fsync_calls = 0
+        post_unlink_failed = False
 
-        def fail_post_unlink_and_guard_fsync(_path):
-            nonlocal fsync_calls
+        def fail_post_unlink_and_guard_fsync(path):
+            nonlocal fsync_calls, post_unlink_failed
             fsync_calls += 1
-            if fsync_calls in (3, 4):
+            hidden = [item for item in Path(path).iterdir() if item.name.startswith(f".{RUN_ID}.")]
+            if destination.exists() and not hidden and not post_unlink_failed:
+                post_unlink_failed = True
+                raise OSError("injected directory fsync failure")
+            if destination.exists() and hidden and post_unlink_failed:
                 raise OSError("injected directory fsync failure")
 
         def verify_consumer(path, expected_digest, *, bundle, run_id):
@@ -1465,6 +1473,8 @@ class ProductionReleaseTests(unittest.TestCase):
             self.assertEqual(len(guards), 1)
             self.assertEqual(destination.stat().st_ino, guards[0].stat().st_ino)
             self.assertEqual(destination.stat().st_nlink, 2)
+            self.assertTrue(post_unlink_failed)
+            self.assertEqual(fsync_calls, 4)
             with self.assertRaises(RELEASE.DeployError):
                 RELEASE.read_regular(destination, expected_mode=0o600)
 
@@ -1520,6 +1530,52 @@ class ProductionReleaseTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o000)
             with self.assertRaises(RELEASE.DeployError):
                 RELEASE.read_regular(destination, expected_mode=0o600)
+
+    def test_issue_reports_roundtrip_and_quarantine_failures_without_losing_root_cause(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        observed = transition_observation(bundle)
+        permit_document = RELEASE._build_transition_permit_document(bundle, RUN_ID, observed)
+        snapshot_document = {
+            "schema_version": 1,
+            "run_id": RUN_ID,
+            "target_bundle_sha256": bundle.bundle_digest,
+            "permit_candidate_sha256": digest(canonical(permit_document)),
+            "current_journal_inventory": observed["current_journal_inventory"],
+        }
+        with PatchedLock(self), mock.patch.object(
+            RELEASE, "verify_bundle", return_value=bundle
+        ), mock.patch.object(
+            RELEASE,
+            "_collect_transition_observation",
+            side_effect=[copy.deepcopy(observed), copy.deepcopy(observed)],
+        ), mock.patch.object(
+            RELEASE,
+            "_install_transition_permit",
+            return_value=Path("/opt/flowise/transition-permits") / f"{RUN_ID}.json",
+        ), mock.patch.object(
+            RELEASE,
+            "verify_transition_permit",
+            side_effect=RELEASE.DeployError("INJECTED_FINAL_ROUNDTRIP_FAILURE"),
+        ), mock.patch.object(
+            RELEASE,
+            "_quarantine_transition_permit",
+            side_effect=RELEASE.DeployError("INJECTED_QUARANTINE_FAILURE"),
+        ), self.assertRaisesRegex(
+            RELEASE.DeployError,
+            "INJECTED_FINAL_ROUNDTRIP_FAILURE:TRANSITION_PERMIT_QUARANTINE_FAILED",
+        ) as raised:
+            RELEASE.issue_transition_permit(
+                Path("/bundle"),
+                RUN_ID,
+                digest(canonical(snapshot_document)),
+            )
+        self.assertIsInstance(raised.exception.__cause__, RELEASE.DeployError)
+        self.assertEqual(str(raised.exception.__cause__), "INJECTED_QUARANTINE_FAILURE")
 
     def test_transition_permit_file_owner_mode_link_and_symlink_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:

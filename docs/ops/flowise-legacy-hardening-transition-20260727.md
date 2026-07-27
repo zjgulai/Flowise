@@ -154,6 +154,14 @@ round-trip verified by the existing permit consumer. Issuance writes only this
 control artifact; it does not recover journals, load an image, alter live
 configuration, recreate a container or write the database.
 
+Treat every failed `issue-transition-permit` attempt as permanently consuming
+its `run_id`. If failure occurs after publication begins, the wrapper preserves
+the fixed destination as a durable, unreadable mode `000` tombstone; the
+no-overwrite contract then rejects reuse with
+`TRANSITION_PERMIT_ALREADY_EXISTS`. Do not chmod, delete or reuse that path.
+Generate a new `run_id`, run a fresh `snapshot-transition`, and issue against
+the new exact snapshot digest.
+
 The resulting `permit_sha256` and fixed `permit_path` are the only values passed
 to `bootstrap --transition-permit ... --transition-permit-sha256 ...`.
 Bootstrap still performs its own fresh preflight and final pre-write CAS; permit
