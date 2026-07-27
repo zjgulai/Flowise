@@ -182,6 +182,8 @@ class BundleFixture:
             "store_identity": f"sha256:{config_hex}",
             "image_config_digest": f"sha256:{config_hex}",
             "platform": "linux/amd64",
+            "buildx_version": RELEASE.EXPECTED_BUILDX_VERSION,
+            "buildkit_version": RELEASE.EXPECTED_BUILDKIT_VERSION,
             "archive_bytes": str(len(archive_bytes)),
             "archive_sha256": digest(archive_bytes).removeprefix("sha256:"),
             "manifest_sha256": digest(manifest_bytes).removeprefix("sha256:"),
@@ -1301,6 +1303,8 @@ class ProductionReleaseTests(unittest.TestCase):
             variants = {
                 "hash": evidence.replace(b"archive_sha256=", b"archive_sha256=0", 1),
                 "boolean": evidence.replace(b"registry_push=false", b"registry_push=true"),
+                "buildx": evidence.replace(b"buildx_version=v0.34.1", b"buildx_version=v0.34.0"),
+                "buildkit": evidence.replace(b"buildkit_version=v0.30.0", b"buildkit_version=v0.29.0"),
                 "order": b"\n".join(reversed(evidence.rstrip(b"\n").split(b"\n"))) + b"\n",
             }
             for label, value in variants.items():

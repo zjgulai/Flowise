@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { generateDeploymentBundle, verifyDeploymentBundle } from './deployment-bundle.mjs'
+import { EVIDENCE_KEYS, generateDeploymentBundle, verifyDeploymentBundle } from './deployment-bundle.mjs'
 import { canonicalStringify, generateManifest, writeManifestAtomic } from './release-manifest.mjs'
 
 const DEPLOYMENT_MODULE_PATH = fileURLToPath(new URL('./deployment-bundle.mjs', import.meta.url))
@@ -15,6 +15,7 @@ const MANIFEST_MODULE_PATH = fileURLToPath(new URL('./release-manifest.mjs', imp
 const PUBLISH_SCRIPT_PATH = fileURLToPath(new URL('./publish-verified-image.sh', import.meta.url))
 const CHROMIUM_SCRIPT_PATH = fileURLToPath(new URL('./verify-chromium-sandbox.sh', import.meta.url))
 const CANDIDATE_SCRIPT_PATH = fileURLToPath(new URL('./verify-release-candidate.sh', import.meta.url))
+const PRODUCTION_WRAPPER_PATH = fileURLToPath(new URL('./flowise-production-release.py', import.meta.url))
 const CONFIG_DIGEST = `sha256:${'a'.repeat(64)}`
 const TOOLCHAIN = Object.freeze({ node: 'v24.18.0', pnpm: '10.26.0', package_manager: 'pnpm@10.26.0' })
 const FIXED_NOW = '2026-07-27T00:00:00.000Z'
@@ -29,6 +30,38 @@ const write = (root, relativePath, contents) => {
 }
 
 const runGit = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+
+const loadProductionEvidenceContract = () =>
+    JSON.parse(
+        execFileSync(
+            'python3',
+            [
+                '-c',
+                [
+                    'import json, runpy, sys',
+                    'namespace = runpy.run_path(sys.argv[1])',
+                    'print(json.dumps({',
+                    '    "keys": list(namespace["EXPECTED_EVIDENCE_KEYS"]),',
+                    '    "buildx_version": namespace["EXPECTED_BUILDX_VERSION"],',
+                    '    "buildkit_version": namespace["EXPECTED_BUILDKIT_VERSION"],',
+                    '}))'
+                ].join('\n'),
+                PRODUCTION_WRAPPER_PATH
+            ],
+            {
+                encoding: 'utf8',
+                env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+                stdio: ['ignore', 'pipe', 'pipe']
+            }
+        )
+    )
+
+const loadCandidateEvidenceKeys = () => {
+    const source = readFileSync(CANDIDATE_SCRIPT_PATH, 'utf8')
+    const block = source.match(/\n\{\n(?<body>(?:\s+echo .*\n)+)\} > "\$EVIDENCE_PATH"\n/)
+    assert.ok(block?.groups?.body, 'candidate evidence writer block must remain machine-readable')
+    return [...block.groups.body.matchAll(/^\s*echo\s+["']([a-z0-9_]+)=/gm)].map((match) => match[1])
+}
 
 const createFixture = () => {
     const root = mkdtempSync(join(tmpdir(), 'flowise-deployment-bundle-test-'))
@@ -102,7 +135,7 @@ const createFixture = () => {
             'source=https://example.invalid/org/repo.git',
             `revision=${revision}`,
             `image_tag=flowise-chinese:git-${revision}`,
-            `store_identity=sha256:${'b'.repeat(64)}`,
+            `store_identity=${CONFIG_DIGEST}`,
             `image_config_digest=${CONFIG_DIGEST}`,
             'platform=linux/amd64',
             'buildx_version=v0.34.1',
@@ -112,14 +145,14 @@ const createFixture = () => {
             `manifest_sha256=${sha256Hex(readFileSync(manifestPath))}`,
             'isolated_smoke=passed',
             `chromium_profile_sha256=${sha256Hex(seccompBytes)}`,
+            `production_compose_sha256=${sha256Hex(composeBytes)}`,
+            `production_wrapper_sha256=${sha256Hex(wrapperBytes)}`,
             'chromium_sandbox=passed',
             'raw_chromium_sandbox=passed',
             'playwright_sandbox=passed',
             'puppeteer_sandbox=passed',
             'clone3_namespace=blocked_enosys',
             'unsafe_chromium_flags=false',
-            `production_compose_sha256=${sha256Hex(composeBytes)}`,
-            `production_wrapper_sha256=${sha256Hex(wrapperBytes)}`,
             'registry_push=false',
             ''
         ].join('\n')
@@ -234,11 +267,20 @@ test('deployment bundle rejects evidence that is not bound to the same candidate
     }
 })
 
+test('production wrapper consumes the exact deployment evidence contract', () => {
+    const contract = loadProductionEvidenceContract()
+    assert.deepEqual(loadCandidateEvidenceKeys(), EVIDENCE_KEYS)
+    assert.deepEqual(contract.keys, EVIDENCE_KEYS)
+    assert.equal(contract.buildx_version, 'v0.34.1')
+    assert.equal(contract.buildkit_version, 'v0.30.0')
+})
+
 test('deployment bundle rejects omitted, extra, or contradictory security evidence', () => {
     for (const mutate of [
         (text) => text.replace('clone3_namespace=blocked_enosys\n', ''),
         (text) => `${text}unreviewed_claim=true\n`,
         (text) => text.replace('unsafe_chromium_flags=false', 'unsafe_chromium_flags=true'),
+        (text) => text.replace(`store_identity=${CONFIG_DIGEST}`, `store_identity=sha256:${'b'.repeat(64)}`),
         (text) => text.replace(/store_identity=sha256:[0-9a-f]{64}/, 'store_identity=local-image'),
         () => `source=${'a'.repeat(65 * 1024)}\n`
     ]) {
@@ -247,8 +289,28 @@ test('deployment bundle rejects omitted, extra, or contradictory security eviden
             writeFileSync(fixture.evidencePath, mutate(readFileSync(fixture.evidencePath, 'utf8')))
             assert.throws(
                 () => fixture.generate(),
-                /Release evidence (?:field set mismatch|mismatch: unsafe_chromium_flags|contains an invalid local Docker store identity|is too large)/
+                /Release evidence (?:field set mismatch|mismatch: (?:unsafe_chromium_flags|store_identity)|schema is invalid|is too large)/
             )
+        } finally {
+            fixture.cleanup()
+        }
+    }
+})
+
+test('deployment bundle rejects non-canonical evidence bytes and line order', () => {
+    for (const mutate of [
+        (text) =>
+            text
+                .replace('source=https://example.invalid/org/repo.git\nrevision=', 'revision=')
+                .replace(/\nimage_tag=/, '\nsource=https://example.invalid/org/repo.git\nimage_tag='),
+        (text) => text.replaceAll('\n', '\r\n'),
+        (text) => text.replace('platform=linux/amd64\n', 'platform=linux/amd64\n\n'),
+        (text) => text.slice(0, -1)
+    ]) {
+        const fixture = createFixture()
+        try {
+            writeFileSync(fixture.evidencePath, mutate(readFileSync(fixture.evidencePath, 'utf8')))
+            assert.throws(() => fixture.generate(), /Release evidence (?:format is invalid|field set mismatch|schema is invalid)/)
         } finally {
             fixture.cleanup()
         }

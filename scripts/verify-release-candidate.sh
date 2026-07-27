@@ -119,6 +119,7 @@ image_config_digest="$(node scripts/release-manifest.mjs verify-archive \
     --created "$CREATED" \
     --platform linux/amd64)"
 [[ "$image_config_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'archive config digest is invalid'
+[[ "$store_identity" == "$image_config_digest" ]] || fail 'Docker store identity and archive config digest mismatch'
 
 node scripts/release-manifest.mjs generate \
     --distribution offline_archive \

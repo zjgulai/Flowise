@@ -37,7 +37,7 @@ const BOUNDARIES = Object.freeze({
     registry_push: false,
     secrets_read: false
 })
-const EVIDENCE_KEYS = Object.freeze([
+export const EVIDENCE_KEYS = Object.freeze([
     'source',
     'revision',
     'image_tag',
@@ -196,15 +196,27 @@ const resolveBundlePath = (bundleDir, relativePath) => {
 
 const parseEvidence = (path) => {
     const text = readRegularFile(path, 'Release evidence', 'utf8', 64 * 1024)
+    if (!text.endsWith('\n') || text.includes('\r') || text.includes('\0')) {
+        throw new Error('Release evidence format is invalid')
+    }
+    const lines = text.slice(0, -1).split('\n')
+    if (lines.length !== EVIDENCE_KEYS.length) {
+        throw new Error('Release evidence field set mismatch')
+    }
     const entries = {}
-    for (const line of text.split(/\r?\n/)) {
-        if (!line) continue
+    for (const [index, line] of lines.entries()) {
         const separator = line.indexOf('=')
         if (separator <= 0) throw new Error('Release evidence contains an invalid line')
         const key = line.slice(0, separator)
         const value = line.slice(separator + 1)
-        if (!/^[a-z][a-z0-9_]*$/.test(key) || Object.hasOwn(entries, key) || /[\r\n\0]/.test(value)) {
-            throw new Error('Release evidence contains an invalid entry')
+        if (
+            key !== EVIDENCE_KEYS[index] ||
+            !value ||
+            !/^[a-z][a-z0-9_]*$/.test(key) ||
+            Object.hasOwn(entries, key) ||
+            /[\r\n\0]/.test(value)
+        ) {
+            throw new Error('Release evidence schema is invalid')
         }
         entries[key] = value
     }
@@ -302,6 +314,7 @@ const verifyManifestAndEvidence = (bundleDir, bundle) => {
         source: manifest.source.repository_url,
         revision: bundle.release.revision,
         image_tag: bundle.release.image_tag,
+        store_identity: bundle.release.image_config_digest,
         archive_bytes: String(archive.bytes),
         archive_sha256: archive.digest.slice('sha256:'.length),
         chromium_profile_sha256: files.chromium_seccomp.digest.slice('sha256:'.length),
@@ -323,9 +336,6 @@ const verifyManifestAndEvidence = (bundleDir, bundle) => {
     }
     for (const [key, expected] of Object.entries(requiredEvidence)) {
         if (evidence[key] !== expected) throw new Error(`Release evidence mismatch: ${key}`)
-    }
-    if (!DIGEST_PATTERN.test(evidence.store_identity)) {
-        throw new Error('Release evidence contains an invalid local Docker store identity')
     }
     return manifest
 }
