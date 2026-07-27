@@ -154,7 +154,15 @@ describe('authenticated Chatflow continuity', () => {
                 createdChatflowIds.push(copyResponse.body.id)
 
                 deleteCurrentChatflow('deleteChatflowCopy')
+                cy.intercept({ method: 'GET', url: `**/api/v1/chatflows/${originalId}`, middleware: true }, (request) => {
+                    delete request.headers['if-none-match']
+                    delete request.headers['if-modified-since']
+                }).as('reloadOriginalAfterCopyDelete')
                 cy.visit(`/canvas/${originalId}`)
+                cy.wait('@reloadOriginalAfterCopyDelete').then(({ response: reloadResponse }) => {
+                    expect(reloadResponse.statusCode).to.eq(200)
+                    expectStoredStickyNote(reloadResponse.body, originalName)
+                })
                 cy.get('.react-flow__node-stickyNote').should('have.length', 1)
                 deleteCurrentChatflow('deleteChatflowOriginal')
 
