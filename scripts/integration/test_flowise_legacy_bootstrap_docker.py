@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import unittest
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -50,6 +51,27 @@ def load_wrapper(repo: Path) -> Any:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def isolated_compose_environment(work: Path, base_env: dict[str, str]) -> dict[str, str]:
+    docker_config = work / "docker-config"
+    plugin_dir = docker_config / "cli-plugins"
+    plugin_dir.mkdir(mode=0o700, parents=True)
+    plugin = shutil.which("docker-compose")
+    if plugin is not None:
+        (plugin_dir / "docker-compose").symlink_to(Path(plugin).resolve())
+    safe_env = dict(base_env)
+    safe_env["DOCKER_CONFIG"] = str(docker_config)
+    compose_probe = subprocess.run(
+        ["docker", "compose", "version"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=safe_env,
+        check=False,
+    )
+    if compose_probe.returncode != 0:
+        raise RuntimeError("local Docker Compose plugin missing")
+    return safe_env
 
 
 def atomic_write(path: Path, data: bytes, mode: int, _uid: int = 0, _gid: int = 0) -> None:
@@ -223,15 +245,7 @@ class BoundaryHarness:
         original_args = w.compose_args
         original_recreate = w.compose_recreate
         original_run = w.run_command
-        plugin = shutil.which("docker-compose")
-        if plugin is None:
-            raise RuntimeError("local Docker Compose plugin missing")
-        docker_config = self.work / "docker-config"
-        plugin_dir = docker_config / "cli-plugins"
-        plugin_dir.mkdir(mode=0o700, parents=True)
-        (plugin_dir / "docker-compose").symlink_to(Path(plugin).resolve())
-        safe_env = dict(w.SAFE_ENV)
-        safe_env["DOCKER_CONFIG"] = str(docker_config)
+        safe_env = isolated_compose_environment(self.work, w.SAFE_ENV)
 
         def isolated_args(env: Path, compose: Path, project_dir: Path) -> list[str]:
             command = original_args(env, compose, project_dir)
@@ -403,6 +417,48 @@ class BoundaryHarness:
 
     def close(self) -> None:
         self.stack.close()
+
+
+class ComposePluginDiscoveryTests(unittest.TestCase):
+    def test_path_shim_is_linked_into_the_isolated_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            shutil, "which", return_value="/bin/true"
+        ), mock.patch.object(
+            subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(["docker", "compose", "version"], 0),
+        ) as probe:
+            work = Path(directory)
+            safe_env = isolated_compose_environment(work, {"PATH": "/usr/bin"})
+            self.assertEqual(safe_env["DOCKER_CONFIG"], str(work / "docker-config"))
+            self.assertEqual(
+                (work / "docker-config/cli-plugins/docker-compose").resolve(),
+                Path("/bin/true").resolve(),
+            )
+            self.assertEqual(probe.call_args.kwargs["env"], safe_env)
+
+    def test_system_plugin_needs_no_path_shim(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            shutil, "which", return_value=None
+        ), mock.patch.object(
+            subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(["docker", "compose", "version"], 0),
+        ):
+            work = Path(directory)
+            safe_env = isolated_compose_environment(work, {"PATH": "/usr/bin"})
+            self.assertEqual(safe_env["DOCKER_CONFIG"], str(work / "docker-config"))
+            self.assertFalse((work / "docker-config/cli-plugins/docker-compose").exists())
+
+    def test_missing_shim_and_system_plugin_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            shutil, "which", return_value=None
+        ), mock.patch.object(
+            subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(["docker", "compose", "version"], 1),
+        ), self.assertRaisesRegex(RuntimeError, "local Docker Compose plugin missing"):
+            isolated_compose_environment(Path(directory), {"PATH": "/usr/bin"})
 
 
 def main() -> int:

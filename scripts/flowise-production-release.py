@@ -1272,8 +1272,6 @@ def _validate_secure_run_directory(run_dir: Path) -> None:
 def _validate_secure_run_role(
     run_dir: Path,
     role: str,
-    *,
-    require_seccomp_chain: bool,
 ) -> Path:
     if role not in {"candidate", "rollback", "legacy", "hardened_active", "target_bundle"}:
         raise DeployError("RUN_ROLE_INVALID")
@@ -1285,8 +1283,8 @@ def _validate_secure_run_role(
     for path, label in ((docker_root, "RUN_ROLE_DOCKER"), (seccomp_root, "RUN_ROLE_SECCOMP")):
         try:
             info = path.lstat()
-        except FileNotFoundError:
-            raise DeployError(f"{label}_DIRECTORY_UNAVAILABLE")
+        except FileNotFoundError as error:
+            raise DeployError(f"{label}_DIRECTORY_UNAVAILABLE") from error
         except OSError as error:
             raise DeployError(f"{label}_DIRECTORY_UNAVAILABLE") from error
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
@@ -3134,7 +3132,6 @@ def _load_staged(receipt: dict[str, Any], role: str, run_dir: Path) -> tuple[Pat
     root = _validate_secure_run_role(
         run_dir,
         role,
-        require_seccomp_chain=seccomp_metadata.get("present") is True,
     )
     env = _verify_staged_file(root / ".env.production", metadata["files"]["env"])
     compose = _verify_staged_file(root / "docker-compose.prod.yml", metadata["files"]["compose"])
@@ -3727,7 +3724,7 @@ def _cutover_preflight(run_id: str, receipt_digest: str) -> tuple[Path, dict[str
 def _ensure_rollback_image(run_dir: Path, receipt: dict[str, Any]) -> None:
     rollback = receipt["rollback"]
     archive = rollback["archive"]
-    rollback_root = _validate_secure_run_role(run_dir, "rollback", require_seccomp_chain=False)
+    rollback_root = _validate_secure_run_role(run_dir, "rollback")
     archive_path = rollback_root / "image.tar.gz"
     verify_regular_identity(
         archive_path,
@@ -3809,7 +3806,7 @@ def _verify_frozen_legacy_archive(run_dir: Path, receipt: dict[str, Any]) -> tup
     _validate_receipt_policy(receipt, "bootstrap-prepare")
     legacy = receipt["legacy"]
     archive = legacy["archive"]
-    legacy_root = _validate_secure_run_role(run_dir, "legacy", require_seccomp_chain=False)
+    legacy_root = _validate_secure_run_role(run_dir, "legacy")
     archive_path = legacy_root / "image.tar.gz"
     verify_regular_identity(
         archive_path,
@@ -4662,7 +4659,7 @@ def bootstrap(
             baseline["active_tag"],
             legacy_archive,
         )
-        _validate_secure_run_role(run_dir, "legacy", require_seccomp_chain=False)
+        _validate_secure_run_role(run_dir, "legacy")
         verify_legacy_archive_contract(
             legacy_archive,
             image_tag=baseline["active_tag"],

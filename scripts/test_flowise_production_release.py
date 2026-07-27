@@ -3793,6 +3793,48 @@ class ProductionReleaseTests(unittest.TestCase):
 
     def test_secure_role_chain_rejects_nested_symlink_and_staged_hardlink_before_mutation(self):
         prepared = bootstrap_prepare_receipt()
+        with tempfile.TemporaryDirectory() as directory:
+            runs_dir = Path(directory) / "deployments"
+            run_dir = runs_dir / RUN_ID
+            (run_dir / "legacy/docker").mkdir(parents=True)
+            reader = mock.Mock()
+            writer = mock.Mock()
+            with mock.patch.object(RELEASE, "RUNS_DIR", runs_dir), mock.patch.object(
+                RELEASE, "_validate_inventory_directory"
+            ), mock.patch.object(RELEASE, "_verify_staged_file", reader), mock.patch.object(
+                RELEASE, "atomic_write", writer
+            ), self.assertRaisesRegex(RELEASE.DeployError, "RUN_ROLE_SECCOMP_DIRECTORY_UNAVAILABLE"):
+                RELEASE._load_staged(prepared, "legacy", run_dir)
+            reader.assert_not_called()
+            writer.assert_not_called()
+
+        for role, prepared, operation in (
+            ("rollback", receipt(), RELEASE._ensure_rollback_image),
+            ("legacy", bootstrap_prepare_receipt(), RELEASE._verify_frozen_legacy_archive),
+        ):
+            with self.subTest(role=role), tempfile.TemporaryDirectory() as directory:
+                runs_dir = Path(directory) / "deployments"
+                run_dir = runs_dir / RUN_ID
+                (run_dir / role / "docker").mkdir(parents=True)
+                identity = mock.Mock()
+                archive_contract = mock.Mock()
+                inspect = mock.Mock()
+                load = mock.Mock()
+                with mock.patch.object(RELEASE, "RUNS_DIR", runs_dir), mock.patch.object(
+                    RELEASE, "_validate_inventory_directory"
+                ), mock.patch.object(RELEASE, "verify_regular_identity", identity), mock.patch.object(
+                    RELEASE,
+                    "verify_archive_contract" if role == "rollback" else "verify_legacy_archive_contract",
+                    archive_contract,
+                ), mock.patch.object(RELEASE, "inspect_image", inspect), mock.patch.object(
+                    RELEASE, "load_candidate", load
+                ), self.assertRaisesRegex(RELEASE.DeployError, "RUN_ROLE_SECCOMP_DIRECTORY_UNAVAILABLE"):
+                    operation(run_dir, prepared)
+                identity.assert_not_called()
+                archive_contract.assert_not_called()
+                inspect.assert_not_called()
+                load.assert_not_called()
+
         for nested in ("docker", "docker/seccomp"):
             with self.subTest(nested=nested), tempfile.TemporaryDirectory() as directory:
                 runs_dir = Path(directory) / "deployments"
