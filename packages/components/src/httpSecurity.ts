@@ -365,8 +365,9 @@ export async function secureFetch(
         policy?.validateUrl?.(new URL(currentUrl))
         const resolved = await resolveAndValidate(currentUrl, policy?.enforceDefaultDenyList === true)
         const agent = createPinnedAgent(resolved, agentOptions)
+        const agentFactory = (() => agent) as NonNullable<RequestInit['agent']>
 
-        const response = await fetch(currentUrl, { ...currentInit, agent: () => agent })
+        const response = await fetch(currentUrl, { ...currentInit, agent: agentFactory })
 
         // If it's a successful response (not a redirect), return it
         if (response.status < 300 || response.status >= 400) {

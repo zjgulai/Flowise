@@ -20,7 +20,7 @@ import { NodeVM } from 'vm2'
 import zodToJsonSchema, { type JsonSchema7Type } from 'zod-to-json-schema'
 import { z } from 'zod/v3'
 import { customGet } from '../nodes/sequentialagents/commonUtils'
-import { checkDenyList, secureAxiosRequest, secureFetch } from './httpSecurity'
+import { checkDenyList, secureAxiosRequest, secureFetch, type SecureFetchPolicy } from './httpSecurity'
 import { ICommonObject, IDatabaseEntity, IFileUpload, IMessage, INodeData, IVariable, MessageContentImageUrl } from './Interface'
 import { getFileFromStorage } from './storageUtils'
 
@@ -436,7 +436,13 @@ function normalizeURL(urlString: string): string {
  * @param {number} limit
  * @returns {Promise<string[]>}
  */
-async function crawl(baseURL: string, currentURL: string, pages: string[], limit: number): Promise<string[]> {
+async function crawl(
+    baseURL: string,
+    currentURL: string,
+    pages: string[],
+    limit: number,
+    secureFetchPolicy?: SecureFetchPolicy
+): Promise<string[]> {
     const baseURLObj = new URL(baseURL)
     const currentURLObj = new URL(currentURL)
 
@@ -453,7 +459,7 @@ async function crawl(baseURL: string, currentURL: string, pages: string[], limit
 
     if (process.env.DEBUG === 'true') console.info(`actively crawling ${currentURL}`)
     try {
-        const resp = await secureFetch(currentURL)
+        const resp = await secureFetch(currentURL, undefined, 5, undefined, secureFetchPolicy)
 
         if (resp.status > 399) {
             if (process.env.DEBUG === 'true') console.error(`error in fetch with status code: ${resp.status}, on page: ${currentURL}`)
@@ -469,7 +475,7 @@ async function crawl(baseURL: string, currentURL: string, pages: string[], limit
         const htmlBody = await resp.text()
         const nextURLs = getURLsFromHTML(htmlBody, currentURL)
         for (const nextURL of nextURLs) {
-            pages = await crawl(baseURL, nextURL, pages, limit)
+            pages = await crawl(baseURL, nextURL, pages, limit, secureFetchPolicy)
         }
     } catch (err) {
         if (process.env.DEBUG === 'true') console.error(`error in fetch url: ${err.message}, on page: ${currentURL}`)
@@ -483,12 +489,12 @@ async function crawl(baseURL: string, currentURL: string, pages: string[], limit
  * @param {number} limit
  * @returns {Promise<string[]>}
  */
-export async function webCrawl(stringURL: string, limit: number): Promise<string[]> {
+export async function webCrawl(stringURL: string, limit: number, secureFetchPolicy?: SecureFetchPolicy): Promise<string[]> {
     await checkDenyList(stringURL)
 
     const URLObj = new URL(stringURL)
     const modifyURL = stringURL.slice(-1) === '/' ? stringURL.slice(0, -1) : stringURL
-    return await crawl(URLObj.protocol + '//' + URLObj.hostname, modifyURL, [], limit)
+    return await crawl(URLObj.protocol + '//' + URLObj.hostname, modifyURL, [], limit, secureFetchPolicy)
 }
 
 export function getURLsFromXML(xmlBody: string, limit: number): string[] {
@@ -505,11 +511,11 @@ export function getURLsFromXML(xmlBody: string, limit: number): string[] {
     return urls
 }
 
-export async function xmlScrape(currentURL: string, limit: number): Promise<string[]> {
+export async function xmlScrape(currentURL: string, limit: number, secureFetchPolicy?: SecureFetchPolicy): Promise<string[]> {
     let urls: string[] = []
     if (process.env.DEBUG === 'true') console.info(`actively scarping ${currentURL}`)
     try {
-        const resp = await secureFetch(currentURL)
+        const resp = await secureFetch(currentURL, undefined, 5, undefined, secureFetchPolicy)
 
         if (resp.status > 399) {
             if (process.env.DEBUG === 'true') console.error(`error in fetch with status code: ${resp.status}, on page: ${currentURL}`)

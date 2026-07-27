@@ -6,6 +6,14 @@ import { omit } from 'lodash'
 import { PuppeteerLifeCycleEvent } from 'puppeteer'
 import { handleEscapeCharacters, INodeOutputsValue, webCrawl, xmlScrape } from '../../../src'
 import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
+import {
+    assertWebScraperUrlAllowed,
+    isWebScraperPolicyError,
+    startPinnedBrowserProxy,
+    WEB_SCRAPER_SECURE_FETCH_POLICY,
+    WebScraperOperationTracker,
+    WebScraperPolicyGuard
+} from '../webScraperSecurity'
 
 class Puppeteer_DocumentLoaders implements INode {
     label: string
@@ -179,6 +187,7 @@ class Puppeteer_DocumentLoaders implements INode {
         }
 
         async function puppeteerLoader(url: string): Promise<Document[] | undefined> {
+            await assertWebScraperUrlAllowed(url)
             try {
                 let docs: Document[] = []
 
@@ -186,7 +195,6 @@ class Puppeteer_DocumentLoaders implements INode {
 
                 const config: PuppeteerWebBaseLoaderOptions = {
                     launchOptions: {
-                        args: ['--no-sandbox'],
                         headless: 'new',
                         executablePath: executablePath
                     }
@@ -215,6 +223,110 @@ class Puppeteer_DocumentLoaders implements INode {
                     }
                 }
                 const loader = new PuppeteerWebBaseLoader(url, config)
+                loader.scrape = async (): Promise<string> => {
+                    const { launch } = await PuppeteerWebBaseLoader.imports()
+                    const policy = new WebScraperPolicyGuard()
+                    const proxy = await startPinnedBrowserProxy(policy)
+                    const policyChecks = new WebScraperOperationTracker()
+                    let browser: Browser | undefined
+                    let html: string | undefined
+                    let scrapeError: unknown
+                    try {
+                        browser = await launch({
+                            headless: true,
+                            defaultViewport: null,
+                            ignoreDefaultArgs: ['--disable-extensions'],
+                            ...config.launchOptions,
+                            args: [
+                                ...(config.launchOptions?.args ?? []),
+                                `--proxy-server=${proxy.server}`,
+                                '--proxy-bypass-list=<-loopback>',
+                                '--disable-quic',
+                                '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'
+                            ]
+                        })
+                        const page = await browser.newPage()
+                        await page.setBypassServiceWorker(true)
+                        await page.setRequestInterception(true)
+                        page.on('request', (interceptedRequest) => {
+                            const pending = policyChecks.start(
+                                async () => {
+                                    const allowed = await policy.allows(interceptedRequest.url())
+                                    try {
+                                        if (allowed) await interceptedRequest.continue()
+                                        else await interceptedRequest.abort('blockedbyclient')
+                                    } catch {
+                                        // The page may close or cancel a request while the
+                                        // asynchronous policy lookup is in flight.
+                                    }
+                                },
+                                (error) => policy.record(error)
+                            )
+                            if (pending) return
+
+                            // Puppeteer's event emitter does not await handlers.
+                            // During teardown, abort without starting new policy
+                            // or proxy work.
+                            policy.record(new Error('Web scraper request arrived after browser shutdown'))
+                            void interceptedRequest.abort('blockedbyclient').catch(() => undefined)
+                        })
+                        let response
+                        try {
+                            response = await page.goto(url, {
+                                timeout: 180000,
+                                waitUntil: 'domcontentloaded',
+                                ...config.gotoOptions
+                            })
+                            await policyChecks.drain()
+                        } catch (error) {
+                            await policyChecks.drain()
+                            policy.throwIfDenied()
+                            throw error
+                        }
+                        policy.throwIfDenied()
+                        if (response && !(await policy.allows(response.url()))) policy.throwIfDenied()
+                        if (!(await policy.allows(page.url()))) policy.throwIfDenied()
+
+                        html = config.evaluate ? await config.evaluate(page, browser) : await page.evaluate(() => document.body.innerHTML)
+                        await policyChecks.drain()
+                        policy.throwIfDenied()
+                    } catch (error) {
+                        scrapeError = error
+                    }
+
+                    let cleanupError: unknown
+                    try {
+                        if (browser) await browser.close()
+                    } catch (error) {
+                        cleanupError = error
+                    }
+                    policyChecks.beginClosing()
+                    try {
+                        await policyChecks.drain()
+                    } catch (error) {
+                        policy.record(error)
+                        cleanupError ??= error
+                    }
+                    try {
+                        await proxy.close()
+                    } catch (error) {
+                        cleanupError ??= error
+                    }
+
+                    if (scrapeError) {
+                        policy.throwIfDenied()
+                        throw scrapeError
+                    }
+                    if (cleanupError) {
+                        policy.throwIfDenied()
+                        throw cleanupError
+                    }
+                    policy.throwIfDenied()
+                    if (html === undefined) {
+                        throw new Error('Puppeteer scraper returned no content')
+                    }
+                    return html
+                }
                 if (textSplitter) {
                     docs = await loader.load()
                     docs = await textSplitter.splitDocuments(docs)
@@ -223,6 +335,7 @@ class Puppeteer_DocumentLoaders implements INode {
                 }
                 return docs
             } catch (err) {
+                if (isWebScraperPolicyError(err)) throw err
                 if (process.env.DEBUG === 'true')
                     options.logger.error(`[${orgId}]: Error in PuppeteerWebBaseLoader: ${err.message}, on page: ${url}`)
             }
@@ -235,12 +348,18 @@ class Puppeteer_DocumentLoaders implements INode {
             // so when limit is 0 we can fetch all the links
             if (limit === null || limit === undefined) limit = 10
             else if (limit < 0) throw new Error('Limit cannot be less than 0')
-            const pages: string[] =
-                selectedLinks && selectedLinks.length > 0
-                    ? selectedLinks.slice(0, limit === 0 ? undefined : limit)
-                    : relativeLinksMethod === 'webCrawl'
-                    ? await webCrawl(url, limit)
-                    : await xmlScrape(url, limit)
+            let pages: string[]
+            if (selectedLinks && selectedLinks.length > 0) {
+                pages = selectedLinks.slice(0, limit === 0 ? undefined : limit)
+            } else {
+                // Discovery is itself a network phase. Validate before it starts
+                // and force the default deny list for every crawl/XML request.
+                await assertWebScraperUrlAllowed(url)
+                pages =
+                    relativeLinksMethod === 'webCrawl'
+                        ? await webCrawl(url, limit, WEB_SCRAPER_SECURE_FETCH_POLICY)
+                        : await xmlScrape(url, limit, WEB_SCRAPER_SECURE_FETCH_POLICY)
+            }
             if (process.env.DEBUG === 'true')
                 options.logger.info(`[${orgId}]: PuppeteerWebBaseLoader pages: ${JSON.stringify(pages)}, length: ${pages.length}`)
             if (!pages || pages.length === 0) throw new Error('No relative links found')
