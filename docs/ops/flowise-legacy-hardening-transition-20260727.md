@@ -13,8 +13,9 @@ transition must be represented explicitly.
 
 The approved release sequence is:
 
-1. Verify an exact, one-time transition permit against the new application
-   candidate deployment bundle.
+1. Snapshot the exact legacy state, then issue and verify a one-time transition
+   permit against that snapshot and the new application candidate deployment
+   bundle.
 2. Freeze the legacy image and live configuration before the first live write.
 3. Recreate only Flowise with the same `c947339b...` image and the hardened
    runtime configuration.
@@ -119,6 +120,52 @@ The transition command must require a canonical JSON permit that is:
 
 Unknown keys, missing keys, non-canonical JSON, a reused run, or any observed
 state drift must fail before a production write.
+
+### Supported snapshot and issuance workflow
+
+Operators must not construct the permit by hand. The production wrapper owns a
+two-command, fail-closed workflow:
+
+```bash
+sudo -n -- python3 scripts/flowise-production-release.py snapshot-transition \
+    --bundle-dir /root/flowise-release \
+    --run-id 20260727T120000Z-0123abcd
+
+sudo -n -- python3 scripts/flowise-production-release.py issue-transition-permit \
+    --bundle-dir /root/flowise-release \
+    --run-id 20260727T120000Z-0123abcd \
+    --expected-snapshot-sha256 sha256:<snapshot-digest>
+```
+
+`snapshot-transition` is read-only. It verifies the exact bundle and observes
+the complete legacy runtime, database and journal state twice under the deploy
+lock. Its output is a strict secret-free summary and a digest of the full
+permit candidate plus the current-journal inventory; it never returns Docker
+inspect documents, environment values, Compose bytes, the persistent key,
+migration names or journal documents.
+
+`issue-transition-permit` repeats the complete observation. It writes nothing
+unless the new snapshot digest equals `--expected-snapshot-sha256`. The permit
+is published exactly once at
+`/opt/flowise/transition-permits/<run_id>.json` beneath a root-owned mode
+`0700` non-symlink directory. The file is canonical JSON, root-owned mode
+`0600`, has one hard link, cannot replace an existing path, and is immediately
+round-trip verified by the existing permit consumer. Issuance writes only this
+control artifact; it does not recover journals, load an image, alter live
+configuration, recreate a container or write the database.
+
+Treat every failed `issue-transition-permit` attempt as permanently consuming
+its `run_id`. If failure occurs after publication begins, the wrapper preserves
+the fixed destination as a durable, unreadable mode `000` tombstone; the
+no-overwrite contract then rejects reuse with
+`TRANSITION_PERMIT_ALREADY_EXISTS`. Do not chmod, delete or reuse that path.
+Generate a new `run_id`, run a fresh `snapshot-transition`, and issue against
+the new exact snapshot digest.
+
+The resulting `permit_sha256` and fixed `permit_path` are the only values passed
+to `bootstrap --transition-permit ... --transition-permit-sha256 ...`.
+Bootstrap still performs its own fresh preflight and final pre-write CAS; permit
+issuance does not weaken or bypass those checks.
 
 ## Bootstrap state machine
 
@@ -243,6 +290,12 @@ write.
 
 -   [ ] Default hardened release behavior is unchanged.
 -   [ ] Missing, malformed, unsafe, stale or tampered permits fail before write.
+-   [ ] Snapshot and issuance use separate full observations; a stale or wrong
+        snapshot digest produces no permit file.
+-   [ ] Permit publication is fixed-path, root-only, atomic, no-overwrite and
+        round-trip compatible with the unchanged bootstrap consumer.
+-   [ ] Snapshot, issuance output and failure paths contain no environment
+        values, persistent key, database password or raw Docker inspection.
 -   [ ] Extra legacy Compose/runtime differences fail before write.
 -   [ ] Bootstrap success produces immutable prepare and completion receipts.
 -   [ ] Forward failure completes one idempotent restoration transaction without

@@ -35,6 +35,7 @@ LIVE_COMPOSE = BASE_DIR / "docker-compose.prod.yml"
 LIVE_SECCOMP = BASE_DIR / "docker/seccomp/chromium.json"
 RUNS_DIR = BASE_DIR / "deployments"
 LEGACY_RELEASES_DIR = BASE_DIR / "releases"
+TRANSITION_PERMITS_DIR = BASE_DIR / "transition-permits"
 LOCK_DIR = Path("/run/lock/flowise-production-release")
 LOCK_PATH = LOCK_DIR / "deploy.lock"
 PERSISTENT_KEY = Path("/var/lib/docker/volumes/flowise_flowise_data/_data/encryption.key")
@@ -62,6 +63,10 @@ CONFIG_HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
 DOCKER_ID_RE = re.compile(r"[0-9a-f]{64}\Z")
 ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 LEGACY_BOOTSTRAP_REVISION = "c947339b7033c930be37591918f59c7725800bbe"
+LEGACY_BOOTSTRAP_REPOSITORY_URLS = (
+    "https://github.com/zjgulai/Flowise",
+    "https://github.com/zjgulai/Flowise.git",
+)
 
 EXPECTED_BUNDLE_FILES = {
     "image_archive": "image.tar.gz",
@@ -455,6 +460,7 @@ def verify_regular_identity(
     expected_uid: int = 0,
     expected_gid: int = 0,
     expected_mode: int = 0o600,
+    expected_nlink: int = 1,
 ) -> None:
     flags = os.O_RDONLY | os.O_CLOEXEC
     if hasattr(os, "O_NOFOLLOW"):
@@ -467,7 +473,7 @@ def verify_regular_identity(
         before = os.fstat(descriptor)
         if (
             not stat.S_ISREG(before.st_mode)
-            or before.st_nlink != 1
+            or before.st_nlink != expected_nlink
             or before.st_uid != expected_uid
             or before.st_gid != expected_gid
             or stat.S_IMODE(before.st_mode) != expected_mode
@@ -1129,8 +1135,7 @@ def verify_transition_permit(
         or active_revision != LEGACY_BOOTSTRAP_REVISION
         or active_tag != f"flowise-chinese:git-{active_revision}"
         or active.get("release_id") != f"git-{active_revision}"
-        or not isinstance(active.get("repository_url"), str)
-        or not active["repository_url"].startswith(("https://", "ssh://"))
+        or active.get("repository_url") not in LEGACY_BOOTSTRAP_REPOSITORY_URLS
         or not _valid_timestamp(active.get("created_at"))
         or not isinstance(active.get("image_config_digest"), str)
         or not DIGEST_RE.fullmatch(active["image_config_digest"])
@@ -1790,6 +1795,239 @@ def atomic_json(path: Path, document: dict[str, Any]) -> None:
     atomic_write(path, canonical_json(document), 0o600)
 
 
+def _validate_transition_permit_directory(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except OSError as error:
+        raise DeployError("TRANSITION_PERMIT_DIRECTORY_UNAVAILABLE") from error
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != 0
+        or info.st_gid != 0
+        or stat.S_IMODE(info.st_mode) != 0o700
+    ):
+        raise DeployError("TRANSITION_PERMIT_DIRECTORY_UNSAFE")
+
+
+def _validate_transition_permit_parent(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except OSError as error:
+        raise DeployError("TRANSITION_PERMIT_PARENT_UNAVAILABLE") from error
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != 0
+        or info.st_gid != 0
+        or stat.S_IMODE(info.st_mode) & 0o022
+    ):
+        raise DeployError("TRANSITION_PERMIT_PARENT_UNSAFE")
+
+
+def _ensure_transition_permit_directory() -> Path:
+    """Create the fixed root-only permit directory, but never repair metadata."""
+
+    parent = TRANSITION_PERMITS_DIR.parent
+    _validate_transition_permit_parent(parent)
+    created = False
+    try:
+        TRANSITION_PERMITS_DIR.mkdir(mode=0o700)
+        created = True
+    except FileExistsError:
+        pass
+    except OSError as error:
+        raise DeployError("TRANSITION_PERMIT_DIRECTORY_CREATE_FAILED") from error
+    if created:
+        try:
+            os.chown(TRANSITION_PERMITS_DIR, 0, 0, follow_symlinks=False)
+            fsync_dir(parent)
+        except OSError as error:
+            raise DeployError("TRANSITION_PERMIT_DIRECTORY_CREATE_FAILED") from error
+    _validate_transition_permit_directory(TRANSITION_PERMITS_DIR)
+    return TRANSITION_PERMITS_DIR
+
+
+def _quarantine_transition_permit(destination: Path, guard: Path) -> None:
+    """Durably tombstone a linked-but-failed permit without reopening its run ID."""
+
+    try:
+        destination_info = destination.lstat()
+    except OSError as error:
+        raise DeployError("TRANSITION_PERMIT_QUARANTINE_FAILED") from error
+    try:
+        guard_info = guard.lstat()
+    except FileNotFoundError:
+        guard_info = None
+    except OSError as error:
+        raise DeployError("TRANSITION_PERMIT_QUARANTINE_FAILED") from error
+    if guard_info is not None:
+        if (
+            stat.S_ISREG(destination_info.st_mode)
+            and stat.S_ISREG(guard_info.st_mode)
+            and destination_info.st_dev == guard_info.st_dev
+            and destination_info.st_ino == guard_info.st_ino
+            and destination_info.st_nlink >= 2
+            and guard_info.st_nlink >= 2
+        ):
+            try:
+                fsync_dir(destination.parent)
+            except OSError:
+                pass
+    else:
+        try:
+            os.link(destination, guard, follow_symlinks=False)
+            fsync_dir(destination.parent)
+        except OSError:
+            pass
+
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise DeployError("TRANSITION_PERMIT_QUARANTINE_FAILED")
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_dev != destination_info.st_dev
+            or info.st_ino != destination_info.st_ino
+        ):
+            raise DeployError("TRANSITION_PERMIT_QUARANTINE_FAILED")
+        os.fchmod(descriptor, 0o000)
+        os.fsync(descriptor)
+        tombstone_info = os.fstat(descriptor)
+        if (
+            tombstone_info.st_dev != destination_info.st_dev
+            or tombstone_info.st_ino != destination_info.st_ino
+            or stat.S_IMODE(tombstone_info.st_mode) != 0o000
+        ):
+            raise DeployError("TRANSITION_PERMIT_QUARANTINE_FAILED")
+    except OSError as error:
+        raise DeployError("TRANSITION_PERMIT_QUARANTINE_FAILED") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    try:
+        current = destination.lstat()
+    except OSError as error:
+        raise DeployError("TRANSITION_PERMIT_QUARANTINE_FAILED") from error
+    if (
+        current.st_dev != destination_info.st_dev
+        or current.st_ino != destination_info.st_ino
+        or stat.S_IMODE(current.st_mode) != 0o000
+    ):
+        raise DeployError("TRANSITION_PERMIT_QUARANTINE_FAILED")
+
+
+def _install_transition_permit(run_id: str, data: bytes, *, bundle: Bundle) -> Path:
+    """Install one immutable permit with a hard-link no-overwrite commit."""
+
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise DeployError("RUN_ID_INVALID")
+    if len(data) > 1024 * 1024:
+        raise DeployError("TRANSITION_PERMIT_TOO_LARGE")
+    document = parse_canonical_json(data, "TRANSITION_PERMIT")
+    directory = _ensure_transition_permit_directory()
+    destination = directory / f"{run_id}.json"
+    try:
+        destination.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise DeployError("TRANSITION_PERMIT_DESTINATION_UNAVAILABLE") from error
+    else:
+        raise DeployError("TRANSITION_PERMIT_ALREADY_EXISTS")
+
+    temporary = directory / f".{run_id}.{secrets.token_hex(12)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise DeployError("TRANSITION_PERMIT_NOFOLLOW_UNAVAILABLE")
+    flags |= os.O_NOFOLLOW
+    descriptor: int | None = None
+    linked = False
+    installed = False
+    try:
+        try:
+            descriptor = os.open(temporary, flags, 0o600)
+        except OSError as error:
+            raise DeployError("TRANSITION_PERMIT_TEMP_CREATE_FAILED") from error
+        view = memoryview(data)
+        while view:
+            count = os.write(descriptor, view)
+            if count <= 0:
+                raise DeployError("TRANSITION_PERMIT_SHORT_WRITE")
+            view = view[count:]
+        os.fchown(descriptor, 0, 0)
+        os.fchmod(descriptor, 0o600)
+        os.fsync(descriptor)
+        completed_descriptor = descriptor
+        descriptor = None
+        os.close(completed_descriptor)
+        expected_digest = sha256_bytes(data)
+        verified_temporary = verify_transition_permit(
+            temporary,
+            expected_digest,
+            bundle=bundle,
+            run_id=run_id,
+        )
+        if (
+            verified_temporary.document != document
+            or verified_temporary.digest != expected_digest
+            or verified_temporary.path != temporary.absolute()
+        ):
+            raise DeployError("TRANSITION_PERMIT_PREPUBLICATION_ROUNDTRIP_MISMATCH")
+        verify_regular_identity(
+            temporary,
+            expected_bytes=len(data),
+            expected_digest=expected_digest,
+        )
+        # Persist the temporary directory entry before linking it into the
+        # fixed destination. A crash in the link/unlink window must recover
+        # both names (nlink=2), never a lone consumable destination.
+        fsync_dir(directory)
+        try:
+            os.link(temporary, destination, follow_symlinks=False)
+        except FileExistsError as error:
+            raise DeployError("TRANSITION_PERMIT_ALREADY_EXISTS") from error
+        except OSError as error:
+            raise DeployError("TRANSITION_PERMIT_INSTALL_FAILED") from error
+        linked = True
+        fsync_dir(directory)
+        verify_regular_identity(
+            destination,
+            expected_bytes=len(data),
+            expected_digest=expected_digest,
+            expected_nlink=2,
+        )
+        _validate_transition_permit_directory(directory)
+        temporary.unlink()
+        fsync_dir(directory)
+        installed = True
+        return destination
+    except OSError as error:
+        raise DeployError("TRANSITION_PERMIT_INSTALL_FAILED") from error
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if linked and not installed:
+            _quarantine_transition_permit(destination, temporary)
+        elif not installed:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+            else:
+                try:
+                    fsync_dir(directory)
+                except OSError:
+                    pass
+
+
 def freeze_verified_file(source: Path, destination: Path, *, expected_bytes: int, expected_digest: str) -> tuple[int, str]:
     """Copy a verified external file into a root-only run directory without reopening it."""
     if destination.exists() or destination.is_symlink():
@@ -2321,6 +2559,26 @@ def validate_database_runtime_identity(config: dict[str, Any], documents: dict[s
     network_id = postgres_endpoint.get("NetworkID")
     if not network_id or flowise_endpoint.get("NetworkID") != network_id or "postgres" not in aliases:
         raise DeployError("DATABASE_RUNTIME_NETWORK_IDENTITY_MISMATCH")
+
+
+def observe_runtime_network_identity(
+    documents: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, str]]:
+    """Return only the exact, non-secret network names and IDs."""
+
+    internal_name = EXPECTED_TOP_LEVEL_NETWORKS["flowise_network"]["name"]
+    proxy_name = EXPECTED_TOP_LEVEL_NETWORKS["reverse_proxy_network"]["name"]
+    try:
+        flowise_networks = documents[FLOWISE_CONTAINER]["NetworkSettings"]["Networks"]
+        internal_id = flowise_networks[internal_name]["NetworkID"]
+        proxy_id = flowise_networks[proxy_name]["NetworkID"]
+    except (KeyError, TypeError) as error:
+        raise DeployError("RUNTIME_NETWORK_ATTACHMENTS_MISSING") from error
+    observed = {
+        "flowise_internal": {"name": internal_name, "network_id": internal_id},
+        "reverse_proxy": {"name": proxy_name, "network_id": proxy_id},
+    }
+    return validate_runtime_network_identity(documents, observed)
 
 
 def validate_runtime_network_identity(
@@ -3348,54 +3606,102 @@ def _prepare_preflight(bundle: Bundle) -> dict[str, Any]:
     }
 
 
-def _bootstrap_preflight(
+def _collect_transition_observation(
     bundle: Bundle,
-    permit: TransitionPermit,
     *,
-    check_current_journals: bool,
+    permit_document: dict[str, Any] | None = None,
+    check_current_journals: bool = True,
     current_run_id: str | None = None,
 ) -> dict[str, Any]:
-    binding = permit.document
+    """Observe and validate the complete legacy transition state.
+
+    Raw environment, key, Compose and Docker inspection data remain internal to
+    this return value.  Callers may persist only the permit projection built by
+    ``_build_transition_permit_document`` or the digest-only snapshot result.
+    """
+
+    binding = permit_document
     documents = inspect_containers()
     validate_container_health(documents)
     snapshot = container_snapshot(documents)
-    active = binding["active_legacy"]
     active_tag = snapshot[FLOWISE_CONTAINER]["image_ref"]
-    if active_tag != active["image_tag"]:
-        raise DeployError("BOOTSTRAP_ACTIVE_IMAGE_TAG_MISMATCH")
-    active_image = inspect_image(
-        active_tag,
-        active["image_config_digest"],
-        active["revision"],
-        active["repository_url"],
-    )
+    if binding is None:
+        expected_tag = f"flowise-chinese:git-{LEGACY_BOOTSTRAP_REVISION}"
+        if active_tag != expected_tag:
+            raise DeployError("TRANSITION_ACTIVE_LEGACY_IMAGE_TAG_MISMATCH")
+        active_image = inspect_image(active_tag, expected_revision=LEGACY_BOOTSTRAP_REVISION)
+        if active_image.get("repository_url") not in LEGACY_BOOTSTRAP_REPOSITORY_URLS:
+            raise DeployError("TRANSITION_ACTIVE_IMAGE_SOURCE_MISMATCH")
+        active = {
+            "image_tag": active_tag,
+            "revision": LEGACY_BOOTSTRAP_REVISION,
+            "release_id": f"git-{LEGACY_BOOTSTRAP_REVISION}",
+            "repository_url": active_image.get("repository_url"),
+            "created_at": active_image.get("created_at"),
+            "image_config_digest": active_image.get("image_config_digest"),
+        }
+    else:
+        active = binding["active_legacy"]
+        if active_tag != active["image_tag"]:
+            raise DeployError("BOOTSTRAP_ACTIVE_IMAGE_TAG_MISMATCH")
+        active_image = inspect_image(
+            active_tag,
+            active["image_config_digest"],
+            active["revision"],
+            active["repository_url"],
+        )
     if (
         snapshot[FLOWISE_CONTAINER]["image_id"] != active["image_config_digest"]
         or active_image.get("release_id") != active["release_id"]
         or active_image.get("created_at") != active["created_at"]
+        or active_image.get("revision") != active["revision"]
+        or active_image.get("repository_url") != active["repository_url"]
     ):
-        raise DeployError("BOOTSTRAP_ACTIVE_IMAGE_IDENTITY_MISMATCH")
-    observed_container_ids = {name: snapshot[name]["id"] for name in MANAGED_CONTAINERS}
-    if observed_container_ids != binding["containers"]:
+        code = "BOOTSTRAP_ACTIVE_IMAGE_IDENTITY_MISMATCH" if binding is not None else "TRANSITION_ACTIVE_IMAGE_IDENTITY_MISMATCH"
+        raise DeployError(code)
+    try:
+        observed_container_ids = {name: snapshot[name]["id"] for name in MANAGED_CONTAINERS}
+    except (KeyError, TypeError) as error:
+        raise DeployError("TRANSITION_CONTAINER_IDENTITY_INVALID") from error
+    if any(
+        not isinstance(identifier, str) or not DOCKER_ID_RE.fullmatch(identifier)
+        for identifier in observed_container_ids.values()
+    ):
+        raise DeployError("TRANSITION_CONTAINER_IDENTITY_INVALID")
+    if binding is not None and observed_container_ids != binding["containers"]:
         raise DeployError("BOOTSTRAP_CONTAINER_ID_MISMATCH")
-    network_identity = validate_runtime_network_identity(
-        documents,
-        binding["network_identity"],
+    network_identity = (
+        validate_runtime_network_identity(documents, binding["network_identity"])
+        if binding is not None
+        else observe_runtime_network_identity(documents)
     )
 
     live_env, env_metadata = live_file(LIVE_ENV, 0o600)
     live_compose, compose_metadata = live_file(LIVE_COMPOSE, 0o644)
     live_hashes = _live_hashes()
-    if live_hashes != {
-        "env": binding["live"]["env_sha256"],
-        "compose": binding["live"]["compose_sha256"],
-        "seccomp": binding["live"]["seccomp"],
-    }:
+    if live_hashes["env"] != sha256_bytes(live_env) or live_hashes["compose"] != sha256_bytes(live_compose):
+        raise DeployError("TRANSITION_LIVE_FILE_CHANGED_DURING_OBSERVATION")
+    expected_live_hashes = (
+        {
+            "env": binding["live"]["env_sha256"],
+            "compose": binding["live"]["compose_sha256"],
+            "seccomp": binding["live"]["seccomp"],
+        }
+        if binding is not None
+        else live_hashes
+    )
+    if live_hashes != expected_live_hashes:
         raise DeployError("BOOTSTRAP_LIVE_FILE_BINDING_MISMATCH")
     if live_hashes["seccomp"] != {"present": False, "digest": None}:
-        raise DeployError("BOOTSTRAP_LEGACY_SECCOMP_PRESENT")
+        code = "BOOTSTRAP_LEGACY_SECCOMP_PRESENT" if binding is not None else "TRANSITION_LEGACY_SECCOMP_PRESENT"
+        raise DeployError(code)
     if render_env(live_env, active_tag) != live_env:
-        raise DeployError("BOOTSTRAP_LIVE_ENV_IMAGE_ASSIGNMENT_DRIFT")
+        code = (
+            "BOOTSTRAP_LIVE_ENV_IMAGE_ASSIGNMENT_DRIFT"
+            if binding is not None
+            else "TRANSITION_LIVE_ENV_IMAGE_ASSIGNMENT_DRIFT"
+        )
+        raise DeployError(code)
 
     key = persistent_key()
     legacy_config, computed_hash, legacy_compose_environment = _resolved_live(active_tag, key)
@@ -3403,14 +3709,28 @@ def _bootstrap_preflight(
         active_image["image_environment"],
         legacy_compose_environment,
     )
-    _validate_runtime_environment_binding(active, legacy_environment, key, "BOOTSTRAP_ACTIVE_LEGACY")
+    environment_binding = runtime_environment_binding(legacy_environment, key)
+    if binding is not None:
+        _validate_runtime_environment_binding(active, legacy_environment, key, "BOOTSTRAP_ACTIVE_LEGACY")
     runtime_label_hash = snapshot[FLOWISE_CONTAINER]["compose_config_hash"]
-    if (
-        runtime_label_hash != active["runtime_label_config_hash"]
-        or computed_hash != active["live_computed_config_hash"]
-        or runtime_label_hash == computed_hash
-    ):
-        raise DeployError("BOOTSTRAP_CONFIG_HASH_EXCEPTION_BINDING_MISMATCH")
+    if binding is not None:
+        if (
+            runtime_label_hash != active["runtime_label_config_hash"]
+            or computed_hash != active["live_computed_config_hash"]
+            or runtime_label_hash == computed_hash
+        ):
+            raise DeployError("BOOTSTRAP_CONFIG_HASH_EXCEPTION_BINDING_MISMATCH")
+        expected_runtime_projection_digest = active["runtime_projection_digest"]
+    else:
+        if (
+            not isinstance(runtime_label_hash, str)
+            or not CONFIG_HASH_RE.fullmatch(runtime_label_hash)
+            or not isinstance(computed_hash, str)
+            or not CONFIG_HASH_RE.fullmatch(computed_hash)
+            or runtime_label_hash == computed_hash
+        ):
+            raise DeployError("TRANSITION_CONFIG_HASH_EXCEPTION_INVALID")
+        expected_runtime_projection_digest = runtime_projection_digest(documents)
     validate_database_runtime_identity(legacy_config, documents)
     validate_key_continuity(documents, legacy_environment, key)
     legacy_runtime = validate_legacy_runtime(
@@ -3419,16 +3739,17 @@ def _bootstrap_preflight(
         image_digest=active["image_config_digest"],
         expected_config_hash=runtime_label_hash,
         expected_environment=legacy_environment,
-        expected_runtime_projection_digest=active["runtime_projection_digest"],
+        expected_runtime_projection_digest=expected_runtime_projection_digest,
     )
     database = database_state(include_name_digest=True)
-    if {
+    database_binding = {
         "migration_count": database.get("migration_count"),
         "migration_name_sha256": database.get("migration_name_sha256"),
-    } != binding["database"]:
+    }
+    if binding is not None and database_binding != binding["database"]:
         raise DeployError("BOOTSTRAP_DATABASE_BINDING_MISMATCH")
     legacy_inventory = legacy_journal_inventory()
-    if legacy_inventory != binding["legacy_journal_inventory"]:
+    if binding is not None and legacy_inventory != binding["legacy_journal_inventory"]:
         raise DeployError("BOOTSTRAP_LEGACY_JOURNAL_INVENTORY_MISMATCH")
     current_inventory = (
         current_journal_inventory(exclude_run_id=current_run_id) if check_current_journals else None
@@ -3454,7 +3775,7 @@ def _bootstrap_preflight(
         "legacy_config_hash": computed_hash,
         "legacy_runtime_label_hash": runtime_label_hash,
         "legacy_environment": legacy_environment,
-        "legacy_environment_binding": runtime_environment_binding(legacy_environment, key),
+        "legacy_environment_binding": environment_binding,
         "legacy_runtime": legacy_runtime,
         "key": key,
         "database": database,
@@ -3462,6 +3783,21 @@ def _bootstrap_preflight(
         "legacy_journal_inventory": legacy_inventory,
         "current_journal_inventory": current_inventory,
     }
+
+
+def _bootstrap_preflight(
+    bundle: Bundle,
+    permit: TransitionPermit,
+    *,
+    check_current_journals: bool,
+    current_run_id: str | None = None,
+) -> dict[str, Any]:
+    return _collect_transition_observation(
+        bundle,
+        permit_document=permit.document,
+        check_current_journals=check_current_journals,
+        current_run_id=current_run_id,
+    )
 
 
 def _validate_bootstrap_cas(initial: dict[str, Any], current: dict[str, Any]) -> None:
@@ -3498,6 +3834,266 @@ def _validate_bootstrap_cas(initial: dict[str, Any], current: dict[str, Any]) ->
         for name in current_inventory_fields
     ):
         raise DeployError("BOOTSTRAP_CURRENT_JOURNAL_CAS_MISMATCH")
+
+
+def _validate_transition_observation_cas(initial: dict[str, Any], current: dict[str, Any]) -> None:
+    compared = (
+        "snapshot",
+        "active_tag",
+        "active_revision",
+        "active_image_digest",
+        "active_image",
+        "live_env",
+        "live_compose",
+        "live_seccomp",
+        "live_hashes",
+        "live_metadata",
+        "legacy_config",
+        "legacy_config_hash",
+        "legacy_runtime_label_hash",
+        "legacy_environment",
+        "legacy_environment_binding",
+        "legacy_runtime",
+        "database",
+        "network_identity",
+        "legacy_journal_inventory",
+        "current_journal_inventory",
+    )
+    try:
+        drifted = any(initial[name] != current[name] for name in compared) or not hmac.compare_digest(
+            initial["key"],
+            current["key"],
+        )
+    except (KeyError, TypeError) as error:
+        raise DeployError("TRANSITION_OBSERVATION_CAS_MISMATCH") from error
+    if drifted:
+        raise DeployError("TRANSITION_OBSERVATION_CAS_MISMATCH")
+
+
+def _build_transition_permit_document(
+    bundle: Bundle,
+    run_id: str,
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise DeployError("RUN_ID_INVALID")
+    active_image = observation["active_image"]
+    active_revision = observation["active_revision"]
+    active_tag = observation["active_tag"]
+    active_digest = observation["active_image_digest"]
+    if active_image.get("repository_url") not in LEGACY_BOOTSTRAP_REPOSITORY_URLS:
+        raise DeployError("TRANSITION_ACTIVE_IMAGE_SOURCE_MISMATCH")
+    if (
+        active_revision != LEGACY_BOOTSTRAP_REVISION
+        or active_tag != f"flowise-chinese:git-{LEGACY_BOOTSTRAP_REVISION}"
+        or bundle.revision == active_revision
+        or bundle.image_tag == active_tag
+        or bundle.image_config_digest == active_digest
+    ):
+        raise DeployError("TRANSITION_PERMIT_TARGET_NOT_DISTINCT_FROM_ACTIVE_LEGACY")
+    environment_binding = observation["legacy_environment_binding"]
+    legacy_runtime = observation["legacy_runtime"]
+    snapshot = observation["snapshot"]
+    database = observation["database"]
+    live_hashes = observation["live_hashes"]
+    return {
+        "schema_version": 1,
+        "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+        "run_id": run_id,
+        "target_bundle": {
+            "bundle_digest": bundle.bundle_digest,
+            "revision": bundle.revision,
+            "image_tag": bundle.image_tag,
+            "image_config_digest": bundle.image_config_digest,
+        },
+        "active_legacy": {
+            "image_tag": active_tag,
+            "revision": active_revision,
+            "release_id": active_image["release_id"],
+            "repository_url": active_image["repository_url"],
+            "created_at": active_image["created_at"],
+            "image_config_digest": active_digest,
+            "runtime_label_config_hash": observation["legacy_runtime_label_hash"],
+            "live_computed_config_hash": observation["legacy_config_hash"],
+            "runtime_projection_digest": legacy_runtime["runtime_projection_digest"],
+            "runtime_environment_keys": copy.deepcopy(environment_binding["runtime_environment_keys"]),
+            "runtime_environment_hmac_sha256": environment_binding["runtime_environment_hmac_sha256"],
+        },
+        "containers": {name: snapshot[name]["id"] for name in MANAGED_CONTAINERS},
+        "live": {
+            "env_sha256": live_hashes["env"],
+            "compose_sha256": live_hashes["compose"],
+            "seccomp": copy.deepcopy(live_hashes["seccomp"]),
+        },
+        "database": {
+            "migration_count": database["migration_count"],
+            "migration_name_sha256": database["migration_name_sha256"],
+        },
+        "network_identity": copy.deepcopy(observation["network_identity"]),
+        "legacy_journal_inventory": copy.deepcopy(observation["legacy_journal_inventory"]),
+    }
+
+
+def _transition_snapshot_material(
+    bundle: Bundle,
+    run_id: str,
+    observation: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    permit_document = _build_transition_permit_document(bundle, run_id, observation)
+    permit_digest = sha256_bytes(canonical_json(permit_document))
+    current_inventory = observation.get("current_journal_inventory")
+    if not isinstance(current_inventory, dict):
+        raise DeployError("TRANSITION_CURRENT_JOURNAL_INVENTORY_MISSING")
+    snapshot_document = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "target_bundle_sha256": bundle.bundle_digest,
+        "permit_candidate_sha256": permit_digest,
+        "current_journal_inventory": copy.deepcopy(current_inventory),
+    }
+    return permit_document, snapshot_document, sha256_bytes(canonical_json(snapshot_document))
+
+
+def _capture_stable_transition(
+    bundle: Bundle,
+    run_id: str,
+) -> tuple[dict[str, Any], dict[str, Any], str, dict[str, Any]]:
+    initial = _collect_transition_observation(bundle, check_current_journals=True)
+    initial_permit = _build_transition_permit_document(bundle, run_id, initial)
+    initial_permit_bytes = canonical_json(initial_permit)
+    current = _collect_transition_observation(
+        bundle,
+        permit_document=initial_permit,
+        check_current_journals=True,
+    )
+    _validate_transition_observation_cas(initial, current)
+    permit_document, snapshot_document, snapshot_digest = _transition_snapshot_material(bundle, run_id, current)
+    if canonical_json(permit_document) != initial_permit_bytes:
+        raise DeployError("TRANSITION_PERMIT_CANDIDATE_CAS_MISMATCH")
+    return permit_document, snapshot_document, snapshot_digest, current
+
+
+def _transition_snapshot_result(
+    bundle: Bundle,
+    run_id: str,
+    permit_document: dict[str, Any],
+    snapshot_document: dict[str, Any],
+    snapshot_digest: str,
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    active = permit_document["active_legacy"]
+    environment_binding = {
+        "runtime_environment_keys": active["runtime_environment_keys"],
+        "runtime_environment_hmac_sha256": active["runtime_environment_hmac_sha256"],
+    }
+    legacy_inventory = permit_document["legacy_journal_inventory"]
+    current_inventory = observation["current_journal_inventory"]
+    return {
+        "status": "transition_snapshot_verified",
+        "run_id": run_id,
+        "target_bundle_sha256": bundle.bundle_digest,
+        "permit_candidate_sha256": snapshot_document["permit_candidate_sha256"],
+        "snapshot_sha256": snapshot_digest,
+        "container_identity_sha256": sha256_bytes(canonical_json(permit_document["containers"])),
+        "network_identity_sha256": sha256_bytes(canonical_json(permit_document["network_identity"])),
+        "live_state_sha256": sha256_bytes(canonical_json(permit_document["live"])),
+        "runtime_environment_binding_sha256": sha256_bytes(canonical_json(environment_binding)),
+        "database_state_sha256": sha256_bytes(canonical_json(permit_document["database"])),
+        "legacy_journal_inventory_sha256": legacy_inventory["canonical_inventory_sha256"],
+        "current_journal_inventory_sha256": current_inventory["control_json_sha256"],
+        "migration_count": permit_document["database"]["migration_count"],
+        "legacy_journal_root_count": legacy_inventory["root_count"],
+        "legacy_journal_run_count": legacy_inventory["run_count"],
+        "legacy_journal_control_count": legacy_inventory["control_count"],
+        "current_journal_control_count": current_inventory["control_json_count"],
+        "production_runtime_write": False,
+        "control_artifact_write": False,
+        "database_write": False,
+        "provider_call": False,
+        "secret_value_output": False,
+    }
+
+
+def snapshot_transition(bundle_dir: Path, run_id: str) -> dict[str, Any]:
+    require_root()
+    lock = acquire_lock()
+    try:
+        if not RUN_ID_RE.fullmatch(run_id):
+            raise DeployError("RUN_ID_INVALID")
+        bundle = verify_bundle(bundle_dir)
+        permit_document, snapshot_document, snapshot_digest, observation = _capture_stable_transition(bundle, run_id)
+        return _transition_snapshot_result(
+            bundle,
+            run_id,
+            permit_document,
+            snapshot_document,
+            snapshot_digest,
+            observation,
+        )
+    finally:
+        os.close(lock)
+
+
+def issue_transition_permit(
+    bundle_dir: Path,
+    run_id: str,
+    expected_snapshot_sha256: str,
+) -> dict[str, Any]:
+    require_root()
+    lock = acquire_lock()
+    try:
+        if not RUN_ID_RE.fullmatch(run_id):
+            raise DeployError("RUN_ID_INVALID")
+        if not isinstance(expected_snapshot_sha256, str) or not DIGEST_RE.fullmatch(expected_snapshot_sha256):
+            raise DeployError("TRANSITION_SNAPSHOT_DIGEST_INVALID")
+        bundle = verify_bundle(bundle_dir)
+        permit_document, _snapshot_document, snapshot_digest, _observation = _capture_stable_transition(bundle, run_id)
+        if not hmac.compare_digest(snapshot_digest, expected_snapshot_sha256):
+            raise DeployError("TRANSITION_SNAPSHOT_DIGEST_MISMATCH")
+        permit_bytes = canonical_json(permit_document)
+        permit_digest = sha256_bytes(permit_bytes)
+        permit_path = _install_transition_permit(run_id, permit_bytes, bundle=bundle)
+        try:
+            verified = verify_transition_permit(
+                permit_path,
+                permit_digest,
+                bundle=bundle,
+                run_id=run_id,
+            )
+            if (
+                verified.document != permit_document
+                or verified.digest != permit_digest
+                or verified.path != permit_path.absolute()
+            ):
+                raise DeployError("TRANSITION_PERMIT_ROUNDTRIP_MISMATCH")
+        except Exception as publication_error:
+            guard = permit_path.parent / f".{run_id}.{secrets.token_hex(12)}.failed"
+            try:
+                _quarantine_transition_permit(permit_path, guard)
+            except Exception as quarantine_error:
+                if isinstance(publication_error, DeployError):
+                    raise DeployError(
+                        f"{publication_error}:TRANSITION_PERMIT_QUARANTINE_FAILED"
+                    ) from quarantine_error
+                raise DeployError(
+                    "TRANSITION_PERMIT_ROUNDTRIP_AND_QUARANTINE_FAILED"
+                ) from quarantine_error
+            raise
+        return {
+            "status": "transition_permit_issued",
+            "run_id": run_id,
+            "permit_path": str(permit_path),
+            "permit_sha256": permit_digest,
+            "snapshot_sha256": snapshot_digest,
+            "target_bundle_sha256": bundle.bundle_digest,
+            "production_runtime_write": False,
+            "control_artifact_write": True,
+            "database_write": False,
+            "provider_call": False,
+            "secret_value_output": False,
+        }
+    finally:
+        os.close(lock)
 
 
 def prepare(bundle_dir: Path, run_id: str) -> dict[str, Any]:
@@ -5617,6 +6213,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     commands = parser.add_subparsers(dest="command", required=True)
     verify = commands.add_parser("verify-bundle")
     verify.add_argument("--bundle-dir", required=True, type=Path)
+    snapshot_parser = commands.add_parser("snapshot-transition")
+    snapshot_parser.add_argument("--bundle-dir", required=True, type=Path)
+    snapshot_parser.add_argument("--run-id", required=True)
+    issue_parser = commands.add_parser("issue-transition-permit")
+    issue_parser.add_argument("--bundle-dir", required=True, type=Path)
+    issue_parser.add_argument("--run-id", required=True)
+    issue_parser.add_argument("--expected-snapshot-sha256", required=True, type=_digest_argument)
     prepare_parser = commands.add_parser("prepare")
     prepare_parser.add_argument("--bundle-dir", required=True, type=Path)
     prepare_parser.add_argument("--run-id", required=True)
@@ -5659,6 +6262,14 @@ def main(argv: list[str] | None = None) -> None:
             "bundle_sha256": bundle.bundle_digest,
             "production_write": False,
         }
+    elif arguments.command == "snapshot-transition":
+        result = snapshot_transition(arguments.bundle_dir, arguments.run_id)
+    elif arguments.command == "issue-transition-permit":
+        result = issue_transition_permit(
+            arguments.bundle_dir,
+            arguments.run_id,
+            arguments.expected_snapshot_sha256,
+        )
     elif arguments.command == "prepare":
         result = prepare(arguments.bundle_dir, arguments.run_id)
     elif arguments.command == "bootstrap":
@@ -5672,12 +6283,14 @@ def main(argv: list[str] | None = None) -> None:
         result = cutover(arguments.run_id, arguments.prepare_receipt_sha256)
     elif arguments.command == "rollback":
         result = rollback(arguments.run_id, arguments.prepare_receipt_sha256, arguments.cutover_receipt_sha256)
-    else:
+    elif arguments.command == "bootstrap-rollback":
         result = bootstrap_rollback(
             arguments.run_id,
             arguments.bootstrap_prepare_receipt_sha256,
             arguments.bootstrap_complete_receipt_sha256,
         )
+    else:
+        raise DeployError("COMMAND_INVALID")
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
 
 

@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import tarfile
@@ -341,6 +342,76 @@ def transition_permit_document(bundle):
     }
 
 
+def transition_observation(bundle, *, sentinel="sentinel-secret-value"):
+    permit = transition_permit_document(bundle)
+    return {
+        "documents": {"internal_secret": sentinel},
+        "snapshot": {
+            RELEASE.FLOWISE_CONTAINER: {
+                "id": FLOWISE_ID,
+                "image_ref": LEGACY_TAG,
+                "image_id": LEGACY_DIGEST,
+                "compose_config_hash": "6" * 64,
+                "runtime": {"secret": sentinel},
+            },
+            RELEASE.POSTGRES_CONTAINER: {"id": POSTGRES_ID},
+            RELEASE.NGINX_CONTAINER: {"id": NGINX_ID},
+        },
+        "active_tag": LEGACY_TAG,
+        "active_revision": LEGACY_REVISION,
+        "active_image_digest": LEGACY_DIGEST,
+        "active_image": {
+            "image_tag": LEGACY_TAG,
+            "image_config_digest": LEGACY_DIGEST,
+            "revision": LEGACY_REVISION,
+            "release_id": f"git-{LEGACY_REVISION}",
+            "repository_url": LEGACY_SOURCE,
+            "created_at": LEGACY_CREATED_AT,
+            "image_environment": {"SENTINEL_IMAGE_SECRET": sentinel},
+        },
+        "live_env": f"FLOWISE_IMAGE={LEGACY_TAG}\nSENTINEL={sentinel}\n".encode(),
+        "live_compose": f"# {sentinel}\n".encode(),
+        "live_seccomp": None,
+        "live_hashes": {
+            "env": permit["live"]["env_sha256"],
+            "compose": permit["live"]["compose_sha256"],
+            "seccomp": {"present": False, "digest": None},
+        },
+        "live_metadata": {"env": [0, 0, 0o600], "compose": [0, 0, 0o644], "seccomp": [0, 0, 0o644]},
+        "legacy_config": {"internal_secret": sentinel},
+        "legacy_config_hash": permit["active_legacy"]["live_computed_config_hash"],
+        "legacy_runtime_label_hash": permit["active_legacy"]["runtime_label_config_hash"],
+        "legacy_environment": {
+            "FLOWISE_SECRETKEY_OVERWRITE": TEST_KEY.decode(),
+            "SENTINEL_RUNTIME_SECRET": sentinel,
+        },
+        "legacy_environment_binding": {
+            "runtime_environment_keys": ["FLOWISE_SECRETKEY_OVERWRITE", "SENTINEL_RUNTIME_SECRET"],
+            "runtime_environment_hmac_sha256": digest(b"sentinel-environment-binding"),
+        },
+        "legacy_runtime": {
+            "runtime_projection_digest": permit["active_legacy"]["runtime_projection_digest"],
+            "runtime_policy": "legacy_frozen_v1",
+        },
+        "key": TEST_KEY,
+        "database": {
+            "transaction_read_only": True,
+            "migration_count": permit["database"]["migration_count"],
+            "migration_sha256": digest(b"timestamp-and-name-inventory"),
+            "migration_name_sha256": permit["database"]["migration_name_sha256"],
+        },
+        "network_identity": permit["network_identity"],
+        "legacy_journal_inventory": permit["legacy_journal_inventory"],
+        "current_journal_inventory": {
+            "root": str(RELEASE.RUNS_DIR),
+            "present": True,
+            "control_json_count": 7,
+            "control_json_sha256": digest(b"current-journal-inventory"),
+            "unresolved_rollback_count": 0,
+        },
+    }
+
+
 def bootstrap_prepare_receipt():
     normal = receipt()
     baseline = copy.deepcopy(normal["baseline"])
@@ -621,8 +692,8 @@ class PatchedLock:
             return self.original_close(descriptor)
 
         self.close = mock.patch.object(RELEASE.os, "close", side_effect=tracked_close)
-        self.acquire.start()
-        self.root.start()
+        self.acquire_mock = self.acquire.start()
+        self.root_mock = self.root.start()
         self.close.start()
         return self
 
@@ -730,6 +801,781 @@ class ProductionReleaseTests(unittest.TestCase):
                     bundle=bundle,
                     run_id=RUN_ID,
                 )
+
+    def test_transition_snapshot_cli_is_explicit_and_issue_requires_expected_digest(self):
+        snapshot = RELEASE.parse_args(
+            ["snapshot-transition", "--bundle-dir", "/bundle", "--run-id", RUN_ID]
+        )
+        self.assertEqual((snapshot.command, snapshot.bundle_dir, snapshot.run_id), (
+            "snapshot-transition",
+            Path("/bundle"),
+            RUN_ID,
+        ))
+        issue = RELEASE.parse_args(
+            [
+                "issue-transition-permit",
+                "--bundle-dir",
+                "/bundle",
+                "--run-id",
+                RUN_ID,
+                "--expected-snapshot-sha256",
+                "a" * 64,
+            ]
+        )
+        self.assertEqual(issue.expected_snapshot_sha256, "sha256:" + "a" * 64)
+        with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+            RELEASE.parse_args(
+                ["issue-transition-permit", "--bundle-dir", "/bundle", "--run-id", RUN_ID]
+            )
+
+    def test_transition_snapshot_and_issuer_fail_before_observation_on_root_or_lock_gate(self):
+        commands = (
+            ("snapshot", lambda: RELEASE.snapshot_transition(Path("/bundle"), RUN_ID)),
+            (
+                "issue",
+                lambda: RELEASE.issue_transition_permit(Path("/bundle"), RUN_ID, digest(b"snapshot")),
+            ),
+        )
+        for command_label, command in commands:
+            for gate_label, root_error, lock_error in (
+                ("root", RELEASE.DeployError("ROOT_REQUIRED"), None),
+                ("lock", None, RELEASE.DeployError("DEPLOY_LOCK_BUSY")),
+            ):
+                acquire = mock.Mock(side_effect=lock_error)
+                observe = mock.Mock()
+                write = mock.Mock()
+                verify = mock.Mock()
+                with self.subTest(command=command_label, gate=gate_label), mock.patch.object(
+                    RELEASE, "require_root", side_effect=root_error
+                ), mock.patch.object(
+                    RELEASE, "acquire_lock", acquire
+                ), mock.patch.object(
+                    RELEASE, "verify_bundle", verify
+                ), mock.patch.object(
+                    RELEASE, "_collect_transition_observation", observe
+                ), mock.patch.object(
+                    RELEASE, "_install_transition_permit", write
+                ), self.assertRaisesRegex(RELEASE.DeployError, "ROOT_REQUIRED|DEPLOY_LOCK_BUSY"):
+                    command()
+                if gate_label == "root":
+                    acquire.assert_not_called()
+                else:
+                    acquire.assert_called_once_with()
+                verify.assert_not_called()
+                observe.assert_not_called()
+                write.assert_not_called()
+
+    def test_transition_snapshot_and_issuer_reject_invalid_run_or_digest_before_bundle_observation(self):
+        verify = mock.Mock()
+        observe = mock.Mock()
+        write = mock.Mock()
+        with PatchedLock(self), mock.patch.object(RELEASE, "verify_bundle", verify), mock.patch.object(
+            RELEASE, "_collect_transition_observation", observe
+        ), mock.patch.object(
+            RELEASE, "_install_transition_permit", write
+        ), self.assertRaisesRegex(RELEASE.DeployError, "RUN_ID_INVALID"):
+            RELEASE.snapshot_transition(Path("/bundle"), "invalid-run")
+        verify.assert_not_called()
+        observe.assert_not_called()
+        write.assert_not_called()
+
+        for label, run_id, snapshot_digest, expected_error in (
+            ("run", "invalid-run", digest(b"snapshot"), "RUN_ID_INVALID"),
+            ("digest", RUN_ID, "not-a-digest", "TRANSITION_SNAPSHOT_DIGEST_INVALID"),
+        ):
+            verify.reset_mock()
+            observe.reset_mock()
+            write.reset_mock()
+            with self.subTest(label=label), PatchedLock(self), mock.patch.object(
+                RELEASE, "verify_bundle", verify
+            ), mock.patch.object(
+                RELEASE, "_collect_transition_observation", observe
+            ), mock.patch.object(
+                RELEASE, "_install_transition_permit", write
+            ), self.assertRaisesRegex(RELEASE.DeployError, expected_error):
+                RELEASE.issue_transition_permit(Path("/bundle"), run_id, snapshot_digest)
+            verify.assert_not_called()
+            observe.assert_not_called()
+            write.assert_not_called()
+
+    def test_snapshot_transition_is_double_observed_locked_read_only_and_secret_safe(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        observed = transition_observation(bundle)
+        recover = mock.Mock(side_effect=AssertionError("snapshot must never recover"))
+        runtime_write = mock.Mock(side_effect=AssertionError("snapshot must never write runtime"))
+        artifact_write = mock.Mock(side_effect=AssertionError("snapshot must never write artifacts"))
+        with PatchedLock(self) as locked, mock.patch.object(
+            RELEASE, "verify_bundle", return_value=bundle
+        ), mock.patch.object(
+            RELEASE, "_collect_transition_observation", side_effect=[copy.deepcopy(observed), copy.deepcopy(observed)]
+        ) as collector, mock.patch.object(
+            RELEASE, "_recover_interrupted_runs", recover
+        ), mock.patch.object(
+            RELEASE, "install_config_set", runtime_write
+        ), mock.patch.object(
+            RELEASE, "_install_transition_permit", artifact_write
+        ):
+            result = RELEASE.snapshot_transition(Path("/bundle"), RUN_ID)
+
+        locked.root_mock.assert_called_once_with()
+        locked.acquire_mock.assert_called_once_with()
+        self.assertEqual(collector.call_count, 2)
+        self.assertEqual(collector.call_args_list[0].kwargs, {"check_current_journals": True})
+        self.assertEqual(
+            collector.call_args_list[1].kwargs,
+            {
+                "permit_document": RELEASE._build_transition_permit_document(bundle, RUN_ID, observed),
+                "check_current_journals": True,
+            },
+        )
+        recover.assert_not_called()
+        runtime_write.assert_not_called()
+        artifact_write.assert_not_called()
+        self.assertEqual(
+            set(result),
+            {
+                "status",
+                "run_id",
+                "target_bundle_sha256",
+                "permit_candidate_sha256",
+                "snapshot_sha256",
+                "container_identity_sha256",
+                "network_identity_sha256",
+                "live_state_sha256",
+                "runtime_environment_binding_sha256",
+                "database_state_sha256",
+                "legacy_journal_inventory_sha256",
+                "current_journal_inventory_sha256",
+                "migration_count",
+                "legacy_journal_root_count",
+                "legacy_journal_run_count",
+                "legacy_journal_control_count",
+                "current_journal_control_count",
+                "production_runtime_write",
+                "control_artifact_write",
+                "database_write",
+                "provider_call",
+                "secret_value_output",
+            },
+        )
+        self.assertEqual(result["status"], "transition_snapshot_verified")
+        self.assertFalse(result["production_runtime_write"])
+        self.assertFalse(result["control_artifact_write"])
+        self.assertFalse(result["database_write"])
+        self.assertFalse(result["provider_call"])
+        self.assertFalse(result["secret_value_output"])
+        self.assertNotIn("sentinel-secret-value", json.dumps(result, sort_keys=True))
+
+        permit_document = RELEASE._build_transition_permit_document(bundle, RUN_ID, observed)
+        snapshot_document = {
+            "schema_version": 1,
+            "run_id": RUN_ID,
+            "target_bundle_sha256": bundle.bundle_digest,
+            "permit_candidate_sha256": digest(canonical(permit_document)),
+            "current_journal_inventory": observed["current_journal_inventory"],
+        }
+        self.assertEqual(result["snapshot_sha256"], digest(canonical(snapshot_document)))
+
+    def test_transition_observation_cas_rejects_every_bound_drift_without_writes(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        initial = transition_observation(bundle)
+
+        def mutate_container(value):
+            value["snapshot"][RELEASE.FLOWISE_CONTAINER]["id"] = "9" * 64
+
+        def mutate_network(value):
+            value["network_identity"]["reverse_proxy"]["network_id"] = "9" * 64
+
+        def mutate_live(value):
+            value["live_hashes"]["env"] = digest(b"drifted-live-env")
+
+        def mutate_environment(value):
+            value["legacy_environment_binding"]["runtime_environment_hmac_sha256"] = digest(
+                b"drifted-runtime-environment"
+            )
+
+        def mutate_database(value):
+            value["database"]["migration_count"] += 1
+
+        def mutate_legacy_journal(value):
+            value["legacy_journal_inventory"]["control_count"] += 1
+
+        def mutate_current_journal(value):
+            value["current_journal_inventory"]["control_json_count"] += 1
+
+        def mutate_key(value):
+            value["key"] = b"z" * 32
+
+        for label, mutate in (
+            ("container", mutate_container),
+            ("network", mutate_network),
+            ("live", mutate_live),
+            ("runtime-environment", mutate_environment),
+            ("database", mutate_database),
+            ("legacy-journal", mutate_legacy_journal),
+            ("current-journal", mutate_current_journal),
+            ("persistent-key", mutate_key),
+        ):
+            current = copy.deepcopy(initial)
+            mutate(current)
+            artifact_write = mock.Mock()
+            with self.subTest(label=label), PatchedLock(self), mock.patch.object(
+                RELEASE, "verify_bundle", return_value=bundle
+            ), mock.patch.object(
+                RELEASE, "_collect_transition_observation", side_effect=[copy.deepcopy(initial), current]
+            ), mock.patch.object(
+                RELEASE, "_install_transition_permit", artifact_write
+            ), self.assertRaisesRegex(RELEASE.DeployError, "TRANSITION_OBSERVATION_CAS_MISMATCH") as raised:
+                RELEASE.snapshot_transition(Path("/bundle"), RUN_ID)
+            artifact_write.assert_not_called()
+            self.assertNotIn("sentinel-secret-value", str(raised.exception))
+
+    def test_issue_transition_permit_reobserves_cas_and_stale_digest_is_zero_write(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        observed = transition_observation(bundle)
+        permit_document = RELEASE._build_transition_permit_document(bundle, RUN_ID, observed)
+        snapshot_document = {
+            "schema_version": 1,
+            "run_id": RUN_ID,
+            "target_bundle_sha256": bundle.bundle_digest,
+            "permit_candidate_sha256": digest(canonical(permit_document)),
+            "current_journal_inventory": observed["current_journal_inventory"],
+        }
+        expected_snapshot = digest(canonical(snapshot_document))
+        artifact_write = mock.Mock()
+        verifier = mock.Mock()
+        with PatchedLock(self), mock.patch.object(
+            RELEASE, "verify_bundle", return_value=bundle
+        ), mock.patch.object(
+            RELEASE, "_collect_transition_observation", side_effect=[copy.deepcopy(observed), copy.deepcopy(observed)]
+        ) as collector, mock.patch.object(
+            RELEASE, "_install_transition_permit", artifact_write
+        ), mock.patch.object(
+            RELEASE, "verify_transition_permit", verifier
+        ), self.assertRaisesRegex(RELEASE.DeployError, "TRANSITION_SNAPSHOT_DIGEST_MISMATCH"):
+            RELEASE.issue_transition_permit(Path("/bundle"), RUN_ID, digest(b"stale-snapshot"))
+        self.assertEqual(collector.call_count, 2)
+        artifact_write.assert_not_called()
+        verifier.assert_not_called()
+
+        permit_path = Path("/opt/flowise/transition-permits") / f"{RUN_ID}.json"
+        permit_bytes = canonical(permit_document)
+        artifact_write = mock.Mock(return_value=permit_path)
+        verifier = mock.Mock(
+            return_value=RELEASE.TransitionPermit(permit_path, permit_document, digest(permit_bytes))
+        )
+        recover = mock.Mock(side_effect=AssertionError("issuer must never recover"))
+        with PatchedLock(self) as issue_locked, mock.patch.object(
+            RELEASE, "verify_bundle", return_value=bundle
+        ), mock.patch.object(
+            RELEASE, "_collect_transition_observation", side_effect=[copy.deepcopy(observed), copy.deepcopy(observed)]
+        ), mock.patch.object(
+            RELEASE, "_install_transition_permit", artifact_write
+        ), mock.patch.object(
+            RELEASE, "verify_transition_permit", verifier
+        ), mock.patch.object(
+            RELEASE, "_recover_interrupted_runs", recover
+        ):
+            result = RELEASE.issue_transition_permit(Path("/bundle"), RUN_ID, expected_snapshot)
+
+        issue_locked.root_mock.assert_called_once_with()
+        issue_locked.acquire_mock.assert_called_once_with()
+        recover.assert_not_called()
+        artifact_write.assert_called_once_with(RUN_ID, permit_bytes, bundle=bundle)
+        verifier.assert_called_once_with(
+            permit_path,
+            digest(permit_bytes),
+            bundle=bundle,
+            run_id=RUN_ID,
+        )
+        self.assertEqual(
+            set(result),
+            {
+                "status",
+                "run_id",
+                "permit_path",
+                "permit_sha256",
+                "snapshot_sha256",
+                "target_bundle_sha256",
+                "production_runtime_write",
+                "control_artifact_write",
+                "database_write",
+                "provider_call",
+                "secret_value_output",
+            },
+        )
+        self.assertEqual(result["status"], "transition_permit_issued")
+        self.assertTrue(result["control_artifact_write"])
+        self.assertFalse(result["production_runtime_write"])
+        self.assertFalse(result["database_write"])
+        self.assertFalse(result["provider_call"])
+        self.assertFalse(result["secret_value_output"])
+        self.assertNotIn("current_journal_inventory", permit_document)
+        self.assertNotIn("sentinel-secret-value", permit_bytes.decode())
+        self.assertNotIn("sentinel-secret-value", json.dumps(result, sort_keys=True))
+
+    def test_transition_permit_directory_rejects_unsafe_existing_paths_without_chmod(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            unsafe = root / "transition-permits"
+            unsafe.mkdir(mode=0o755)
+            unsafe.chmod(0o755)
+            with mock.patch.object(RELEASE, "TRANSITION_PERMITS_DIR", unsafe), mock.patch.object(
+                RELEASE, "_validate_transition_permit_parent"
+            ), self.assertRaisesRegex(
+                RELEASE.DeployError, "TRANSITION_PERMIT_DIRECTORY_UNSAFE"
+            ):
+                RELEASE._ensure_transition_permit_directory()
+            self.assertEqual(stat.S_IMODE(unsafe.stat().st_mode), 0o755)
+
+            unsafe.rmdir()
+            target = root / "real-permit-directory"
+            target.mkdir(mode=0o700)
+            unsafe.symlink_to(target, target_is_directory=True)
+            with mock.patch.object(RELEASE, "TRANSITION_PERMITS_DIR", unsafe), mock.patch.object(
+                RELEASE, "_validate_transition_permit_parent"
+            ), self.assertRaisesRegex(
+                RELEASE.DeployError, "TRANSITION_PERMIT_DIRECTORY_UNSAFE"
+            ):
+                RELEASE._ensure_transition_permit_directory()
+
+    def test_transition_permit_parent_requires_root_owner(self):
+        safe_mode = stat.S_IFDIR | 0o755
+        for label, overrides in (
+            ("owner", {"st_uid": 501}),
+            ("group", {"st_gid": 20}),
+            ("writable", {"st_mode": stat.S_IFDIR | 0o775}),
+            ("symlink", {"st_mode": stat.S_IFLNK | 0o777}),
+        ):
+            values = {"st_mode": safe_mode, "st_uid": 0, "st_gid": 0} | overrides
+            with self.subTest(label=label), mock.patch.object(
+                RELEASE.Path, "lstat", return_value=types.SimpleNamespace(**values)
+            ), self.assertRaisesRegex(RELEASE.DeployError, "TRANSITION_PERMIT_PARENT_UNSAFE"):
+                RELEASE._validate_transition_permit_parent(Path("/opt/flowise"))
+
+    def test_transition_permit_install_is_no_overwrite_and_rejects_existing_symlink(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            permit_dir = Path(directory)
+            destination = permit_dir / f"{RUN_ID}.json"
+            for label, make_destination in (
+                ("regular", lambda: destination.write_bytes(b"existing-permit")),
+                ("symlink", lambda: destination.symlink_to(permit_dir / "outside.json")),
+            ):
+                destination.unlink(missing_ok=True)
+                make_destination()
+                before = destination.read_bytes() if label == "regular" else os.readlink(destination)
+                with self.subTest(label=label), mock.patch.object(
+                    RELEASE, "TRANSITION_PERMITS_DIR", permit_dir
+                ), mock.patch.object(
+                    RELEASE, "_ensure_transition_permit_directory", return_value=permit_dir
+                ), self.assertRaisesRegex(RELEASE.DeployError, "TRANSITION_PERMIT_ALREADY_EXISTS"):
+                    RELEASE._install_transition_permit(
+                        RUN_ID,
+                        canonical({"new": "permit"}),
+                        bundle=bundle,
+                    )
+                after = destination.read_bytes() if label == "regular" else os.readlink(destination)
+                self.assertEqual(after, before)
+                self.assertEqual(
+                    [path for path in permit_dir.iterdir() if path.name.startswith(f".{RUN_ID}.")],
+                    [],
+                )
+
+    def test_transition_permit_close_failure_removes_unpublished_temporary_file(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        permit_bytes = canonical(
+            RELEASE._build_transition_permit_document(
+                bundle,
+                RUN_ID,
+                transition_observation(bundle),
+            )
+        )
+        real_close = os.close
+        close_calls = 0
+
+        def fail_first_close(descriptor):
+            nonlocal close_calls
+            close_calls += 1
+            real_close(descriptor)
+            if close_calls == 1:
+                raise OSError("injected close failure")
+
+        with tempfile.TemporaryDirectory() as directory:
+            permit_dir = Path(directory)
+            destination = permit_dir / f"{RUN_ID}.json"
+            with mock.patch.object(RELEASE, "TRANSITION_PERMITS_DIR", permit_dir), mock.patch.object(
+                RELEASE, "_ensure_transition_permit_directory", return_value=permit_dir
+            ), mock.patch.object(RELEASE.os, "fchown"), mock.patch.object(
+                RELEASE.os, "close", side_effect=fail_first_close
+            ), self.assertRaisesRegex(RELEASE.DeployError, "TRANSITION_PERMIT_INSTALL_FAILED"):
+                RELEASE._install_transition_permit(RUN_ID, permit_bytes, bundle=bundle)
+            self.assertFalse(destination.exists())
+            self.assertEqual(
+                [path for path in permit_dir.iterdir() if path.name.startswith(f".{RUN_ID}.")],
+                [],
+            )
+
+    def test_transition_permit_install_is_canonical_root_mode_single_link_and_consumer_compatible(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        permit_document = RELEASE._build_transition_permit_document(
+            bundle,
+            RUN_ID,
+            transition_observation(bundle),
+        )
+        permit_bytes = canonical(permit_document)
+        expected_digest = digest(permit_bytes)
+        identities = []
+        publication_events = []
+        real_link = os.link
+
+        def verify_identity(path, *, expected_bytes, expected_digest: str, **metadata):
+            info = Path(path).stat()
+            self.assertTrue(stat.S_ISREG(info.st_mode))
+            self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
+            expected_nlink = metadata.pop("expected_nlink", 1)
+            self.assertEqual(info.st_nlink, expected_nlink)
+            self.assertEqual(Path(path).read_bytes(), permit_bytes)
+            self.assertEqual((expected_bytes, expected_digest), (len(permit_bytes), digest(permit_bytes)))
+            self.assertEqual(metadata, {})
+            identities.append(Path(path))
+
+        def verify_consumer(path, expected_digest, *, bundle, run_id):
+            self.assertEqual(expected_digest, digest(permit_bytes))
+            self.assertEqual(run_id, RUN_ID)
+            return RELEASE.TransitionPermit(Path(path).absolute(), permit_document, expected_digest)
+
+        def track_fsync(path):
+            publication_events.append(("fsync", Path(path)))
+
+        def track_link(source, destination, **kwargs):
+            publication_events.append(("link", Path(source), Path(destination)))
+            return real_link(source, destination, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            permit_dir = Path(directory)
+            with mock.patch.object(RELEASE, "TRANSITION_PERMITS_DIR", permit_dir), mock.patch.object(
+                RELEASE, "_ensure_transition_permit_directory", return_value=permit_dir
+            ), mock.patch.object(RELEASE.os, "fchown") as fchown, mock.patch.object(
+                RELEASE.os, "link", side_effect=track_link
+            ), mock.patch.object(
+                RELEASE, "fsync_dir", side_effect=track_fsync
+            ), mock.patch.object(
+                RELEASE, "verify_regular_identity", side_effect=verify_identity
+            ), mock.patch.object(
+                RELEASE, "verify_transition_permit", side_effect=verify_consumer
+            ), mock.patch.object(RELEASE, "_validate_transition_permit_directory") as validate_directory:
+                permit_path = RELEASE._install_transition_permit(RUN_ID, permit_bytes, bundle=bundle)
+            fchown.assert_called_once_with(mock.ANY, 0, 0)
+            validate_directory.assert_called_once_with(permit_dir)
+            self.assertEqual(permit_path, permit_dir / f"{RUN_ID}.json")
+            self.assertEqual(len(identities), 2)
+            self.assertNotEqual(identities[0], permit_path)
+            self.assertEqual(identities[1], permit_path)
+            self.assertEqual(
+                [event[0] for event in publication_events],
+                ["fsync", "link", "fsync", "fsync"],
+            )
+            self.assertEqual(
+                [path for path in permit_dir.iterdir() if path.name.startswith(f".{RUN_ID}.")],
+                [],
+            )
+            with mock.patch.object(RELEASE, "read_regular", return_value=permit_path.read_bytes()):
+                verified = RELEASE.verify_transition_permit(
+                    permit_path,
+                    expected_digest,
+                    bundle=bundle,
+                    run_id=RUN_ID,
+                )
+            self.assertEqual(verified.document, permit_document)
+            self.assertEqual(verified.digest, expected_digest)
+
+    def test_transition_permit_post_link_failure_preserves_two_links_for_consumer_rejection(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        permit_document = RELEASE._build_transition_permit_document(
+            bundle,
+            RUN_ID,
+            transition_observation(bundle),
+        )
+        permit_bytes = canonical(permit_document)
+
+        def verify_consumer(path, expected_digest, *, bundle, run_id):
+            return RELEASE.TransitionPermit(Path(path).absolute(), permit_document, expected_digest)
+
+        def fail_destination_identity(_path, *, expected_nlink=1, **_kwargs):
+            if expected_nlink == 2:
+                raise RELEASE.DeployError("POST_LINK_VERIFY_FAILED")
+
+        with tempfile.TemporaryDirectory() as directory:
+            permit_dir = Path(directory)
+            destination = permit_dir / f"{RUN_ID}.json"
+            with mock.patch.object(RELEASE, "TRANSITION_PERMITS_DIR", permit_dir), mock.patch.object(
+                RELEASE, "_ensure_transition_permit_directory", return_value=permit_dir
+            ), mock.patch.object(RELEASE.os, "fchown"), mock.patch.object(
+                RELEASE,
+                "verify_regular_identity",
+                side_effect=fail_destination_identity,
+            ), mock.patch.object(
+                RELEASE, "verify_transition_permit", side_effect=verify_consumer
+            ), self.assertRaisesRegex(RELEASE.DeployError, "POST_LINK_VERIFY_FAILED"):
+                RELEASE._install_transition_permit(RUN_ID, permit_bytes, bundle=bundle)
+            guards = [path for path in permit_dir.iterdir() if path.name.startswith(f".{RUN_ID}.")]
+            self.assertTrue(destination.is_file())
+            self.assertEqual(len(guards), 1)
+            self.assertEqual(destination.stat().st_ino, guards[0].stat().st_ino)
+            self.assertEqual(destination.stat().st_nlink, 2)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o000)
+            guards[0].unlink()
+            self.assertEqual(destination.stat().st_nlink, 1)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o000)
+            with self.assertRaises(RELEASE.DeployError):
+                RELEASE.read_regular(destination, expected_mode=0o600)
+
+    def test_transition_permit_guard_relink_failure_tombstones_without_deleting_destination(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        permit_document = RELEASE._build_transition_permit_document(
+            bundle,
+            RUN_ID,
+            transition_observation(bundle),
+        )
+        permit_bytes = canonical(permit_document)
+        real_link = os.link
+        fsync_calls = 0
+
+        def fail_guard_link(source, destination, **kwargs):
+            if Path(destination).name.startswith(f".{RUN_ID}."):
+                raise OSError("injected guard-link failure")
+            return real_link(source, destination, **kwargs)
+
+        def fail_post_unlink_fsync(path):
+            nonlocal fsync_calls
+            fsync_calls += 1
+            hidden = [item for item in Path(path).iterdir() if item.name.startswith(f".{RUN_ID}.")]
+            if destination.exists() and not hidden:
+                raise OSError("injected post-unlink fsync failure")
+
+        def verify_consumer(path, expected_digest, *, bundle, run_id):
+            return RELEASE.TransitionPermit(Path(path).absolute(), permit_document, expected_digest)
+
+        with tempfile.TemporaryDirectory() as directory:
+            permit_dir = Path(directory)
+            destination = permit_dir / f"{RUN_ID}.json"
+            with mock.patch.object(RELEASE, "TRANSITION_PERMITS_DIR", permit_dir), mock.patch.object(
+                RELEASE, "_ensure_transition_permit_directory", return_value=permit_dir
+            ), mock.patch.object(RELEASE.os, "fchown"), mock.patch.object(
+                RELEASE.os, "link", side_effect=fail_guard_link
+            ), mock.patch.object(
+                RELEASE, "fsync_dir", side_effect=fail_post_unlink_fsync
+            ), mock.patch.object(
+                RELEASE, "verify_regular_identity"
+            ), mock.patch.object(
+                RELEASE, "verify_transition_permit", side_effect=verify_consumer
+            ), mock.patch.object(
+                RELEASE, "_validate_transition_permit_directory"
+            ), self.assertRaisesRegex(RELEASE.DeployError, "TRANSITION_PERMIT_INSTALL_FAILED"):
+                RELEASE._install_transition_permit(RUN_ID, permit_bytes, bundle=bundle)
+            self.assertTrue(destination.exists())
+            self.assertEqual(destination.stat().st_size, len(permit_bytes))
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o000)
+            self.assertEqual(destination.stat().st_nlink, 1)
+            self.assertEqual(fsync_calls, 3)
+            with self.assertRaises(RELEASE.DeployError):
+                RELEASE.read_regular(destination, expected_mode=0o600)
+
+    def test_transition_permit_guard_fsync_failure_tombstones_without_deleting_destination(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        permit_document = RELEASE._build_transition_permit_document(
+            bundle,
+            RUN_ID,
+            transition_observation(bundle),
+        )
+        permit_bytes = canonical(permit_document)
+        fsync_calls = 0
+        post_unlink_failed = False
+
+        def fail_post_unlink_and_guard_fsync(path):
+            nonlocal fsync_calls, post_unlink_failed
+            fsync_calls += 1
+            hidden = [item for item in Path(path).iterdir() if item.name.startswith(f".{RUN_ID}.")]
+            if destination.exists() and not hidden and not post_unlink_failed:
+                post_unlink_failed = True
+                raise OSError("injected directory fsync failure")
+            if destination.exists() and hidden and post_unlink_failed:
+                raise OSError("injected directory fsync failure")
+
+        def verify_consumer(path, expected_digest, *, bundle, run_id):
+            return RELEASE.TransitionPermit(Path(path).absolute(), permit_document, expected_digest)
+
+        with tempfile.TemporaryDirectory() as directory:
+            permit_dir = Path(directory)
+            destination = permit_dir / f"{RUN_ID}.json"
+            with mock.patch.object(RELEASE, "TRANSITION_PERMITS_DIR", permit_dir), mock.patch.object(
+                RELEASE, "_ensure_transition_permit_directory", return_value=permit_dir
+            ), mock.patch.object(RELEASE.os, "fchown"), mock.patch.object(
+                RELEASE, "fsync_dir", side_effect=fail_post_unlink_and_guard_fsync
+            ), mock.patch.object(
+                RELEASE, "verify_regular_identity"
+            ), mock.patch.object(
+                RELEASE, "verify_transition_permit", side_effect=verify_consumer
+            ), mock.patch.object(
+                RELEASE, "_validate_transition_permit_directory"
+            ), self.assertRaisesRegex(RELEASE.DeployError, "TRANSITION_PERMIT_INSTALL_FAILED"):
+                RELEASE._install_transition_permit(RUN_ID, permit_bytes, bundle=bundle)
+            guards = [path for path in permit_dir.iterdir() if path.name.startswith(f".{RUN_ID}.")]
+            self.assertTrue(destination.exists())
+            self.assertEqual(destination.stat().st_size, len(permit_bytes))
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o000)
+            self.assertEqual(len(guards), 1)
+            self.assertEqual(destination.stat().st_ino, guards[0].stat().st_ino)
+            self.assertEqual(destination.stat().st_nlink, 2)
+            self.assertTrue(post_unlink_failed)
+            self.assertEqual(fsync_calls, 4)
+            with self.assertRaises(RELEASE.DeployError):
+                RELEASE.read_regular(destination, expected_mode=0o600)
+
+    def test_issue_roundtrip_failure_quarantines_the_published_permit(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        observed = transition_observation(bundle)
+        permit_document = RELEASE._build_transition_permit_document(bundle, RUN_ID, observed)
+        snapshot_document = {
+            "schema_version": 1,
+            "run_id": RUN_ID,
+            "target_bundle_sha256": bundle.bundle_digest,
+            "permit_candidate_sha256": digest(canonical(permit_document)),
+            "current_journal_inventory": observed["current_journal_inventory"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            permit_dir = Path(directory)
+            destination = permit_dir / f"{RUN_ID}.json"
+
+            def install(_run_id, data, *, bundle):
+                destination.write_bytes(data)
+                destination.chmod(0o600)
+                return destination
+
+            with PatchedLock(self), mock.patch.object(
+                RELEASE, "verify_bundle", return_value=bundle
+            ), mock.patch.object(
+                RELEASE, "_collect_transition_observation", side_effect=[copy.deepcopy(observed), copy.deepcopy(observed)]
+            ), mock.patch.object(
+                RELEASE, "_install_transition_permit", side_effect=install
+            ), mock.patch.object(
+                RELEASE,
+                "verify_transition_permit",
+                side_effect=RELEASE.DeployError("INJECTED_FINAL_ROUNDTRIP_FAILURE"),
+            ), self.assertRaisesRegex(RELEASE.DeployError, "INJECTED_FINAL_ROUNDTRIP_FAILURE"):
+                RELEASE.issue_transition_permit(
+                    Path("/bundle"),
+                    RUN_ID,
+                    digest(canonical(snapshot_document)),
+                )
+            guards = [path for path in permit_dir.iterdir() if path.name.startswith(f".{RUN_ID}.")]
+            self.assertTrue(destination.exists())
+            self.assertEqual(len(guards), 1)
+            self.assertEqual(destination.stat().st_ino, guards[0].stat().st_ino)
+            self.assertEqual(destination.stat().st_nlink, 2)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o000)
+            guards[0].unlink()
+            self.assertEqual(destination.stat().st_nlink, 1)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o000)
+            with self.assertRaises(RELEASE.DeployError):
+                RELEASE.read_regular(destination, expected_mode=0o600)
+
+    def test_issue_reports_roundtrip_and_quarantine_failures_without_losing_root_cause(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        observed = transition_observation(bundle)
+        permit_document = RELEASE._build_transition_permit_document(bundle, RUN_ID, observed)
+        snapshot_document = {
+            "schema_version": 1,
+            "run_id": RUN_ID,
+            "target_bundle_sha256": bundle.bundle_digest,
+            "permit_candidate_sha256": digest(canonical(permit_document)),
+            "current_journal_inventory": observed["current_journal_inventory"],
+        }
+        with PatchedLock(self), mock.patch.object(
+            RELEASE, "verify_bundle", return_value=bundle
+        ), mock.patch.object(
+            RELEASE,
+            "_collect_transition_observation",
+            side_effect=[copy.deepcopy(observed), copy.deepcopy(observed)],
+        ), mock.patch.object(
+            RELEASE,
+            "_install_transition_permit",
+            return_value=Path("/opt/flowise/transition-permits") / f"{RUN_ID}.json",
+        ), mock.patch.object(
+            RELEASE,
+            "verify_transition_permit",
+            side_effect=RELEASE.DeployError("INJECTED_FINAL_ROUNDTRIP_FAILURE"),
+        ), mock.patch.object(
+            RELEASE,
+            "_quarantine_transition_permit",
+            side_effect=RELEASE.DeployError("INJECTED_QUARANTINE_FAILURE"),
+        ), self.assertRaisesRegex(
+            RELEASE.DeployError,
+            "INJECTED_FINAL_ROUNDTRIP_FAILURE:TRANSITION_PERMIT_QUARANTINE_FAILED",
+        ) as raised:
+            RELEASE.issue_transition_permit(
+                Path("/bundle"),
+                RUN_ID,
+                digest(canonical(snapshot_document)),
+            )
+        self.assertIsInstance(raised.exception.__cause__, RELEASE.DeployError)
+        self.assertEqual(str(raised.exception.__cause__), "INJECTED_QUARANTINE_FAILURE")
 
     def test_transition_permit_file_owner_mode_link_and_symlink_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1662,6 +2508,152 @@ class ProductionReleaseTests(unittest.TestCase):
             RELEASE._compose_without_flowise_image(candidate),
             RELEASE._compose_without_flowise_image(legacy),
         )
+
+    def test_unbound_transition_observation_builds_a_consumer_compatible_permit(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        key = b"k" * 32
+        live_env = f"FLOWISE_IMAGE={LEGACY_TAG}\n".encode()
+        live_compose = b"legacy-compose"
+        live_hashes = {
+            "env": digest(live_env),
+            "compose": digest(live_compose),
+            "seccomp": {"present": False, "digest": None},
+        }
+        snapshot = {
+            RELEASE.FLOWISE_CONTAINER: {
+                "id": FLOWISE_ID,
+                "image_ref": LEGACY_TAG,
+                "image_id": LEGACY_DIGEST,
+                "compose_config_hash": "6" * 64,
+            },
+            RELEASE.POSTGRES_CONTAINER: {"id": POSTGRES_ID},
+            RELEASE.NGINX_CONTAINER: {"id": NGINX_ID},
+        }
+        active_image = {
+            "image_tag": LEGACY_TAG,
+            "image_config_digest": LEGACY_DIGEST,
+            "revision": LEGACY_REVISION,
+            "release_id": f"git-{LEGACY_REVISION}",
+            "repository_url": LEGACY_SOURCE,
+            "created_at": LEGACY_CREATED_AT,
+            "image_environment": {"IMAGE_ONLY": "not-persisted"},
+        }
+        compose_environment = {
+            "FLOWISE_SECRETKEY_OVERWRITE": key.decode(),
+            "COMPOSE_ONLY": "not-persisted",
+        }
+        runtime_projection = digest(b"legacy-runtime-projection")
+        database = {
+            "transaction_read_only": True,
+            "migration_count": 59,
+            "migration_sha256": digest(b"timestamp-and-name-inventory"),
+            "migration_name_sha256": digest(b"name-inventory"),
+        }
+        legacy_inventory = transition_permit_document(bundle)["legacy_journal_inventory"]
+        current_inventory = {
+            "root": str(RELEASE.RUNS_DIR),
+            "present": True,
+            "control_json_count": 7,
+            "control_json_sha256": digest(b"current-journal-inventory"),
+            "unresolved_rollback_count": 0,
+        }
+
+        def observed_live_file(path, _mode):
+            if path == RELEASE.LIVE_ENV:
+                return live_env, (0, 0, 0o600)
+            if path == RELEASE.LIVE_COMPOSE:
+                return live_compose, (0, 0, 0o644)
+            raise AssertionError(f"unexpected live path: {path.name}")
+
+        patches = (
+            mock.patch.object(RELEASE, "inspect_containers", return_value={}),
+            mock.patch.object(RELEASE, "validate_container_health"),
+            mock.patch.object(RELEASE, "container_snapshot", return_value=snapshot),
+            mock.patch.object(RELEASE, "inspect_image", return_value=active_image),
+            mock.patch.object(RELEASE, "live_file", side_effect=observed_live_file),
+            mock.patch.object(RELEASE, "_live_hashes", return_value=live_hashes),
+            mock.patch.object(RELEASE, "persistent_key", return_value=key),
+            mock.patch.object(
+                RELEASE,
+                "_resolved_live",
+                return_value=({}, "7" * 64, compose_environment),
+            ),
+            mock.patch.object(RELEASE, "runtime_projection_digest", return_value=runtime_projection),
+            mock.patch.object(RELEASE, "validate_database_runtime_identity"),
+            mock.patch.object(RELEASE, "validate_key_continuity"),
+            mock.patch.object(
+                RELEASE,
+                "validate_legacy_runtime",
+                return_value={
+                    "runtime_projection_digest": runtime_projection,
+                    "runtime_policy": "legacy_frozen_v1",
+                },
+            ),
+            mock.patch.object(RELEASE, "database_state", return_value=database),
+            mock.patch.object(RELEASE, "legacy_journal_inventory", return_value=legacy_inventory),
+            mock.patch.object(RELEASE, "current_journal_inventory", return_value=current_inventory),
+            mock.patch.object(RELEASE, "observe_runtime_network_identity", return_value=network_identity()),
+            mock.patch.object(RELEASE, "validate_runtime_network_identity", return_value=network_identity()),
+            mock.patch.object(RELEASE, "runtime_pings"),
+        )
+        with _MultiPatch(patches):
+            initial = RELEASE._collect_transition_observation(bundle, check_current_journals=True)
+            permit_document = RELEASE._build_transition_permit_document(bundle, RUN_ID, initial)
+            current = RELEASE._collect_transition_observation(
+                bundle,
+                permit_document=permit_document,
+                check_current_journals=True,
+            )
+        RELEASE._validate_transition_observation_cas(initial, current)
+        permit_bytes = canonical(permit_document)
+        self.assertNotIn(key.decode(), permit_bytes.decode())
+        self.assertNotIn("not-persisted", permit_bytes.decode())
+        with mock.patch.object(RELEASE, "read_regular", return_value=permit_bytes):
+            verified = RELEASE.verify_transition_permit(
+                Path("/permit.json"),
+                digest(permit_bytes),
+                bundle=bundle,
+                run_id=RUN_ID,
+            )
+        self.assertEqual(verified.document, permit_document)
+        self.assertEqual(verified.digest, digest(permit_bytes))
+
+    def test_transition_permit_rejects_noncanonical_legacy_source_without_leaking_it(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        sentinel_source = "https://user:sentinel-secret@github.com/zjgulai/Flowise.git?token=sentinel-secret"
+        observed = transition_observation(bundle)
+        observed["active_image"]["repository_url"] = sentinel_source
+        with self.assertRaisesRegex(
+            RELEASE.DeployError,
+            "TRANSITION_ACTIVE_IMAGE_SOURCE_MISMATCH",
+        ) as builder_error:
+            RELEASE._build_transition_permit_document(bundle, RUN_ID, observed)
+        self.assertNotIn("sentinel-secret", str(builder_error.exception))
+
+        document = transition_permit_document(bundle)
+        document["active_legacy"]["repository_url"] = sentinel_source
+        permit_bytes = canonical(document)
+        with mock.patch.object(RELEASE, "read_regular", return_value=permit_bytes), self.assertRaisesRegex(
+            RELEASE.DeployError,
+            "TRANSITION_PERMIT_ACTIVE_LEGACY_INVALID",
+        ) as consumer_error:
+            RELEASE.verify_transition_permit(
+                Path("/permit.json"),
+                digest(permit_bytes),
+                bundle=bundle,
+                run_id=RUN_ID,
+            )
+        self.assertNotIn("sentinel-secret", str(consumer_error.exception))
 
     def test_archive_config_digest_uses_exact_member_bytes_not_reserialized_json(self):
         with tempfile.TemporaryDirectory() as directory:
