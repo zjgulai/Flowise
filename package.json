@@ -37,7 +37,7 @@
         "release:manifest": "node scripts/release-manifest.mjs",
         "release:baseline": "node scripts/release-baseline.mjs",
         "release:slim-probe": "bash scripts/verify-runtime-without-compilers.sh",
-        "test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs scripts/publish-verified-image.test.mjs",
+        "test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs scripts/publish-verified-image.test.mjs scripts/deployment-bundle.test.mjs && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_flowise_production_release.py",
         "migration:create": "pnpm typeorm migration:create",
         "changeset": "changeset",
         "changeset:version": "changeset version"

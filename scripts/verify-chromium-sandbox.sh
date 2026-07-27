@@ -30,7 +30,7 @@ while (($# > 0)); do
     shift 2
 done
 
-[[ "$IMAGE_TAG" =~ ^flowise-ci:git-[0-9a-f]{40}$ ]] || fail 'image tag must use the exact release SHA'
+[[ "$IMAGE_TAG" =~ ^flowise-chinese:git-[0-9a-f]{40}$ ]] || fail 'image tag must use the exact production release SHA'
 [[ "$PROFILE_PATH" == /* && "$PROFILE_PATH" != *$'\n'* && "$PROFILE_PATH" != *$'\r'* ]] || fail 'profile path must be absolute'
 [[ "$SMOKE_NAME" =~ ^flowise-ci-chromium-[A-Za-z0-9_.-]+$ ]] || fail 'smoke name must be run-scoped'
 [[ -f "$PROFILE_PATH" && ! -L "$PROFILE_PATH" ]] || fail 'seccomp profile must be a regular non-symlink file'

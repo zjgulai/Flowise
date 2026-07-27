@@ -7,6 +7,10 @@ on:
                 description: 'Reviewed SemVer release alias; an immutable Git-SHA tag is published alongside it.'
                 type: string
                 required: true
+            expected_image_config_digest:
+                description: 'Independently reviewed sha256 config digest from the protected build-only release artifact.'
+                type: string
+                required: true
 
 permissions:
     contents: read
@@ -21,16 +25,20 @@ jobs:
         timeout-minutes: 5
         outputs:
             tag_version: ${{ steps.tag.outputs.tag_version }}
+            expected_image_config_digest: ${{ steps.tag.outputs.expected_image_config_digest }}
         steps:
             - name: Validate the release tag before credentials are available
               id: tag
               env:
+                  EXPECTED_IMAGE_CONFIG_DIGEST: ${{ inputs.expected_image_config_digest }}
                   TAG_VERSION: ${{ inputs.tag_version }}
               run: |
                   set -euo pipefail
                   [[ ${#TAG_VERSION} -le 128 ]]
                   [[ "$TAG_VERSION" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+                  [[ "$EXPECTED_IMAGE_CONFIG_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
                   printf 'tag_version=%s\n' "$TAG_VERSION" >> "$GITHUB_OUTPUT"
+                  printf 'expected_image_config_digest=%s\n' "$EXPECTED_IMAGE_CONFIG_DIGEST" >> "$GITHUB_OUTPUT"
 
     publish:
         if: github.ref == 'refs/heads/main'
@@ -40,10 +48,11 @@ jobs:
         environment:
             name: dockerhub-release
         env:
-            IMAGE_TAG: flowise-ci:git-${{ github.sha }}
+            IMAGE_TAG: flowise-chinese:git-${{ github.sha }}
             PUBLISH_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
             PUBLISH_ENABLED: ${{ vars.DOCKERHUB_RELEASE_ENABLED }}
             PUBLISH_TAG: ${{ needs.validate.outputs.tag_version }}
+            EXPECTED_IMAGE_CONFIG_DIGEST: ${{ needs.validate.outputs.expected_image_config_digest }}
             PUPPETEER_SKIP_DOWNLOAD: true
             SMOKE_NAME: flowise-ci-smoke-dockerhub-${{ github.run_id }}-${{ github.run_attempt }}
         steps:
@@ -64,9 +73,13 @@ jobs:
                       .github/workflows/docker-image-dockerhub.yml \
                       .github/workflows/production-readonly-monitor.yml \
                       .github/workflows/test_docker_build.yml \
+                      scripts/deployment-bundle.mjs \
+                      scripts/deployment-bundle.test.mjs \
+                      scripts/flowise-production-release.py \
                       scripts/release-manifest.mjs \
                       scripts/release-manifest.test.mjs \
                       scripts/publish-verified-image.sh \
+                      scripts/test_flowise_production_release.py \
                       scripts/verify-dockerhub-immutability.mjs \
                       scripts/verify-release-candidate.sh \
                       scripts/verify-security.sh >/dev/null
@@ -95,12 +108,15 @@ jobs:
                   set -euo pipefail
                   printf 'source=%s/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" >> "$GITHUB_OUTPUT"
                   printf 'created=%s\n' "$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+                  printf 'source_date_epoch=%s\n' "$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
             - name: Set up Docker Buildx
               uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
             # The reviewed release contract is linux/amd64 only. Arm64 and the
             # legacy worker image stay disabled until they have equivalent gates.
             - name: Build the canonical current-source candidate without pushing
               uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+              env:
+                  SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}
               with:
                   context: .
                   file: Dockerfile
@@ -108,7 +124,7 @@ jobs:
                   load: true
                   push: false
                   provenance: false
-                  tags: flowise-ci:git-${{ github.sha }}
+                  tags: flowise-chinese:git-${{ github.sha }}
                   build-args: |
                       BUILD_SOURCE=${{ steps.metadata.outputs.source }}
                       BUILD_REVISION=${{ github.sha }}
@@ -116,10 +132,12 @@ jobs:
                       BUILD_CREATED=${{ steps.metadata.outputs.created }}
             - name: Verify the exact offline candidate before registry credentials
               env:
-                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64.tar.gz
-                  EVIDENCE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-evidence.txt
-                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-manifest.json
+                  BUNDLE_DIR: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/image.tar.gz
+                  EVIDENCE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/evidence.txt
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/release-manifest.json
               run: |
+                  install -d -m 0700 "$BUNDLE_DIR"
                   bash scripts/verify-release-candidate.sh \
                       --image-tag "$IMAGE_TAG" \
                       --source "${{ steps.metadata.outputs.source }}" \
@@ -130,6 +148,13 @@ jobs:
                       --manifest "$MANIFEST_PATH" \
                       --evidence "$EVIDENCE_PATH" \
                       --smoke-name "$SMOKE_NAME"
+            - name: Require the independently reviewed candidate identity
+              env:
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/release-manifest.json
+              run: |
+                  set -euo pipefail
+                  actual_config_digest="$(jq -er '.image.config_digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$MANIFEST_PATH")"
+                  test "$actual_config_digest" = "$EXPECTED_IMAGE_CONFIG_DIGEST"
             - name: Require the reviewed release alias to identify this Git revision
               run: |
                   set -euo pipefail
@@ -178,8 +203,9 @@ jobs:
                   password: ${{ secrets.DOCKERHUB_TOKEN }}
             - name: Publish the verified image without overwriting existing tags
               env:
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/image.tar.gz
                   IMMUTABILITY_SETTINGS_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-repository-settings.json
-                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-manifest.json
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64/release-manifest.json
               run: |
                   set -euo pipefail
                   bash scripts/publish-verified-image.sh \
@@ -188,6 +214,7 @@ jobs:
                       --git-sha "$GITHUB_SHA" \
                       --release-tag "$PUBLISH_TAG" \
                       --manifest "$MANIFEST_PATH" \
+                      --archive "$ARCHIVE_PATH" \
                       --immutability-settings "$IMMUTABILITY_SETTINGS_PATH"
             - name: Remove Docker Hub policy evidence
               if: always()

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { gzipSync, zstdCompressSync } from 'node:zlib'
 
 import {
     canonicalStringify,
@@ -23,6 +24,7 @@ import {
 } from './release-manifest.mjs'
 
 const MODULE_PATH = fileURLToPath(new URL('./release-manifest.mjs', import.meta.url))
+const DEPLOYMENT_BUNDLE_MODULE_PATH = fileURLToPath(new URL('./deployment-bundle.mjs', import.meta.url))
 const EDGE_SCRIPT_PATH = fileURLToPath(new URL('./verify-production-edge.sh', import.meta.url))
 const SECURITY_SCRIPT_PATH = fileURLToPath(new URL('./verify-security.sh', import.meta.url))
 const RELEASE_CANDIDATE_SCRIPT_PATH = fileURLToPath(new URL('./verify-release-candidate.sh', import.meta.url))
@@ -42,6 +44,44 @@ const REMOTE_PASSWORD_SENTINEL = 'REMOTE_PASSWORD_SENTINEL'
 const REMOTE_QUERY_SENTINEL = 'REMOTE_QUERY_SENTINEL'
 const REMOTE_FRAGMENT_SENTINEL = 'REMOTE_FRAGMENT_SENTINEL'
 const FIXED_NOW = '2026-07-12T00:00:00.000Z'
+
+const writeTarOctal = (header, offset, length, value) => {
+    const octal = value.toString(8)
+    assert.ok(octal.length <= length - 1, 'tar fixture octal field overflow')
+    header.write(`${octal.padStart(length - 1, '0')}\0`, offset, length, 'ascii')
+}
+
+const createTarBytes = (entries, { gzip = false, endZeroBlocks = 2 } = {}) => {
+    const chunks = []
+    for (const entry of entries) {
+        const content = Buffer.isBuffer(entry.content) ? entry.content : Buffer.from(entry.content ?? '')
+        const header = Buffer.alloc(512)
+        assert.ok(Buffer.byteLength(entry.path) <= 100, 'tar fixture path exceeds ustar name field')
+        header.write(entry.path, 0, 100, 'utf8')
+        writeTarOctal(header, 100, 8, entry.mode ?? (entry.type === '5' ? 0o755 : 0o644))
+        writeTarOctal(header, 108, 8, 0)
+        writeTarOctal(header, 116, 8, 0)
+        writeTarOctal(header, 124, 12, entry.type === '5' ? 0 : content.length)
+        writeTarOctal(header, 136, 12, 0)
+        header.fill(0x20, 148, 156)
+        header[156] = (entry.type ?? '0').charCodeAt(0)
+        if (entry.linkPath) header.write(entry.linkPath, 157, 100, 'utf8')
+        header.write('ustar\0', 257, 6, 'binary')
+        header.write('00', 263, 2, 'ascii')
+        const checksum = header.reduce((sum, byte) => sum + byte, 0)
+        header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii')
+        chunks.push(header)
+        if (entry.type !== '5' && content.length > 0) {
+            chunks.push(content)
+            const padding = (512 - (content.length % 512)) % 512
+            if (padding > 0) chunks.push(Buffer.alloc(padding))
+        }
+    }
+    assert.ok(Number.isSafeInteger(endZeroBlocks) && endZeroBlocks >= 2, 'tar fixture end block count is invalid')
+    chunks.push(Buffer.alloc(endZeroBlocks * 512))
+    const tarBytes = Buffer.concat(chunks)
+    return gzip ? gzipSync(tarBytes, { level: 1, mtime: 0 }) : tarBytes
+}
 
 const git = (cwd, args) =>
     execFileSync('git', args, {
@@ -85,9 +125,12 @@ const createFixture = ({ credentialRemote = false } = {}) => {
     write(repoRoot, 'scripts/verify-release-source.sh', '#!/usr/bin/env bash\nexit 0\n')
     write(repoRoot, 'scripts/verify-security.sh', '#!/usr/bin/env bash\nexit 0\n')
     copyFileSync(CHROMIUM_SANDBOX_SCRIPT_PATH, join(repoRoot, 'scripts/verify-chromium-sandbox.sh'))
+    copyFileSync(DEPLOYMENT_BUNDLE_MODULE_PATH, join(repoRoot, 'scripts/deployment-bundle.mjs'))
     copyFileSync(PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH, join(repoRoot, 'scripts/publish-verified-image.sh'))
+    copyFileSync(RELEASE_CANDIDATE_SCRIPT_PATH, join(repoRoot, 'scripts/verify-release-candidate.sh'))
     mkdirSync(join(repoRoot, 'scripts'), { recursive: true })
     copyFileSync(MODULE_PATH, join(repoRoot, 'scripts/release-manifest.mjs'))
+    write(repoRoot, 'scripts/flowise-production-release.py', '#!/usr/bin/env python3\nraise SystemExit(0)\n')
     write(repoRoot, '.env.production.template', `ZETA=one\nSECRET_KEY=${ENV_VALUE_SENTINEL}\nALPHA=two\n# COMMENTED_SECRET=ignored\n`)
     writeFileSync(archivePath, 'deterministic archive fixture\n')
 
@@ -126,23 +169,54 @@ const manifestOptions = (fixture, overrides = {}) => ({
 
 const createDockerArchiveFixture = ({
     revision = '1'.repeat(40),
-    tag = `flowise-ci:git-${revision}`,
+    tag = `flowise-chinese:git-${revision}`,
     source = 'https://github.com/example/flowise',
     version = `git-${revision}`,
     created = '2026-07-12T00:00:00+00:00',
     architecture = 'amd64',
     repoTags,
     labelOverrides = {},
-    configPathDigest
+    configPathDigest,
+    diffIdOverride,
+    rootfsDiffIds,
+    extraEntries = [],
+    configMediaType = 'application/vnd.oci.image.config.v1+json',
+    layerCompression = 'none',
+    layerPayloads = [Buffer.from('deterministic layer fixture\n')],
+    layout = 'classic',
+    omitLayer = false,
+    omitRootfs = false,
+    alterLayer = false,
+    endZeroBlocks = 2
 } = {}) => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'flowise-docker-archive-test-'))
-    const archiveRoot = join(fixtureRoot, 'archive')
     const archivePath = join(fixtureRoot, 'flowise-image.tar.gz')
-    mkdirSync(archiveRoot, { recursive: true })
+
+    assert.ok(Array.isArray(layerPayloads) && layerPayloads.length > 0, 'layer fixture payloads are invalid')
+    const layers = layerPayloads.map((payload, indexValue) => {
+        const memberPath = indexValue === 0 ? 'app.txt' : `app-${indexValue}.txt`
+        const originalTar = createTarBytes([{ path: memberPath, content: payload }])
+        const actualTar =
+            alterLayer && indexValue === 0 ? createTarBytes([{ path: memberPath, content: 'altered layer fixture\n' }]) : originalTar
+        const bytes =
+            layerCompression === 'gzip'
+                ? gzipSync(actualTar, { level: 1, mtime: 0 })
+                : layerCompression === 'zstd'
+                ? zstdCompressSync(actualTar)
+                : actualTar
+        return {
+            bytes,
+            blobDigest: createHash('sha256').update(bytes).digest('hex'),
+            diffId: `sha256:${createHash('sha256').update(originalTar).digest('hex')}`,
+            uncompressedBytes: actualTar.length
+        }
+    })
+    const layerDiffIds = layers.map((layer, indexValue) => (indexValue === 0 && diffIdOverride ? diffIdOverride : layer.diffId))
 
     const config = {
         architecture,
         os: 'linux',
+        ...(omitRootfs ? {} : { rootfs: { type: 'layers', diff_ids: rootfsDiffIds ?? layerDiffIds } }),
         config: {
             User: 'node',
             WorkingDir: '/usr/src/flowise',
@@ -158,14 +232,71 @@ const createDockerArchiveFixture = ({
     }
     const configBytes = Buffer.from(`${JSON.stringify(config)}\n`)
     const actualConfigDigest = createHash('sha256').update(configBytes).digest('hex')
-    const configPath = `${configPathDigest ?? actualConfigDigest}.json`
-    writeFileSync(join(archiveRoot, configPath), configBytes)
-    writeFileSync(join(archiveRoot, 'layer.tar'), 'deterministic layer fixture\n')
-    writeFileSync(
-        join(archiveRoot, 'manifest.json'),
-        `${JSON.stringify([{ Config: configPath, RepoTags: repoTags ?? [tag], Layers: ['layer.tar'] }])}\n`
+    const effectiveConfigDigest = configPathDigest ?? actualConfigDigest
+    const configPath = layout === 'containerd' ? `blobs/sha256/${effectiveConfigDigest}` : `${effectiveConfigDigest}.json`
+    const layerPaths = layers.map((layer) =>
+        layout === 'containerd' ? `blobs/sha256/${layer.blobDigest}` : layers.length === 1 ? 'layer.tar' : `${layer.blobDigest}/layer.tar`
     )
-    execFileSync('tar', ['-czf', archivePath, '-C', archiveRoot, 'manifest.json', configPath, 'layer.tar'])
+    const archiveManifestBytes = Buffer.from(
+        `${JSON.stringify([{ Config: configPath, RepoTags: repoTags ?? [tag], Layers: layerPaths }])}\n`
+    )
+    const entries = []
+
+    if (layout === 'containerd') {
+        const mediaTypeByCompression = {
+            gzip: 'application/vnd.oci.image.layer.v1.tar+gzip',
+            none: 'application/vnd.oci.image.layer.v1.tar',
+            zstd: 'application/vnd.oci.image.layer.v1.tar+zstd'
+        }
+        const imageManifestBytes = Buffer.from(
+            `${JSON.stringify({
+                schemaVersion: 2,
+                mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                config: {
+                    mediaType: configMediaType,
+                    digest: `sha256:${effectiveConfigDigest}`,
+                    size: configBytes.length
+                },
+                layers: layers.map((layer) => ({
+                    mediaType: mediaTypeByCompression[layerCompression],
+                    digest: `sha256:${layer.blobDigest}`,
+                    size: layer.bytes.length
+                }))
+            })}\n`
+        )
+        const imageManifestDigest = createHash('sha256').update(imageManifestBytes).digest('hex')
+        const indexBytes = Buffer.from(
+            `${JSON.stringify({
+                schemaVersion: 2,
+                mediaType: 'application/vnd.oci.image.index.v1+json',
+                manifests: [
+                    {
+                        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                        digest: `sha256:${imageManifestDigest}`,
+                        size: imageManifestBytes.length
+                    }
+                ]
+            })}\n`
+        )
+        entries.push(
+            { path: 'blobs/', type: '5' },
+            { path: 'blobs/sha256/', type: '5' },
+            { path: configPath, content: configBytes },
+            { path: `blobs/sha256/${imageManifestDigest}`, content: imageManifestBytes },
+            ...(!omitLayer ? layerPaths.map((path, indexValue) => ({ path, content: layers[indexValue].bytes })) : []),
+            { path: 'index.json', content: indexBytes },
+            { path: 'manifest.json', content: archiveManifestBytes },
+            { path: 'oci-layout', content: '{"imageLayoutVersion":"1.0.0"}\n' }
+        )
+    } else {
+        entries.push(
+            { path: 'manifest.json', content: archiveManifestBytes },
+            { path: configPath, content: configBytes },
+            ...(!omitLayer ? layerPaths.map((path, indexValue) => ({ path, content: layers[indexValue].bytes })) : [])
+        )
+    }
+    entries.push(...extraEntries)
+    writeFileSync(archivePath, createTarBytes(entries, { gzip: true, endZeroBlocks }))
 
     return {
         archivePath,
@@ -174,6 +305,8 @@ const createDockerArchiveFixture = ({
         source,
         tag,
         version,
+        layerDiffId: layerDiffIds[0],
+        layerUncompressedBytes: layers.map((layer) => layer.uncompressedBytes),
         actualConfigDigest: `sha256:${actualConfigDigest}`,
         cleanup: () => rmSync(fixtureRoot, { recursive: true, force: true })
     }
@@ -244,10 +377,10 @@ test('revision and image tags must be exact immutable Git-derived identities', (
     }
 })
 
-test('Docker archive verification derives config identity and binds tag, platform, runtime and OCI labels', () => {
+test('Docker archive verification derives config identity and binds tag, platform, runtime and OCI labels', async () => {
     const fixture = createDockerArchiveFixture()
     try {
-        const result = verifyDockerArchive({
+        const result = await verifyDockerArchive({
             archivePath: fixture.archivePath,
             imageTag: fixture.tag,
             revision: fixture.revision,
@@ -264,10 +397,10 @@ test('Docker archive verification derives config identity and binds tag, platfor
     }
 })
 
-test('Docker archive verification rejects a manifest-supplied tag or revision that is not in the archive', () => {
-    const wrongTag = createDockerArchiveFixture({ repoTags: ['flowise-ci:git-2222222222222222222222222222222222222222'] })
+test('Docker archive verification rejects a manifest-supplied tag or revision that is not in the archive', async () => {
+    const wrongTag = createDockerArchiveFixture({ repoTags: ['flowise-chinese:git-2222222222222222222222222222222222222222'] })
     try {
-        assert.throws(
+        await assert.rejects(
             () =>
                 verifyDockerArchive({
                     archivePath: wrongTag.archivePath,
@@ -288,7 +421,7 @@ test('Docker archive verification rejects a manifest-supplied tag or revision th
         labelOverrides: { 'org.opencontainers.image.revision': '2'.repeat(40) }
     })
     try {
-        assert.throws(
+        await assert.rejects(
             () =>
                 verifyDockerArchive({
                     archivePath: wrongRevision.archivePath,
@@ -306,10 +439,10 @@ test('Docker archive verification rejects a manifest-supplied tag or revision th
     }
 })
 
-test('Docker archive verification rejects a mismatched config digest and platform', () => {
+test('Docker archive verification rejects a mismatched config digest and platform', async () => {
     const wrongDigest = createDockerArchiveFixture({ configPathDigest: 'f'.repeat(64) })
     try {
-        assert.throws(
+        await assert.rejects(
             () =>
                 verifyDockerArchive({
                     archivePath: wrongDigest.archivePath,
@@ -328,7 +461,7 @@ test('Docker archive verification rejects a mismatched config digest and platfor
 
     const wrongPlatform = createDockerArchiveFixture({ architecture: 'arm64' })
     try {
-        assert.throws(
+        await assert.rejects(
             () =>
                 verifyDockerArchive({
                     archivePath: wrongPlatform.archivePath,
@@ -343,6 +476,222 @@ test('Docker archive verification rejects a mismatched config digest and platfor
         )
     } finally {
         wrongPlatform.cleanup()
+    }
+})
+
+test('Docker archive verification supports classic and containerd save layouts with streamed layer compression', async () => {
+    for (const options of [
+        { layout: 'classic', layerCompression: 'none' },
+        { layout: 'containerd', layerCompression: 'gzip' },
+        { layout: 'containerd', layerCompression: 'zstd' },
+        {
+            layout: 'containerd',
+            layerCompression: 'none',
+            configMediaType: 'application/vnd.docker.container.image.v1+json'
+        }
+    ]) {
+        const fixture = createDockerArchiveFixture(options)
+        try {
+            const result = await verifyDockerArchive({
+                archivePath: fixture.archivePath,
+                imageTag: fixture.tag,
+                revision: fixture.revision,
+                source: fixture.source,
+                version: fixture.version,
+                created: fixture.created,
+                platform: 'linux/amd64'
+            })
+            assert.equal(result.imageConfigDigest, fixture.actualConfigDigest)
+        } finally {
+            fixture.cleanup()
+        }
+    }
+})
+
+test('Docker archive verification rejects unsupported config media types and compressed classic layer.tar members', async () => {
+    for (const [options, expectedError] of [
+        [{ layout: 'containerd', configMediaType: 'application/octet-stream' }, /OCI config media type/],
+        [{ layout: 'classic', layerCompression: 'gzip' }, /classic layer\.tar must not be compressed/]
+    ]) {
+        const fixture = createDockerArchiveFixture(options)
+        try {
+            await assert.rejects(
+                () =>
+                    verifyDockerArchive({
+                        archivePath: fixture.archivePath,
+                        imageTag: fixture.tag,
+                        revision: fixture.revision,
+                        source: fixture.source,
+                        version: fixture.version,
+                        created: fixture.created,
+                        platform: 'linux/amd64'
+                    }),
+                expectedError
+            )
+        } finally {
+            fixture.cleanup()
+        }
+    }
+})
+
+test('Docker archive verification enforces one live cumulative decoder budget across compressed layers', async () => {
+    const maxTotalUncompressedBytes = 150 * 1024
+    const fixture = createDockerArchiveFixture({
+        layout: 'containerd',
+        layerCompression: 'gzip',
+        layerPayloads: [Buffer.alloc(96 * 1024, 0x41), Buffer.alloc(96 * 1024, 0x42)]
+    })
+    try {
+        assert.equal(
+            fixture.layerUncompressedBytes.every((bytes) => bytes < maxTotalUncompressedBytes),
+            true
+        )
+        assert.ok(fixture.layerUncompressedBytes.reduce((total, bytes) => total + bytes, 0) > maxTotalUncompressedBytes)
+        await assert.rejects(
+            () =>
+                verifyDockerArchive({
+                    archivePath: fixture.archivePath,
+                    imageTag: fixture.tag,
+                    revision: fixture.revision,
+                    source: fixture.source,
+                    version: fixture.version,
+                    created: fixture.created,
+                    platform: 'linux/amd64',
+                    maxTotalUncompressedBytes
+                }),
+            /members exceed the total uncompressed size limit/
+        )
+    } finally {
+        fixture.cleanup()
+    }
+})
+
+test('Docker archive verification opens the archive itself without following a symlink', async () => {
+    const fixture = createDockerArchiveFixture()
+    const symlinkPath = join(dirname(fixture.archivePath), 'flowise-image-symlink.tar.gz')
+    symlinkSync(fixture.archivePath, symlinkPath)
+    try {
+        await assert.rejects(
+            () =>
+                verifyDockerArchive({
+                    archivePath: symlinkPath,
+                    imageTag: fixture.tag,
+                    revision: fixture.revision,
+                    source: fixture.source,
+                    version: fixture.version,
+                    created: fixture.created,
+                    platform: 'linux/amd64'
+                }),
+            /regular non-symlink file/
+        )
+    } finally {
+        fixture.cleanup()
+    }
+})
+
+test('Docker archive verification binds rootfs diff_ids to exact uncompressed layer payloads', async () => {
+    for (const [options, expectedError] of [
+        [{ omitRootfs: true }, /rootfs diff_ids/],
+        [{ rootfsDiffIds: [] }, /rootfs diff_ids/],
+        [{ alterLayer: true }, /layer diff_id mismatch/],
+        [{ diffIdOverride: `sha256:${'f'.repeat(64)}` }, /layer diff_id mismatch/]
+    ]) {
+        const fixture = createDockerArchiveFixture(options)
+        try {
+            await assert.rejects(
+                () =>
+                    verifyDockerArchive({
+                        archivePath: fixture.archivePath,
+                        imageTag: fixture.tag,
+                        revision: fixture.revision,
+                        source: fixture.source,
+                        version: fixture.version,
+                        created: fixture.created,
+                        platform: 'linux/amd64'
+                    }),
+                expectedError
+            )
+        } finally {
+            fixture.cleanup()
+        }
+    }
+})
+
+test('Docker archive verification rejects missing, extra and traversal members', async () => {
+    for (const [options, expectedError] of [
+        [{ omitLayer: true }, /layer is unavailable/],
+        [{ extraEntries: [{ path: 'unexpected.txt', content: 'unexpected\n' }] }, /unexpected member/],
+        [{ extraEntries: [{ path: '../escape', content: 'escape\n' }] }, /member path is unsafe/]
+    ]) {
+        const fixture = createDockerArchiveFixture(options)
+        try {
+            await assert.rejects(
+                () =>
+                    verifyDockerArchive({
+                        archivePath: fixture.archivePath,
+                        imageTag: fixture.tag,
+                        revision: fixture.revision,
+                        source: fixture.source,
+                        version: fixture.version,
+                        created: fixture.created,
+                        platform: 'linux/amd64'
+                    }),
+                expectedError
+            )
+        } finally {
+            fixture.cleanup()
+        }
+    }
+})
+
+test('Docker archive verification bounds zero-filled data after the tar end marker', async () => {
+    const fixture = createDockerArchiveFixture({ endZeroBlocks: 21 })
+    try {
+        await assert.rejects(
+            () =>
+                verifyDockerArchive({
+                    archivePath: fixture.archivePath,
+                    imageTag: fixture.tag,
+                    revision: fixture.revision,
+                    source: fixture.source,
+                    version: fixture.version,
+                    created: fixture.created,
+                    platform: 'linux/amd64'
+                }),
+            /excessive data after the end marker/
+        )
+    } finally {
+        fixture.cleanup()
+    }
+})
+
+test('Docker archive verification rejects link, device, FIFO and sparse tar member types', async () => {
+    for (const entry of [
+        { path: 'symbolic-link', type: '2', linkPath: 'manifest.json' },
+        { path: 'hard-link', type: '1', linkPath: 'manifest.json' },
+        { path: 'character-device', type: '3' },
+        { path: 'block-device', type: '4' },
+        { path: 'fifo', type: '6' },
+        { path: 'sparse', type: 'S' }
+    ]) {
+        const fixture = createDockerArchiveFixture({ extraEntries: [entry] })
+        try {
+            await assert.rejects(
+                () =>
+                    verifyDockerArchive({
+                        archivePath: fixture.archivePath,
+                        imageTag: fixture.tag,
+                        revision: fixture.revision,
+                        source: fixture.source,
+                        version: fixture.version,
+                        created: fixture.created,
+                        platform: 'linux/amd64'
+                    }),
+                /link, device, FIFO, sparse or unsupported member/
+            )
+        } finally {
+            fixture.cleanup()
+        }
     }
 })
 
@@ -676,6 +1025,14 @@ test('schema requires the exact fixed release input path set', () => {
             manifest.inputs.files.some((entry) => entry.path === 'scripts/verify-chromium-sandbox.sh'),
             true
         )
+        assert.equal(
+            manifest.inputs.files.some((entry) => entry.path === 'scripts/flowise-production-release.py'),
+            true
+        )
+        assert.equal(
+            manifest.inputs.files.some((entry) => entry.path === 'scripts/deployment-bundle.mjs'),
+            true
+        )
         const incomplete = {
             ...manifest,
             inputs: { ...manifest.inputs, files: manifest.inputs.files.slice(0, -1) }
@@ -957,6 +1314,7 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
         'runs-on: ubuntu-24.04',
         'test "$(uname -m)" = x86_64',
         'platforms: linux/amd64',
+        'SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}',
         'load: true',
         'push: false',
         'provenance: false',
@@ -964,8 +1322,12 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
         'ref: ${{ env.CANDIDATE_SHA }}',
         'persist-credentials: false',
         'git ls-files --error-unmatch',
-        'pnpm audit --prod --audit-level critical',
+        'pnpm audit --prod --audit-level high',
         'bash scripts/verify-release-candidate.sh',
+        'scripts/deployment-bundle.mjs',
+        'scripts/flowise-production-release.py',
+        'BUNDLE_DIR:',
+        'path: ${{ env.BUNDLE_DIR }}',
         'actions/upload-artifact@',
         "if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
         '${{ github.run_id }}',
@@ -977,10 +1339,14 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
     }
 
     for (const required of [
-        'flowise-ci:git-',
+        'flowise-chinese:git-',
         'node scripts/release-manifest.mjs generate',
         'node scripts/release-manifest.mjs verify',
         'node scripts/release-manifest.mjs verify-archive',
+        'node "$REPO_ROOT/scripts/deployment-bundle.mjs" generate',
+        'node "$REPO_ROOT/scripts/deployment-bundle.mjs" verify',
+        'production_compose_sha256=',
+        'production_wrapper_sha256=',
         '--require-clean',
         'docker image rm',
         '--network none',
@@ -1016,13 +1382,19 @@ test('manual release-readiness verification is main-only, environment-gated and 
         "github.event_name == 'workflow_dispatch'",
         "github.ref == 'refs/heads/main'",
         'name: release-readiness',
+        'timeout-minutes: 120',
         'actions/download-artifact@',
-        'expected_tag="flowise-ci:git-${GITHUB_SHA}"',
+        'Independently rebuild and bind the candidate config identity',
+        'docker buildx build',
+        'test "$independent_config_digest" = "$expected_config_digest"',
+        'expected_tag="flowise-chinese:git-${GITHUB_SHA}"',
         'expected_source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"',
         'expected_version="git-${GITHUB_SHA}"',
         'expected_created="$(git show -s --format=%cI "$GITHUB_SHA")"',
         'node scripts/release-manifest.mjs verify-archive',
         'node scripts/release-manifest.mjs verify',
+        'node scripts/deployment-bundle.mjs verify',
+        'test -s "$BUNDLE_DIR/deployment-bundle.json"',
         'docker image load --input "$ARCHIVE_PATH"',
         'docker image rm "$expected_tag"',
         '--require-clean'
@@ -1030,7 +1402,13 @@ test('manual release-readiness verification is main-only, environment-gated and 
         assert.equal(workflow.includes(required), true, `missing release-readiness contract: ${required}`)
     }
 
-    assert.doesNotMatch(workflow, /deploy|docker\/login-action|push:\s*true|secrets\./i)
+    const downloadIndex = workflow.indexOf('actions/download-artifact@')
+    const independentBuildIndex = workflow.indexOf('docker buildx build')
+    const identityComparisonIndex = workflow.indexOf('test "$independent_config_digest" = "$expected_config_digest"')
+    assert.ok(downloadIndex < independentBuildIndex)
+    assert.ok(independentBuildIndex < identityComparisonIndex)
+
+    assert.doesNotMatch(workflow, /\bssh\b|\bscp\b|docker\/login-action|push:\s*true|secrets\./i)
     assert.doesNotMatch(workflow, /manifest\.image\.(?:tag|config_digest)/)
 })
 
@@ -1039,6 +1417,7 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
 
     for (const required of [
         'type: string',
+        'expected_image_config_digest:',
         'environment:',
         'name: dockerhub-release',
         'PUBLISH_ENABLED: ${{ vars.DOCKERHUB_RELEASE_ENABLED }}',
@@ -1050,6 +1429,7 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
         '[[ "$TAG_VERSION" =~',
         'file: Dockerfile',
         'platforms: linux/amd64',
+        'SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}',
         'pnpm audit --prod --audit-level high',
         'git ls-files --error-unmatch',
         'load: true',
@@ -1064,6 +1444,8 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
         'node scripts/verify-dockerhub-immutability.mjs',
         'https://hub.docker.com/v2/namespaces/${namespace}/repositories/${repository}',
         'bash scripts/publish-verified-image.sh',
+        'test "$actual_config_digest" = "$EXPECTED_IMAGE_CONFIG_DIGEST"',
+        '--archive "$ARCHIVE_PATH"',
         '--manifest "$MANIFEST_PATH"',
         '--immutability-settings "$IMMUTABILITY_SETTINGS_PATH"'
     ]) {
@@ -1082,7 +1464,18 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
     assert.doesNotMatch(workflow, /pnpm audit[^\n]*(?:\|\||;\s*true)/)
     assert.doesNotMatch(workflow, /^ {12}[A-Z_]+:\s*\$\{\{\s*runner\.temp\b/gm)
     assert.equal((workflow.match(/\$\{\{ inputs\.tag_version \}\}/g) ?? []).length, 1)
+    assert.equal((workflow.match(/\$\{\{ inputs\.expected_image_config_digest \}\}/g) ?? []).length, 1)
+    assert.equal(
+        (
+            workflow.match(
+                /\$\{\{ runner\.temp \}\}\/flowise-dockerhub-git-\$\{\{ github\.sha \}\}-linux-amd64\/release-manifest\.json/g
+            ) ?? []
+        ).length,
+        3
+    )
+    assert.doesNotMatch(workflow, /flowise-dockerhub-git-\$\{\{ github\.sha \}\}-manifest\.json/)
     assert.ok(workflow.indexOf('bash scripts/verify-release-candidate.sh') < workflow.indexOf('docker/login-action@'))
+    assert.ok(workflow.indexOf('test "$actual_config_digest" = "$EXPECTED_IMAGE_CONFIG_DIGEST"') < workflow.indexOf('docker/login-action@'))
     assert.ok(workflow.indexOf('node scripts/verify-dockerhub-immutability.mjs') < workflow.indexOf('docker/login-action@'))
     assertExternalActionsAreCommitPinned(workflow, 'Docker Hub publishing workflow')
 })

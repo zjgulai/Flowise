@@ -1,8 +1,21 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+    closeSync,
+    constants,
+    createReadStream,
+    existsSync,
+    fstatSync,
+    lstatSync,
+    openSync,
+    readFileSync,
+    renameSync,
+    unlinkSync,
+    writeFileSync
+} from 'node:fs'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createGunzip, createZstdDecompress } from 'node:zlib'
 
 const EXPECTED_TOOLCHAIN = Object.freeze({ node: 'v24.18.0', pnpm: '10.26.0', package_manager: 'pnpm@10.26.0' })
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
@@ -18,9 +31,12 @@ const INPUT_FILES = Object.freeze([
     'docker/seccomp/chromium.json',
     'package.json',
     'pnpm-lock.yaml',
+    'scripts/deployment-bundle.mjs',
+    'scripts/flowise-production-release.py',
     'scripts/publish-verified-image.sh',
     'scripts/release-manifest.mjs',
     'scripts/verify-chromium-sandbox.sh',
+    'scripts/verify-release-candidate.sh',
     'scripts/verify-release-source.sh',
     'scripts/verify-security.sh'
 ])
@@ -31,6 +47,18 @@ const BOUNDARIES = Object.freeze({
     registry_push: false,
     secrets_read: false
 })
+const MAX_DOCKER_ARCHIVE_BYTES = 8 * 1024 * 1024 * 1024
+const MAX_DOCKER_ARCHIVE_MEMBERS = 256
+const MAX_DOCKER_ARCHIVE_LAYERS = 128
+const MAX_DOCKER_MEMBER_BYTES = 4 * 1024 * 1024 * 1024
+const MAX_DOCKER_TOTAL_MEMBER_BYTES = 16 * 1024 * 1024 * 1024
+const MAX_DOCKER_METADATA_BYTES = 16 * 1024 * 1024
+const MAX_DOCKER_TOTAL_METADATA_BYTES = 64 * 1024 * 1024
+const MAX_DOCKER_LAYER_UNCOMPRESSED_BYTES = 8 * 1024 * 1024 * 1024
+const MAX_DOCKER_TOTAL_UNCOMPRESSED_MEMBER_BYTES = 16 * 1024 * 1024 * 1024
+const MAX_DOCKER_END_ZERO_BLOCKS = 20
+const MAX_DOCKER_TAR_STREAM_BYTES = MAX_DOCKER_TOTAL_MEMBER_BYTES + MAX_DOCKER_ARCHIVE_MEMBERS * 1024 + MAX_DOCKER_END_ZERO_BLOCKS * 512
+const CLASSIC_DOCKER_LAYER_PATH_PATTERN = /^(?:([0-9a-f]{64})\/)?layer\.tar$/
 
 const sha256 = (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`
 
@@ -190,6 +218,34 @@ const assertRegularFile = (filePath, label) => {
     return stat
 }
 
+const openRegularFileReadStream = (filePath, label) => {
+    if (typeof constants.O_NOFOLLOW !== 'number') throw new Error(`${label} cannot be opened without following symlinks`)
+    const absolutePath = resolve(filePath)
+    let fileDescriptor
+    try {
+        fileDescriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW)
+    } catch {
+        throw new Error(`${label} must be a readable regular non-symlink file`)
+    }
+
+    try {
+        const stat = fstatSync(fileDescriptor)
+        if (!stat.isFile()) throw new Error(`${label} must be a readable regular non-symlink file`)
+        return {
+            stat,
+            stream: createReadStream(absolutePath, { autoClose: true, fd: fileDescriptor })
+        }
+    } catch (error) {
+        try {
+            closeSync(fileDescriptor)
+        } catch {
+            // Preserve the validation/open error; the descriptor is best-effort closed here.
+        }
+        if (error instanceof Error && error.message.startsWith(label)) throw error
+        throw new Error(`${label} must be a readable regular non-symlink file`)
+    }
+}
+
 const assertDirectory = (directoryPath, label) => {
     let stat
     try {
@@ -220,37 +276,6 @@ const readTextFile = (filePath, label) => {
     }
 }
 
-const readDockerArchiveMember = (archivePath, memberPath) => {
-    try {
-        return execFileSync('tar', ['-xOzf', resolve(archivePath), memberPath], {
-            encoding: null,
-            maxBuffer: 16 * 1024 * 1024,
-            stdio: ['ignore', 'pipe', 'pipe']
-        })
-    } catch {
-        throw new Error(`Docker archive member is unavailable: ${memberPath}`)
-    }
-}
-
-const listDockerArchiveMembers = (archivePath) => {
-    assertRegularFile(archivePath, 'Docker archive')
-    let listing
-    try {
-        listing = execFileSync('tar', ['-tzf', resolve(archivePath)], {
-            encoding: 'utf8',
-            maxBuffer: 16 * 1024 * 1024,
-            stdio: ['ignore', 'pipe', 'pipe']
-        })
-    } catch {
-        throw new Error('Docker archive is not a readable gzip-compressed tar file')
-    }
-    const members = listing.split('\n').filter(Boolean)
-    if (members.length === 0 || members.some((member) => /[\r\0]/.test(member))) {
-        throw new Error('Docker archive member list is invalid')
-    }
-    return members
-}
-
 const parseArchiveJson = (contents, label) => {
     try {
         return JSON.parse(contents.toString('utf8'))
@@ -259,7 +284,477 @@ const parseArchiveJson = (contents, label) => {
     }
 }
 
-export const verifyDockerArchive = ({ archivePath, imageTag, revision, source, version, created, platform }) => {
+const decodeTarField = (field, label) => {
+    const terminator = field.indexOf(0)
+    const value = terminator === -1 ? field : field.subarray(0, terminator)
+    const padding = terminator === -1 ? Buffer.alloc(0) : field.subarray(terminator)
+    if (padding.some((byte) => byte !== 0)) throw new Error(`Docker archive ${label} field is invalid`)
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(value)
+    } catch {
+        throw new Error(`Docker archive ${label} field is invalid`)
+    }
+}
+
+const parseTarOctal = (field, label) => {
+    if ((field[0] & 0x80) !== 0) throw new Error(`Docker archive ${label} field is invalid`)
+    const value = field.toString('ascii').replace(/\0.*$/s, '').trim()
+    if (value === '') return 0
+    if (!/^[0-7]+$/.test(value)) throw new Error(`Docker archive ${label} field is invalid`)
+    const parsed = Number.parseInt(value, 8)
+    if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`Docker archive ${label} field is invalid`)
+    return parsed
+}
+
+const validateArchiveMemberPath = (memberPath, type) => {
+    const comparable = type === 'directory' && memberPath.endsWith('/') ? memberPath.slice(0, -1) : memberPath
+    if (
+        comparable.length === 0 ||
+        comparable.length > 255 ||
+        memberPath.includes('\\') ||
+        memberPath.startsWith('/') ||
+        memberPath.startsWith('./') ||
+        memberPath.includes('//') ||
+        /[\0-\x1f\x7f]/.test(memberPath) ||
+        !/^[A-Za-z0-9._/-]+$/.test(memberPath) ||
+        comparable.split('/').some((component) => component === '' || component === '.' || component === '..')
+    ) {
+        throw new Error('Docker archive member path is unsafe')
+    }
+    if ((type === 'directory') !== memberPath.endsWith('/')) {
+        throw new Error('Docker archive member path/type mismatch')
+    }
+    return memberPath
+}
+
+const parseTarHeader = (header) => {
+    if (header.length !== 512) throw new Error('Docker archive header is truncated')
+    const checksum = parseTarOctal(header.subarray(148, 156), 'checksum')
+    const checksumInput = Buffer.from(header)
+    checksumInput.fill(0x20, 148, 156)
+    if (checksumInput.reduce((sum, byte) => sum + byte, 0) !== checksum) {
+        throw new Error('Docker archive header checksum mismatch')
+    }
+    if (header.subarray(257, 265).toString('binary') !== 'ustar\x0000') {
+        throw new Error('Docker archive must use the bounded ustar format')
+    }
+
+    const name = decodeTarField(header.subarray(0, 100), 'name')
+    const prefix = decodeTarField(header.subarray(345, 500), 'prefix')
+    const memberPath = prefix ? `${prefix}/${name}` : name
+    const typeFlag = header[156]
+    const type = typeFlag === 0 || typeFlag === 0x30 ? 'file' : typeFlag === 0x35 ? 'directory' : null
+    if (!type) throw new Error('Docker archive contains a link, device, FIFO, sparse or unsupported member')
+    const size = parseTarOctal(header.subarray(124, 136), 'size')
+    if (type === 'directory' && size !== 0) throw new Error('Docker archive directory member has content')
+    validateArchiveMemberPath(memberPath, type)
+    return { path: memberPath, size, type }
+}
+
+class DockerUncompressedBudget {
+    constructor(maxBytes) {
+        if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > MAX_DOCKER_TOTAL_UNCOMPRESSED_MEMBER_BYTES) {
+            throw new Error('Docker archive total uncompressed byte limit is invalid')
+        }
+        this.maxBytes = maxBytes
+        this.consumedBytes = 0
+    }
+
+    consume(bytes) {
+        if (!Number.isSafeInteger(bytes) || bytes < 0 || this.consumedBytes > this.maxBytes - bytes) {
+            throw new Error('Docker archive members exceed the total uncompressed size limit')
+        }
+        this.consumedBytes += bytes
+    }
+}
+
+class DockerMemberHasher {
+    constructor(uncompressedBudget, allowCompression) {
+        this.rawHash = createHash('sha256')
+        this.payloadHash = createHash('sha256')
+        this.uncompressedBudget = uncompressedBudget
+        this.allowCompression = allowCompression
+        this.prefix = []
+        this.prefixBytes = 0
+        this.compression = null
+        this.decoder = null
+        this.decoderDone = null
+        this.decoderError = null
+        this.payloadBytes = 0
+    }
+
+    startDecoder(compression) {
+        this.compression = compression
+        if (compression === 'none') return
+        this.decoder = compression === 'gzip' ? createGunzip() : createZstdDecompress()
+        this.decoderDone = new Promise((resolveDone) => {
+            this.decoder.on('data', (chunk) => {
+                try {
+                    if (this.payloadBytes > MAX_DOCKER_LAYER_UNCOMPRESSED_BYTES - chunk.length) {
+                        throw new Error('Docker archive member expands beyond the uncompressed size limit')
+                    }
+                    this.uncompressedBudget.consume(chunk.length)
+                } catch (error) {
+                    this.decoder.destroy(error)
+                    return
+                }
+                this.payloadBytes += chunk.length
+                this.payloadHash.update(chunk)
+            })
+            this.decoder.once('error', (error) => {
+                this.decoderError = error
+                resolveDone()
+            })
+            this.decoder.once('end', resolveDone)
+        })
+    }
+
+    async feedPayload(chunk) {
+        if (this.compression === 'none') {
+            if (this.payloadBytes > MAX_DOCKER_LAYER_UNCOMPRESSED_BYTES - chunk.length) {
+                throw new Error('Docker archive member exceeds the uncompressed size limit')
+            }
+            this.uncompressedBudget.consume(chunk.length)
+            this.payloadBytes += chunk.length
+            this.payloadHash.update(chunk)
+            return
+        }
+        await new Promise((resolveWrite, rejectWrite) => {
+            this.decoder.write(chunk, (error) => (error ? rejectWrite(error) : resolveWrite()))
+        })
+    }
+
+    async selectCompression() {
+        if (this.compression !== null) return
+        const prefix = Buffer.concat(this.prefix, this.prefixBytes)
+        const compression =
+            prefix.length >= 2 && prefix[0] === 0x1f && prefix[1] === 0x8b
+                ? 'gzip'
+                : prefix.length >= 4 && prefix.subarray(0, 4).equals(Buffer.from([0x28, 0xb5, 0x2f, 0xfd]))
+                ? 'zstd'
+                : 'none'
+        if (!this.allowCompression && compression !== 'none') {
+            throw new Error('Docker archive classic layer.tar must not be compressed')
+        }
+        this.startDecoder(compression)
+        this.prefix = []
+        this.prefixBytes = 0
+        if (prefix.length > 0) await this.feedPayload(prefix)
+    }
+
+    async write(chunk) {
+        this.rawHash.update(chunk)
+        if (this.compression === null) {
+            this.prefix.push(chunk)
+            this.prefixBytes += chunk.length
+            if (this.prefixBytes < 4) return
+            await this.selectCompression()
+            return
+        }
+        await this.feedPayload(chunk)
+    }
+
+    async finish() {
+        await this.selectCompression()
+        if (this.decoder) {
+            this.decoder.end()
+            await this.decoderDone
+            if (this.decoderError) {
+                if (this.decoderError.message.startsWith('Docker archive')) throw this.decoderError
+                throw new Error('Docker archive compressed member is invalid')
+            }
+        }
+        return {
+            compression: this.compression,
+            payloadBytes: this.payloadBytes,
+            payloadDigest: `sha256:${this.payloadHash.digest('hex')}`,
+            rawDigest: `sha256:${this.rawHash.digest('hex')}`
+        }
+    }
+}
+
+const isDockerMetadataCandidate = (memberPath) =>
+    ['manifest.json', 'index.json', 'oci-layout', 'repositories'].includes(memberPath) ||
+    /^[0-9a-f]{64}\.json$/.test(memberPath) ||
+    /^[0-9a-f]{64}\/(?:json|VERSION)$/.test(memberPath) ||
+    /^blobs\/sha256\/[0-9a-f]{64}$/.test(memberPath)
+
+const readDockerArchive = async (archivePath, maxTotalUncompressedBytes) => {
+    const uncompressedBudget = new DockerUncompressedBudget(maxTotalUncompressedBytes ?? MAX_DOCKER_TOTAL_UNCOMPRESSED_MEMBER_BYTES)
+    const { stat, stream: archiveStream } = openRegularFileReadStream(archivePath, 'Docker archive')
+    if (stat.size <= 0 || stat.size > MAX_DOCKER_ARCHIVE_BYTES) {
+        archiveStream.destroy()
+        throw new Error('Docker archive size is outside the allowed range')
+    }
+
+    const uncompressedStream = createGunzip()
+    archiveStream.on('error', (error) => uncompressedStream.destroy(error))
+    archiveStream.pipe(uncompressedStream)
+
+    const members = []
+    const seenPaths = new Set()
+    let pending = Buffer.alloc(0)
+    let current = null
+    let paddingBytes = 0
+    let totalMemberBytes = 0
+    let retainedMetadataBytes = 0
+    let zeroBlocks = 0
+    let reachedEnd = false
+    let totalTarStreamBytes = 0
+
+    const finishCurrent = async () => {
+        const hashes = await current.hasher.finish()
+        let content = current.content ? Buffer.concat(current.content, current.header.size) : null
+        if (
+            content &&
+            current.header.path.startsWith('blobs/sha256/') &&
+            (hashes.compression !== 'none' || !/^\s*(?:\{|\[)/.test(content.subarray(0, 64).toString('utf8')))
+        ) {
+            retainedMetadataBytes -= current.header.size
+            content = null
+        }
+        members.push({
+            ...current.header,
+            ...hashes,
+            content
+        })
+        paddingBytes = (512 - (current.header.size % 512)) % 512
+        current = null
+    }
+
+    try {
+        for await (const streamChunk of uncompressedStream) {
+            totalTarStreamBytes += streamChunk.length
+            if (totalTarStreamBytes > MAX_DOCKER_TAR_STREAM_BYTES) {
+                throw new Error('Docker archive uncompressed tar stream exceeds the size limit')
+            }
+            pending = pending.length === 0 ? streamChunk : Buffer.concat([pending, streamChunk])
+            while (pending.length > 0) {
+                if (current) {
+                    const take = Math.min(current.remaining, pending.length)
+                    const payload = pending.subarray(0, take)
+                    pending = pending.subarray(take)
+                    current.remaining -= take
+                    if (current.content) current.content.push(Buffer.from(payload))
+                    await current.hasher.write(payload)
+                    if (current.remaining === 0) await finishCurrent()
+                    continue
+                }
+                if (paddingBytes > 0) {
+                    const take = Math.min(paddingBytes, pending.length)
+                    if (pending.subarray(0, take).some((byte) => byte !== 0)) {
+                        throw new Error('Docker archive member padding is invalid')
+                    }
+                    pending = pending.subarray(take)
+                    paddingBytes -= take
+                    continue
+                }
+                if (pending.length < 512) break
+                const headerBlock = pending.subarray(0, 512)
+                pending = pending.subarray(512)
+                if (headerBlock.every((byte) => byte === 0)) {
+                    zeroBlocks += 1
+                    if (zeroBlocks > MAX_DOCKER_END_ZERO_BLOCKS) {
+                        throw new Error('Docker archive contains excessive data after the end marker')
+                    }
+                    if (zeroBlocks >= 2) reachedEnd = true
+                    continue
+                }
+                if (zeroBlocks > 0 || reachedEnd) throw new Error('Docker archive contains data after the end marker')
+
+                const header = parseTarHeader(headerBlock)
+                if (seenPaths.has(header.path)) throw new Error('Docker archive contains duplicate members')
+                seenPaths.add(header.path)
+                if (seenPaths.size > MAX_DOCKER_ARCHIVE_MEMBERS) throw new Error('Docker archive contains too many members')
+                if (header.size > MAX_DOCKER_MEMBER_BYTES) throw new Error('Docker archive member exceeds the size limit')
+                totalMemberBytes += header.size
+                if (totalMemberBytes > MAX_DOCKER_TOTAL_MEMBER_BYTES) throw new Error('Docker archive members exceed the total size limit')
+
+                if (header.type === 'directory') {
+                    members.push({ ...header, content: Buffer.alloc(0), compression: 'none', payloadBytes: 0 })
+                    continue
+                }
+                current = {
+                    content:
+                        isDockerMetadataCandidate(header.path) &&
+                        header.size <= MAX_DOCKER_METADATA_BYTES &&
+                        retainedMetadataBytes + header.size <= MAX_DOCKER_TOTAL_METADATA_BYTES
+                            ? []
+                            : null,
+                    hasher: new DockerMemberHasher(uncompressedBudget, !CLASSIC_DOCKER_LAYER_PATH_PATTERN.test(header.path)),
+                    header,
+                    remaining: header.size
+                }
+                if (current.content) retainedMetadataBytes += header.size
+                if (current.remaining === 0) await finishCurrent()
+            }
+        }
+    } catch (error) {
+        archiveStream.destroy()
+        uncompressedStream.destroy()
+        if (error instanceof Error && error.message.startsWith('Docker archive')) throw error
+        throw new Error('Docker archive is not a readable gzip-compressed tar file')
+    }
+
+    if (current || paddingBytes !== 0 || pending.length !== 0 || !reachedEnd || members.length === 0) {
+        throw new Error('Docker archive is truncated or missing its end marker')
+    }
+    return members
+}
+
+const requireArchiveFile = (membersByPath, memberPath, label, requireContent = true) => {
+    const member = membersByPath.get(memberPath)
+    if (!member || member.type !== 'file') throw new Error(`Docker archive ${label} is unavailable`)
+    if (requireContent && !member.content) throw new Error(`Docker archive ${label} exceeds the metadata size limit`)
+    return member
+}
+
+const archiveParentDirectories = (memberPath) => {
+    const components = memberPath.split('/')
+    const directories = []
+    for (let index = 1; index < components.length; index += 1) {
+        directories.push(`${components.slice(0, index).join('/')}/`)
+    }
+    return directories
+}
+
+const validateExactArchiveMembers = (members, expectedFiles, allowedDirectories) => {
+    for (const member of members) {
+        const allowed = member.type === 'file' ? expectedFiles.has(member.path) : allowedDirectories.has(member.path)
+        if (!allowed) throw new Error(`Docker archive contains an unexpected member: ${member.path}`)
+    }
+    for (const expectedFile of expectedFiles) {
+        if (members.filter((member) => member.path === expectedFile && member.type === 'file').length !== 1) {
+            throw new Error(`Docker archive expected member is unavailable: ${expectedFile}`)
+        }
+    }
+}
+
+const validateContainerdLayout = ({ members, membersByPath, entry, configPath, layerMembers }) => {
+    const indexMember = requireArchiveFile(membersByPath, 'index.json', 'OCI index')
+    const layoutMember = requireArchiveFile(membersByPath, 'oci-layout', 'OCI layout')
+    const index = parseArchiveJson(indexMember.content, 'Docker archive OCI index')
+    const layout = parseArchiveJson(layoutMember.content, 'Docker archive OCI layout')
+    if (
+        !layout ||
+        typeof layout !== 'object' ||
+        Array.isArray(layout) ||
+        Object.keys(layout).length !== 1 ||
+        layout.imageLayoutVersion !== '1.0.0'
+    ) {
+        throw new Error('Docker archive OCI layout is invalid')
+    }
+    if (!index || index.schemaVersion !== 2 || !Array.isArray(index.manifests) || index.manifests.length !== 1) {
+        throw new Error('Docker archive OCI index is invalid')
+    }
+    const descriptor = index.manifests[0]
+    validateDigest(descriptor?.digest, 'Docker archive OCI manifest')
+    if (!Number.isSafeInteger(descriptor.size) || descriptor.size < 0) throw new Error('Docker archive OCI manifest size is invalid')
+    if (
+        !['application/vnd.docker.distribution.manifest.v2+json', 'application/vnd.oci.image.manifest.v1+json'].includes(
+            descriptor.mediaType
+        )
+    ) {
+        throw new Error('Docker archive OCI manifest media type is invalid')
+    }
+    const descriptorPath = `blobs/sha256/${digestHex(descriptor.digest)}`
+    const descriptorMember = requireArchiveFile(membersByPath, descriptorPath, 'OCI manifest blob')
+    if (descriptorMember.rawDigest !== descriptor.digest || descriptorMember.size !== descriptor.size) {
+        throw new Error('Docker archive OCI manifest digest or size mismatch')
+    }
+    const imageManifest = parseArchiveJson(descriptorMember.content, 'Docker archive OCI manifest blob')
+    if (!imageManifest || imageManifest.schemaVersion !== 2 || !imageManifest.config || !Array.isArray(imageManifest.layers)) {
+        throw new Error('Docker archive OCI manifest blob is invalid')
+    }
+    if (
+        !['application/vnd.oci.image.config.v1+json', 'application/vnd.docker.container.image.v1+json'].includes(
+            imageManifest.config.mediaType
+        )
+    ) {
+        throw new Error('Docker archive OCI config media type is invalid')
+    }
+    if (
+        imageManifest.config.digest !== `sha256:${configPath.slice('blobs/sha256/'.length)}` ||
+        imageManifest.config.size !== membersByPath.get(configPath).size
+    ) {
+        throw new Error('Docker archive OCI config descriptor mismatch')
+    }
+    if (imageManifest.layers.length !== entry.Layers.length) throw new Error('Docker archive OCI layer descriptor count mismatch')
+
+    const compressionByMediaType = new Map([
+        ['application/vnd.docker.image.rootfs.diff.tar', 'none'],
+        ['application/vnd.docker.image.rootfs.diff.tar.gzip', 'gzip'],
+        ['application/vnd.oci.image.layer.v1.tar', 'none'],
+        ['application/vnd.oci.image.layer.v1.tar+gzip', 'gzip'],
+        ['application/vnd.oci.image.layer.v1.tar+zstd', 'zstd']
+    ])
+    for (const [indexValue, layerDescriptor] of imageManifest.layers.entries()) {
+        const layerMember = layerMembers[indexValue]
+        const expectedDigest = `sha256:${entry.Layers[indexValue].slice('blobs/sha256/'.length)}`
+        if (
+            layerDescriptor?.digest !== expectedDigest ||
+            layerDescriptor.size !== layerMember.size ||
+            layerMember.rawDigest !== expectedDigest
+        ) {
+            throw new Error('Docker archive OCI layer descriptor mismatch')
+        }
+        const expectedCompression = compressionByMediaType.get(layerDescriptor.mediaType)
+        if (!expectedCompression || layerMember.compression !== expectedCompression) {
+            throw new Error('Docker archive OCI layer compression mismatch')
+        }
+    }
+
+    const expectedFiles = new Set(['manifest.json', 'index.json', 'oci-layout', descriptorPath, configPath, ...entry.Layers])
+    const allowedDirectories = new Set([...expectedFiles].flatMap((path) => archiveParentDirectories(path)))
+    validateExactArchiveMembers(members, expectedFiles, allowedDirectories)
+}
+
+const validateClassicLayout = ({ members, membersByPath, entry, configPath, layerMembers }) => {
+    const layerDirectories = new Set()
+    for (const [indexValue, layerPath] of entry.Layers.entries()) {
+        const match = CLASSIC_DOCKER_LAYER_PATH_PATTERN.exec(layerPath)
+        if (!match) throw new Error('Docker archive classic layer path is invalid')
+        if (layerMembers[indexValue].compression !== 'none') {
+            throw new Error('Docker archive classic layer.tar must not be compressed')
+        }
+        if (match[1]) layerDirectories.add(match[1])
+    }
+    const optionalFiles = new Set(['repositories'])
+    for (const directory of layerDirectories) {
+        optionalFiles.add(`${directory}/json`)
+        optionalFiles.add(`${directory}/VERSION`)
+    }
+    const expectedFiles = new Set(['manifest.json', configPath, ...entry.Layers])
+    for (const member of members) {
+        if (member.type === 'file' && optionalFiles.has(member.path)) expectedFiles.add(member.path)
+    }
+    const allowedDirectories = new Set([...expectedFiles].flatMap((path) => archiveParentDirectories(path)))
+    validateExactArchiveMembers(members, expectedFiles, allowedDirectories)
+
+    for (const optionalPath of expectedFiles) {
+        if (!optionalFiles.has(optionalPath)) continue
+        const optionalMember = requireArchiveFile(membersByPath, optionalPath, 'classic metadata')
+        if (optionalPath.endsWith('/VERSION')) {
+            if (optionalMember.content.toString('utf8').trim() !== '1.0') throw new Error('Docker archive classic VERSION is invalid')
+        } else {
+            const metadata = parseArchiveJson(optionalMember.content, 'Docker archive classic metadata')
+            if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+                throw new Error('Docker archive classic metadata is invalid')
+            }
+        }
+    }
+}
+
+export const verifyDockerArchive = async ({
+    archivePath,
+    imageTag,
+    revision,
+    source,
+    version,
+    created,
+    platform,
+    maxTotalUncompressedBytes
+}) => {
     validateRevision(revision)
     if (version !== `git-${revision}`) throw new Error('Docker archive version must match the exact Git revision')
     validateImageTag(imageTag, version)
@@ -269,11 +764,10 @@ export const verifyDockerArchive = ({ archivePath, imageTag, revision, source, v
     }
     if (platform !== 'linux/amd64') throw new Error('Docker archive platform must be linux/amd64')
 
-    const members = listDockerArchiveMembers(archivePath)
-    if (members.filter((member) => member === 'manifest.json').length !== 1) {
-        throw new Error('Docker archive must contain exactly one manifest.json')
-    }
-    const archiveManifest = parseArchiveJson(readDockerArchiveMember(archivePath, 'manifest.json'), 'Docker archive manifest')
+    const members = await readDockerArchive(archivePath, maxTotalUncompressedBytes)
+    const membersByPath = new Map(members.map((member) => [member.path, member]))
+    const manifestMember = requireArchiveFile(membersByPath, 'manifest.json', 'manifest')
+    const archiveManifest = parseArchiveJson(manifestMember.content, 'Docker archive manifest')
     if (!Array.isArray(archiveManifest) || archiveManifest.length !== 1) {
         throw new Error('Docker archive must contain exactly one image')
     }
@@ -283,31 +777,54 @@ export const verifyDockerArchive = ({ archivePath, imageTag, revision, source, v
     if (!Array.isArray(entry.RepoTags) || entry.RepoTags.length !== 1 || entry.RepoTags[0] !== imageTag) {
         throw new Error('Docker archive tag mismatch')
     }
-    const configMatch = /^(?:blobs\/sha256\/)?([0-9a-f]{64})(?:\.json)?$/.exec(entry.Config)
+    const configMatch = /^(?:blobs\/sha256\/([0-9a-f]{64})|([0-9a-f]{64})\.json)$/.exec(entry.Config)
     if (!configMatch) throw new Error('Docker archive config path is invalid')
     const configPath = entry.Config
-    validateRelativePath(configPath)
-    if (members.filter((member) => member === configPath).length !== 1) {
-        throw new Error('Docker archive must contain exactly one image config')
-    }
-    if (!Array.isArray(entry.Layers) || entry.Layers.length === 0 || new Set(entry.Layers).size !== entry.Layers.length) {
+    const configDigestHex = configMatch[1] ?? configMatch[2]
+    const configMember = requireArchiveFile(membersByPath, configPath, 'image config')
+    if (configMember.compression !== 'none') throw new Error('Docker archive image config must not be compressed')
+    if (!Array.isArray(entry.Layers) || entry.Layers.length === 0 || entry.Layers.length > MAX_DOCKER_ARCHIVE_LAYERS) {
         throw new Error('Docker archive layer list is invalid')
     }
+    if (new Set(entry.Layers).size !== entry.Layers.length) throw new Error('Docker archive layer list is invalid')
+    const containerdLayout = configPath.startsWith('blobs/sha256/')
+    const layerMembers = []
     for (const layerPath of entry.Layers) {
-        validateRelativePath(layerPath)
-        if (members.filter((member) => member === layerPath).length !== 1) {
-            throw new Error('Docker archive layer is unavailable')
+        validateArchiveMemberPath(layerPath, 'file')
+        if (containerdLayout && !/^blobs\/sha256\/[0-9a-f]{64}$/.test(layerPath)) {
+            throw new Error('Docker archive OCI layer path is invalid')
         }
+        layerMembers.push(requireArchiveFile(membersByPath, layerPath, 'layer', false))
     }
 
-    const configContents = readDockerArchiveMember(archivePath, configPath)
-    const actualConfigHex = createHash('sha256').update(configContents).digest('hex')
-    if (actualConfigHex !== configMatch[1]) throw new Error('Docker archive config content hash mismatch')
+    const configContents = configMember.content
+    const actualConfigHex = digestHex(configMember.rawDigest)
+    if (actualConfigHex !== configDigestHex) throw new Error('Docker archive config content hash mismatch')
     const imageConfig = parseArchiveJson(configContents, 'Docker archive image config')
     if (!imageConfig || typeof imageConfig !== 'object' || Array.isArray(imageConfig)) {
         throw new Error('Docker archive image config is invalid')
     }
     if (`${imageConfig.os}/${imageConfig.architecture}` !== platform) throw new Error('Docker archive platform mismatch')
+    if (
+        !imageConfig.rootfs ||
+        typeof imageConfig.rootfs !== 'object' ||
+        Array.isArray(imageConfig.rootfs) ||
+        imageConfig.rootfs.type !== 'layers' ||
+        !Array.isArray(imageConfig.rootfs.diff_ids) ||
+        imageConfig.rootfs.diff_ids.length !== entry.Layers.length
+    ) {
+        throw new Error('Docker archive rootfs diff_ids are invalid')
+    }
+    for (const [indexValue, diffId] of imageConfig.rootfs.diff_ids.entries()) {
+        validateDigest(diffId, 'Docker archive layer diff_id')
+        if (layerMembers[indexValue].payloadDigest !== diffId) throw new Error('Docker archive layer diff_id mismatch')
+    }
+
+    if (containerdLayout) {
+        validateContainerdLayout({ members, membersByPath, entry, configPath, layerMembers })
+    } else {
+        validateClassicLayout({ members, membersByPath, entry, configPath, layerMembers })
+    }
 
     const runtime = imageConfig.config
     if (!runtime || typeof runtime !== 'object' || Array.isArray(runtime)) throw new Error('Docker archive runtime config is invalid')
@@ -750,7 +1267,7 @@ const requireFlags = (parsed, flags) => {
     }
 }
 
-const runCli = (argv) => {
+const runCli = async (argv) => {
     const [command, ...rest] = argv
     if (!['generate', 'verify', 'verify-archive'].includes(command)) {
         throw new Error('Expected generate, verify or verify-archive command')
@@ -760,7 +1277,7 @@ const runCli = (argv) => {
 
     if (command === 'verify-archive') {
         requireFlags(parsed, ['--archive', '--image-tag', '--revision', '--source', '--version', '--created', '--platform'])
-        const result = verifyDockerArchive({
+        const result = await verifyDockerArchive({
             archivePath: parsed['--archive'],
             imageTag: parsed['--image-tag'],
             revision: parsed['--revision'],
@@ -807,10 +1324,8 @@ const runCli = (argv) => {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-    try {
-        runCli(process.argv.slice(2))
-    } catch (error) {
+    runCli(process.argv.slice(2)).catch((error) => {
         process.stderr.write(`Release manifest error: ${error.message}\n`)
         process.exitCode = 1
-    }
+    })
 }

@@ -6,6 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CHROMIUM_PROFILE="$REPO_ROOT/docker/seccomp/chromium.json"
+PRODUCTION_COMPOSE="$REPO_ROOT/docker-compose.prod.yml"
+PRODUCTION_WRAPPER="$REPO_ROOT/scripts/flowise-production-release.py"
 IMAGE_TAG=''
 SOURCE=''
 REVISION=''
@@ -46,20 +48,28 @@ done
 
 [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]] || fail 'revision must be an exact lowercase Git SHA'
 [[ "$VERSION" == "git-$REVISION" ]] || fail 'version must be derived from the exact Git SHA'
-[[ "$IMAGE_TAG" == "flowise-ci:git-$REVISION" ]] || fail 'image tag must use the isolated flowise-ci namespace and exact Git SHA'
+[[ "$IMAGE_TAG" == "flowise-chinese:git-$REVISION" ]] ||
+    fail 'image tag must use the production flowise-chinese namespace and exact Git SHA'
 [[ "$SOURCE" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || fail 'source must be a plain HTTPS repository URL'
 [[ "$CREATED" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || fail 'created must be an ISO-8601 timestamp'
 [[ "$SMOKE_NAME" =~ ^flowise-ci-smoke-[A-Za-z0-9_.-]+$ ]] || fail 'smoke name must be run-scoped'
 [[ -f "$CHROMIUM_PROFILE" && ! -L "$CHROMIUM_PROFILE" ]] || fail 'reviewed Chromium seccomp profile is missing'
+[[ -f "$PRODUCTION_COMPOSE" && ! -L "$PRODUCTION_COMPOSE" ]] || fail 'reviewed production Compose file is missing'
+[[ -f "$PRODUCTION_WRAPPER" && ! -L "$PRODUCTION_WRAPPER" ]] || fail 'reviewed production release wrapper is missing'
 CHROMIUM_NAME="${SMOKE_NAME/flowise-ci-smoke-/flowise-ci-chromium-}"
 [[ "$CHROMIUM_NAME" =~ ^flowise-ci-chromium-[A-Za-z0-9_.-]+$ ]] || fail 'Chromium smoke name is invalid'
 
-for output_path in "$ARCHIVE_PATH" "$MANIFEST_PATH" "$EVIDENCE_PATH"; do
+BUNDLE_DIR="$(dirname "$ARCHIVE_PATH")"
+BUNDLE_MANIFEST_PATH="$BUNDLE_DIR/deployment-bundle.json"
+[[ "$ARCHIVE_PATH" == "$BUNDLE_DIR/image.tar.gz" ]] || fail 'archive path must use the fixed deployment bundle layout'
+[[ "$MANIFEST_PATH" == "$BUNDLE_DIR/release-manifest.json" ]] || fail 'manifest path must use the fixed deployment bundle layout'
+[[ "$EVIDENCE_PATH" == "$BUNDLE_DIR/evidence.txt" ]] || fail 'evidence path must use the fixed deployment bundle layout'
+
+for output_path in "$ARCHIVE_PATH" "$MANIFEST_PATH" "$EVIDENCE_PATH" "$BUNDLE_MANIFEST_PATH"; do
     [[ "$output_path" == /* && "$output_path" != *$'\n'* && "$output_path" != *$'\r'* ]] || fail 'output paths must be absolute and single-line'
     [[ -d "$(dirname "$output_path")" ]] || fail 'output parent directory does not exist'
     [[ ! -e "$output_path" && ! -L "$output_path" ]] || fail 'output path already exists'
 done
-[[ "$ARCHIVE_PATH" != "$MANIFEST_PATH" && "$ARCHIVE_PATH" != "$EVIDENCE_PATH" && "$MANIFEST_PATH" != "$EVIDENCE_PATH" ]] || fail 'output paths must be distinct'
 
 cleanup() {
     if [[ "$SMOKE_CREATED" == true ]]; then
@@ -213,6 +223,8 @@ bash "$REPO_ROOT/scripts/verify-chromium-sandbox.sh" \
     echo "manifest_sha256=$(sha256sum "$MANIFEST_PATH" | awk '{print $1}')"
     echo 'isolated_smoke=passed'
     echo "chromium_profile_sha256=$(sha256sum "$CHROMIUM_PROFILE" | awk '{print $1}')"
+    echo "production_compose_sha256=$(sha256sum "$PRODUCTION_COMPOSE" | awk '{print $1}')"
+    echo "production_wrapper_sha256=$(sha256sum "$PRODUCTION_WRAPPER" | awk '{print $1}')"
     echo 'chromium_sandbox=passed'
     echo 'raw_chromium_sandbox=passed'
     echo 'playwright_sandbox=passed'
@@ -221,5 +233,19 @@ bash "$REPO_ROOT/scripts/verify-chromium-sandbox.sh" \
     echo 'unsafe_chromium_flags=false'
     echo 'registry_push=false'
 } > "$EVIDENCE_PATH"
+
+node "$REPO_ROOT/scripts/deployment-bundle.mjs" generate \
+    --bundle-dir "$BUNDLE_DIR" \
+    --archive "$ARCHIVE_PATH" \
+    --manifest "$MANIFEST_PATH" \
+    --evidence "$EVIDENCE_PATH" \
+    --compose "$PRODUCTION_COMPOSE" \
+    --seccomp "$CHROMIUM_PROFILE" \
+    --wrapper "$PRODUCTION_WRAPPER"
+node "$REPO_ROOT/scripts/deployment-bundle.mjs" verify \
+    --bundle-dir "$BUNDLE_DIR" \
+    --expected-revision "$REVISION" \
+    --expected-image-tag "$IMAGE_TAG" \
+    --expected-image-config-digest "$image_config_digest"
 
 echo 'Release candidate verification passed.'

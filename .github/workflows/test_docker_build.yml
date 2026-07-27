@@ -24,7 +24,7 @@ jobs:
             CANDIDATE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
             CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
             ARTIFACT_NAME: flowise-release-git-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-linux-amd64
-            IMAGE_TAG: flowise-ci:git-${{ github.event.pull_request.head.sha || github.sha }}
+            IMAGE_TAG: flowise-chinese:git-${{ github.event.pull_request.head.sha || github.sha }}
             PUPPETEER_SKIP_DOWNLOAD: true
             SMOKE_NAME: flowise-ci-smoke-${{ github.run_id }}-${{ github.run_attempt }}
         steps:
@@ -44,8 +44,12 @@ jobs:
                       .github/workflows/production-readonly-monitor.yml \
                       .github/workflows/test_docker_build.yml \
                       docker/seccomp/chromium.json \
+                      scripts/deployment-bundle.mjs \
+                      scripts/deployment-bundle.test.mjs \
+                      scripts/flowise-production-release.py \
                       scripts/release-manifest.mjs \
                       scripts/release-manifest.test.mjs \
+                      scripts/test_flowise_production_release.py \
                       scripts/verify-chromium-sandbox.sh \
                       scripts/verify-release-candidate.sh \
                       scripts/verify-security.sh >/dev/null
@@ -64,7 +68,7 @@ jobs:
                   pnpm install --frozen-lockfile
                   after="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
                   test "$before" = "$after"
-                  pnpm audit --prod --audit-level critical
+                  pnpm audit --prod --audit-level high
                   pnpm test:release
                   bash scripts/verify-release-source.sh
                   bash scripts/verify-security.sh
@@ -78,8 +82,11 @@ jobs:
                   echo "revision=${CANDIDATE_SHA}" >> "$GITHUB_OUTPUT"
                   echo "version=git-${CANDIDATE_SHA}" >> "$GITHUB_OUTPUT"
                   echo "created=$(git show -s --format=%cI "$CANDIDATE_SHA")" >> "$GITHUB_OUTPUT"
+                  echo "source_date_epoch=$(git show -s --format=%ct "$CANDIDATE_SHA")" >> "$GITHUB_OUTPUT"
             - name: Build root Dockerfile without pushing
               uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+              env:
+                  SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}
               with:
                   context: .
                   file: Dockerfile
@@ -87,7 +94,7 @@ jobs:
                   load: true
                   push: false
                   provenance: false
-                  tags: flowise-ci:${{ steps.metadata.outputs.version }}
+                  tags: flowise-chinese:${{ steps.metadata.outputs.version }}
                   build-args: |
                       BUILD_SOURCE=${{ steps.metadata.outputs.source }}
                       BUILD_REVISION=${{ steps.metadata.outputs.revision }}
@@ -95,10 +102,12 @@ jobs:
                       BUILD_CREATED=${{ steps.metadata.outputs.created }}
             - name: Verify canonical offline artifact and isolated runtime
               env:
-                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64.tar.gz
-                  EVIDENCE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-evidence.txt
-                  MANIFEST_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-manifest.json
+                  BUNDLE_DIR: ${{ runner.temp }}/flowise-release-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-release-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64/image.tar.gz
+                  EVIDENCE_PATH: ${{ runner.temp }}/flowise-release-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64/evidence.txt
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-release-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64/release-manifest.json
               run: |
+                  install -d -m 0700 "$BUNDLE_DIR"
                   bash scripts/verify-release-candidate.sh \
                       --image-tag "$IMAGE_TAG" \
                       --source "${{ steps.metadata.outputs.source }}" \
@@ -113,15 +122,10 @@ jobs:
               if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
               env:
-                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64.tar.gz
-                  EVIDENCE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-evidence.txt
-                  MANIFEST_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-manifest.json
+                  BUNDLE_DIR: ${{ runner.temp }}/flowise-release-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64
               with:
                   name: ${{ env.ARTIFACT_NAME }}
-                  path: |
-                      ${{ env.ARCHIVE_PATH }}
-                      ${{ env.MANIFEST_PATH }}
-                      ${{ env.EVIDENCE_PATH }}
+                  path: ${{ env.BUNDLE_DIR }}
                   if-no-files-found: error
                   retention-days: 3
                   compression-level: 0
@@ -130,13 +134,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         needs: build
         runs-on: ubuntu-24.04
-        timeout-minutes: 20
+        timeout-minutes: 120
         permissions:
             contents: read
         environment:
             name: release-readiness
         env:
             ARTIFACT_NAME: flowise-release-git-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-linux-amd64
+            REBUILD_TAG: flowise-readiness:git-${{ github.sha }}
         steps:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
@@ -148,21 +153,63 @@ jobs:
             - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
               with:
                   node-version: '24.18.0'
+            - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
             - name: Download the same-run offline release artifact
               uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
               with:
                   name: ${{ env.ARTIFACT_NAME }}
                   path: ${{ runner.temp }}/flowise-release
+            - name: Independently rebuild and bind the candidate config identity
+              env:
+                  INDEPENDENT_ARCHIVE_PATH: ${{ runner.temp }}/flowise-release-readiness-independent.tar.gz
+              run: |
+                  set -euo pipefail
+                  expected_source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+                  expected_version="git-${GITHUB_SHA}"
+                  expected_created="$(git show -s --format=%cI "$GITHUB_SHA")"
+                  source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+                  cleanup_independent_rebuild() {
+                      docker image rm "$REBUILD_TAG" >/dev/null 2>&1 || true
+                      rm -f -- "$INDEPENDENT_ARCHIVE_PATH"
+                  }
+                  trap cleanup_independent_rebuild EXIT
+                  SOURCE_DATE_EPOCH="$source_date_epoch" docker buildx build \
+                      --platform linux/amd64 \
+                      --load \
+                      --provenance=false \
+                      --tag "$REBUILD_TAG" \
+                      --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
+                      --build-arg "BUILD_SOURCE=$expected_source" \
+                      --build-arg "BUILD_REVISION=$GITHUB_SHA" \
+                      --build-arg "BUILD_VERSION=$expected_version" \
+                      --build-arg "BUILD_CREATED=$expected_created" \
+                      .
+                  docker save "$REBUILD_TAG" | gzip -n > "$INDEPENDENT_ARCHIVE_PATH"
+                  independent_config_digest="$(node scripts/release-manifest.mjs verify-archive \
+                      --archive "$INDEPENDENT_ARCHIVE_PATH" \
+                      --image-tag "$REBUILD_TAG" \
+                      --revision "$GITHUB_SHA" \
+                      --source "$expected_source" \
+                      --version "$expected_version" \
+                      --created "$expected_created" \
+                      --platform linux/amd64)"
+                  expected_config_digest="$(jq -er '.image.config_digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' \
+                      "${RUNNER_TEMP}/flowise-release/release-manifest.json")"
+                  test "$independent_config_digest" = "$expected_config_digest"
+                  cleanup_independent_rebuild
+                  trap - EXIT
             - name: Verify the approved source and artifact remain exact
               env:
-                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-release/flowise-git-${{ github.sha }}-linux-amd64.tar.gz
-                  MANIFEST_PATH: ${{ runner.temp }}/flowise-release/flowise-git-${{ github.sha }}-linux-amd64-manifest.json
+                  BUNDLE_DIR: ${{ runner.temp }}/flowise-release
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-release/image.tar.gz
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-release/release-manifest.json
               run: |
                   set -euo pipefail
                   test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
                   test -s "$ARCHIVE_PATH"
                   test -s "$MANIFEST_PATH"
-                  expected_tag="flowise-ci:git-${GITHUB_SHA}"
+                  test -s "$BUNDLE_DIR/deployment-bundle.json"
+                  expected_tag="flowise-chinese:git-${GITHUB_SHA}"
                   expected_source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
                   expected_version="git-${GITHUB_SHA}"
                   expected_created="$(git show -s --format=%cI "$GITHUB_SHA")"
@@ -180,6 +227,11 @@ jobs:
                       --image-config-digest "$config_digest" \
                       --archive "$ARCHIVE_PATH" \
                       --require-clean
+                  node scripts/deployment-bundle.mjs verify \
+                      --bundle-dir "$BUNDLE_DIR" \
+                      --expected-revision "$GITHUB_SHA" \
+                      --expected-image-tag "$expected_tag" \
+                      --expected-image-config-digest "$config_digest"
                   cleanup_loaded_image() {
                       docker image rm "$expected_tag" >/dev/null 2>&1 || true
                   }
