@@ -191,7 +191,7 @@ class Puppeteer_DocumentLoaders implements INode {
             try {
                 let docs: Document[] = []
 
-                const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH
+                const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_FILE_PATH
 
                 const config: PuppeteerWebBaseLoaderOptions = {
                     launchOptions: {
@@ -336,8 +336,8 @@ class Puppeteer_DocumentLoaders implements INode {
                 return docs
             } catch (err) {
                 if (isWebScraperPolicyError(err)) throw err
-                if (process.env.DEBUG === 'true')
-                    options.logger.error(`[${orgId}]: Error in PuppeteerWebBaseLoader: ${err.message}, on page: ${url}`)
+                options.logger.error(`[${orgId}]: Puppeteer web scraper failed`, err)
+                throw new Error('Puppeteer web scraper failed')
             }
         }
 

@@ -99,9 +99,10 @@ RUN apk update && \
     git && \
     fc-cache -fv
 
-# Puppeteer 环境变量
+# 本地浏览器加载器统一使用镜像内已安装的 Chromium
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Node 内存限制（生产环境适当降低）
 ENV NODE_OPTIONS=--max-old-space-size=4096

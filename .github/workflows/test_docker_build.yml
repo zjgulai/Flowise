@@ -18,29 +18,38 @@ concurrency:
 
 jobs:
     build:
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-24.04
         timeout-minutes: 120
         env:
-            ARCHIVE_PATH: ${{ runner.temp }}/flowise-git-${{ github.sha }}-linux-amd64.tar.gz
-            ARTIFACT_NAME: flowise-release-git-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-linux-amd64
-            EVIDENCE_PATH: ${{ runner.temp }}/flowise-git-${{ github.sha }}-linux-amd64-evidence.txt
-            IMAGE_TAG: flowise-ci:git-${{ github.sha }}
-            MANIFEST_PATH: ${{ runner.temp }}/flowise-git-${{ github.sha }}-linux-amd64-manifest.json
+            CANDIDATE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+            CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+            ARCHIVE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64.tar.gz
+            ARTIFACT_NAME: flowise-release-git-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-linux-amd64
+            EVIDENCE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-evidence.txt
+            IMAGE_TAG: flowise-ci:git-${{ github.event.pull_request.head.sha || github.sha }}
+            MANIFEST_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-manifest.json
             PUPPETEER_SKIP_DOWNLOAD: true
             SMOKE_NAME: flowise-ci-smoke-${{ github.run_id }}-${{ github.run_attempt }}
         steps:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   fetch-depth: 0
+                  persist-credentials: false
+                  repository: ${{ env.CANDIDATE_REPOSITORY }}
+                  ref: ${{ env.CANDIDATE_SHA }}
             - name: Verify release automation is tracked by Git
               run: |
                   set -euo pipefail
+                  test "$(uname -m)" = x86_64
+                  test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
                   git ls-files --error-unmatch -- \
                       .github/workflows/docker-image-dockerhub.yml \
                       .github/workflows/production-readonly-monitor.yml \
                       .github/workflows/test_docker_build.yml \
+                      docker/seccomp/chromium.json \
                       scripts/release-manifest.mjs \
                       scripts/release-manifest.test.mjs \
+                      scripts/verify-chromium-sandbox.sh \
                       scripts/verify-release-candidate.sh \
                       scripts/verify-security.sh >/dev/null
             - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
@@ -66,10 +75,12 @@ jobs:
             - name: Resolve immutable build metadata
               id: metadata
               run: |
-                  echo "source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
-                  echo "revision=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-                  echo "version=git-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-                  echo "created=$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+                  set -euo pipefail
+                  test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+                  echo "source=${GITHUB_SERVER_URL}/${CANDIDATE_REPOSITORY}" >> "$GITHUB_OUTPUT"
+                  echo "revision=${CANDIDATE_SHA}" >> "$GITHUB_OUTPUT"
+                  echo "version=git-${CANDIDATE_SHA}" >> "$GITHUB_OUTPUT"
+                  echo "created=$(git show -s --format=%cI "$CANDIDATE_SHA")" >> "$GITHUB_OUTPUT"
             - name: Build root Dockerfile without pushing
               uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
               with:
@@ -113,7 +124,7 @@ jobs:
     release_readiness:
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         needs: build
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-24.04
         timeout-minutes: 20
         permissions:
             contents: read
@@ -127,6 +138,7 @@ jobs:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   fetch-depth: 0
+                  persist-credentials: false
             - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
               with:
                   version: 10.26.0

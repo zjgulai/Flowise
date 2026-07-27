@@ -13,6 +13,24 @@ services:
         image: ${FLOWISE_IMAGE:?FLOWISE_IMAGE must be a unique Git-derived image tag}
         container_name: flowise-chinese
         restart: always
+        init: true
+        user: '1000:1000'
+        read_only: true
+        cap_drop:
+            - ALL
+        # Derived from Moby seccomp/v0.2.2 (upstream SHA-256
+        # 1a4d017730647621403920d9558aa0152adef04dd89ed7720e4abafa24551999).
+        # The reviewed delta is limited to Chromium sandbox setup syscalls and
+        # is pinned at SHA-256 a1a19b1ab248ef5835972e3f867613a9aa838266855a3e7e6f8b3feac2eca8d3.
+        # Browser loaders are in-process, so this profile applies to the whole container.
+        security_opt:
+            - no-new-privileges:true
+            - seccomp=./docker/seccomp/chromium.json
+        pids_limit: 512
+        tmpfs:
+            - /tmp:rw,nosuid,nodev,size=256m,uid=1000,gid=1000,mode=1777
+            - /dev/shm:rw,nosuid,nodev,noexec,size=256m,uid=1000,gid=1000,mode=1777
+            - /usr/src/flowise/packages/server/logs:rw,nosuid,nodev,size=32m,uid=1000,gid=1000,mode=0700
         ports:
             # Default to localhost. Production may bind the reverse-proxy bridge gateway,
             # which remains unreachable from the public host interface.
@@ -80,6 +98,10 @@ services:
             # Puppeteer / Chromium
             - PUPPETEER_SKIP_DOWNLOAD=true
             - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+            - PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium-browser
+            - XDG_CONFIG_HOME=/tmp/chromium/config
+            - XDG_CACHE_HOME=/tmp/chromium/cache
+            - XDG_RUNTIME_DIR=/tmp/chromium/runtime
 
             # 其他功能开关
             - DISABLE_FLOWISE_TELEMETRY=${DISABLE_FLOWISE_TELEMETRY:-true}
@@ -114,6 +136,7 @@ services:
                 limits:
                     cpus: '2.0'
                     memory: 4G
+                    pids: 512
                 reservations:
                     cpus: '1.0'
                     memory: 2G

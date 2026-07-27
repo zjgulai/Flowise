@@ -379,6 +379,43 @@ describe('web scraper fail-closed transport policy', () => {
         )
     })
 
+    it.each([
+        ['Playwright', PlaywrightWebScraper, playwrightState],
+        ['Puppeteer', PuppeteerWebScraper, puppeteerState]
+    ])('surfaces a %s browser launch failure instead of returning an empty successful result', async (name, Loader, state) => {
+        state.launch.mockRejectedValueOnce(new Error('browser launch failed'))
+
+        await expect(new Loader().init(nodeData('https://example.com/'), '', { logger, orgId: 'org-security-test' })).rejects.toThrow(
+            `${name} web scraper failed`
+        )
+        expect(logger.error).toHaveBeenCalledWith(
+            expect.stringContaining(`[org-security-test]: ${name} web scraper failed`),
+            expect.any(Error)
+        )
+    })
+
+    it.each([
+        ['Playwright', PlaywrightWebScraper, playwrightState, 'PLAYWRIGHT_EXECUTABLE_PATH', 'PLAYWRIGHT_EXECUTABLE_FILE_PATH'],
+        ['Puppeteer', PuppeteerWebScraper, puppeteerState, 'PUPPETEER_EXECUTABLE_PATH', 'PUPPETEER_EXECUTABLE_FILE_PATH']
+    ])(
+        'keeps the legacy %s executable-path alias operational when the canonical value is empty',
+        async (_name, Loader, state, canonicalKey, legacyKey) => {
+            const previousCanonical = process.env[canonicalKey]
+            const previousLegacy = process.env[legacyKey]
+            process.env[canonicalKey] = ''
+            process.env[legacyKey] = '/usr/bin/chromium-browser'
+            try {
+                await new Loader().init(nodeData('https://example.com/'), '', { logger, orgId: 'org-security-test' })
+                expect(state.launch).toHaveBeenCalledWith(expect.objectContaining({ executablePath: '/usr/bin/chromium-browser' }))
+            } finally {
+                if (previousCanonical === undefined) delete process.env[canonicalKey]
+                else process.env[canonicalKey] = previousCanonical
+                if (previousLegacy === undefined) delete process.env[legacyKey]
+                else process.env[legacyKey] = previousLegacy
+            }
+        }
+    )
+
     it('uses a pinned loopback proxy and blocks Playwright service workers for an allowed scrape', async () => {
         const result = await new PlaywrightWebScraper().init(nodeData('https://example.com/'), '', {
             logger,

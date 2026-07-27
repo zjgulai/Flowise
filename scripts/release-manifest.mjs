@@ -15,10 +15,12 @@ const INPUT_FILES = Object.freeze([
     '.nvmrc',
     'Dockerfile',
     'docker-compose.prod.yml',
+    'docker/seccomp/chromium.json',
     'package.json',
     'pnpm-lock.yaml',
     'scripts/publish-verified-image.sh',
     'scripts/release-manifest.mjs',
+    'scripts/verify-chromium-sandbox.sh',
     'scripts/verify-release-source.sh',
     'scripts/verify-security.sh'
 ])

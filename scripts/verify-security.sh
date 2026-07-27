@@ -43,6 +43,23 @@ file_exists() {
     fi
 }
 
+file_sha256() {
+    local file=$1
+    local expected=$2
+    local label=$3
+    local actual
+    if [[ ! -f "$REPO_ROOT/$file" ]]; then
+        fail "$label"
+        return
+    fi
+    actual="$(shasum -a 256 "$REPO_ROOT/$file" 2>/dev/null | awk '{print $1}' || true)"
+    if [[ -n "$actual" && "$actual" == "$expected" ]]; then
+        pass "$label"
+    else
+        fail "$label"
+    fi
+}
+
 file_exact_line() {
     local file=$1
     local expected=$2
@@ -404,6 +421,11 @@ const exactEnvironment = {
     HOME: '/usr/src/flowise',
     DATABASE_PATH: '/usr/src/flowise/.flowise',
     SECRETKEY_PATH: '/usr/src/flowise/.flowise',
+    PLAYWRIGHT_EXECUTABLE_PATH: '/usr/bin/chromium-browser',
+    PUPPETEER_EXECUTABLE_PATH: '/usr/bin/chromium-browser',
+    XDG_CACHE_HOME: '/tmp/chromium/cache',
+    XDG_CONFIG_HOME: '/tmp/chromium/config',
+    XDG_RUNTIME_DIR: '/tmp/chromium/runtime',
     DATABASE_REJECT_UNAUTHORIZED: 'true',
     CORS_ALLOW_CREDENTIALS: 'false',
     CUSTOM_MCP_ALLOWED_COMMANDS: '',
@@ -418,6 +440,23 @@ for (const [key, value] of Object.entries(exactEnvironment)) {
 }
 if (typeof environment.FLOWISE_SECRETKEY_OVERWRITE !== 'string' || environment.FLOWISE_SECRETKEY_OVERWRITE.length === 0) process.exit(1)
 if (typeof environment.LOG_SANITIZE_BODY_FIELDS !== 'string' || environment.LOG_SANITIZE_BODY_FIELDS.length === 0) process.exit(1)
+if (flowise.read_only !== true || flowise.init !== true) process.exit(1)
+if (flowise.pids_limit !== 512 || flowise.deploy?.resources?.limits?.pids !== 512) process.exit(1)
+if (!Array.isArray(flowise.cap_drop) || !flowise.cap_drop.includes('ALL')) process.exit(1)
+if (
+    !Array.isArray(flowise.security_opt) ||
+    !flowise.security_opt.includes('no-new-privileges:true') ||
+    !flowise.security_opt.includes('seccomp=./docker/seccomp/chromium.json')
+) {
+    process.exit(1)
+}
+if (
+    !Array.isArray(flowise.tmpfs) ||
+    !flowise.tmpfs.some((entry) => entry.startsWith('/tmp:')) ||
+    !flowise.tmpfs.some((entry) => entry.startsWith('/dev/shm:'))
+) {
+    process.exit(1)
+}
 
 const hasPersistentVolume = Array.isArray(flowise.volumes) && flowise.volumes.some((volume) => {
     return volume?.type === 'volume' && volume?.source === 'flowise_data' && volume?.target === '/usr/src/flowise/.flowise'
@@ -468,6 +507,14 @@ file_contains "Dockerfile" "COPY packages/agentflow/package.json ./packages/agen
 file_contains "Dockerfile" "COPY packages/observe/package.json ./packages/observe/" "Dockerfile installs the observe workspace"
 file_contains "Dockerfile" 'CMD [ "node", "packages/server/bin/run", "start" ]' "Runtime starts through the built Node CLI"
 file_not_contains_regex "Dockerfile" 'CMD[[:space:]]*\[[[:space:]]*"pnpm"' "Runtime CMD does not require pnpm"
+file_contains "Dockerfile" 'ENV PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium-browser' "Runtime binds Playwright to the installed Chromium binary"
+file_contains "Dockerfile" 'ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser' "Runtime binds Puppeteer to the installed Chromium binary"
+file_contains "packages/server/src/commands/base.ts" 'PLAYWRIGHT_EXECUTABLE_PATH: Flags.string()' "Server CLI accepts the canonical Playwright executable path"
+file_contains "packages/server/src/commands/base.ts" 'PUPPETEER_EXECUTABLE_PATH: Flags.string()' "Server CLI accepts the canonical Puppeteer executable path"
+file_contains "packages/components/nodes/documentloaders/Playwright/Playwright.ts" 'process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.PLAYWRIGHT_EXECUTABLE_FILE_PATH' "Playwright loader preserves the legacy executable path alias"
+file_contains "packages/components/nodes/documentloaders/Puppeteer/Puppeteer.ts" 'process.env.PUPPETEER_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_FILE_PATH' "Puppeteer loader preserves the legacy executable path alias"
+file_contains "packages/server/.env.example" 'PLAYWRIGHT_EXECUTABLE_PATH=' "Server env example documents the canonical Playwright path"
+file_contains "packages/server/.env.example" 'PUPPETEER_EXECUTABLE_PATH=' "Server env example documents the canonical Puppeteer path"
 file_contains "Dockerfile" 'RUN mkdir -p /usr/src/flowise/.flowise && chown node:node /usr/src/flowise/.flowise' "Runtime prepares the persistent Flowise mountpoint for the node user"
 file_contains "Dockerfile" "ARG BUILD_SOURCE" "Runtime requires an OCI source build argument"
 file_contains "Dockerfile" "ARG BUILD_REVISION" "Runtime requires an OCI revision build argument"
@@ -484,6 +531,23 @@ file_not_contains_regex "docker-compose.prod.yml" '^[[:space:]]+image:[[:space:]
 file_contains "docker-compose.prod.yml" '${FLOWISE_BIND_IP:-127.0.0.1}:3000:3000' "Compose defaults the Flowise port to localhost"
 file_not_contains_regex "docker-compose.prod.yml" "['\"]?0\.0\.0\.0:3000:3000" "Compose does not publish Flowise on all host interfaces"
 file_contains "docker-compose.prod.yml" 'name: ${FLOWISE_PROXY_NETWORK:-lighthouse_ai_video_net}' "Compose preserves the external reverse-proxy network"
+file_contains "docker-compose.prod.yml" 'read_only: true' "Compose makes the Flowise root filesystem read-only"
+file_contains "docker-compose.prod.yml" 'init: true' "Compose installs a PID 1 reaper for browser child processes"
+file_contains "docker-compose.prod.yml" 'pids_limit: 512' "Compose caps Flowise process creation"
+file_contains "docker-compose.prod.yml" 'pids: 512' "Compose deploy limits match the Flowise PID cap"
+file_contains "docker-compose.prod.yml" 'cap_drop:' "Compose declares an explicit capability drop"
+file_contains "docker-compose.prod.yml" '- ALL' "Compose drops every ambient Flowise capability"
+file_contains "docker-compose.prod.yml" 'no-new-privileges:true' "Compose forbids Flowise privilege escalation"
+file_contains "docker-compose.prod.yml" 'seccomp=./docker/seccomp/chromium.json' "Compose applies the reviewed Chromium seccomp profile"
+file_not_contains_regex "docker-compose.prod.yml" 'privileged:[[:space:]]*true|SYS_ADMIN|seccomp=unconfined' "Compose has no privileged Chromium bypass"
+file_not_contains_regex "docker-compose.prod.yml" '--no-sandbox|--disable-setuid-sandbox' "Compose has no Chromium sandbox-disable flag"
+file_contains "docker-compose.prod.yml" 'PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium-browser' "Compose binds Playwright to the installed Chromium binary"
+file_contains "docker-compose.prod.yml" 'XDG_CONFIG_HOME=/tmp/chromium/config' "Compose gives Chromium a writable temporary config root"
+file_contains "docker-compose.prod.yml" 'XDG_CACHE_HOME=/tmp/chromium/cache' "Compose gives Chromium a writable temporary cache root"
+file_contains "docker-compose.prod.yml" 'XDG_RUNTIME_DIR=/tmp/chromium/runtime' "Compose gives Chromium a writable temporary runtime root"
+file_exists "docker/seccomp/chromium.json" "Reviewed Chromium seccomp profile exists"
+file_sha256 "docker/seccomp/chromium.json" "a1a19b1ab248ef5835972e3f867613a9aa838266855a3e7e6f8b3feac2eca8d3" "Chromium seccomp profile matches the reviewed upstream-derived bytes"
+file_exists "scripts/verify-chromium-sandbox.sh" "Chromium sandbox runtime gate exists"
 file_contains "docker-compose.prod.yml" "IFRAME_ORIGINS=\${IFRAME_ORIGINS:-'self'}" "Compose defaults IFRAME_ORIGINS to CSP self"
 file_contains "docker-compose.prod.yml" 'CSP_ENFORCEMENT_MODE=${CSP_ENFORCEMENT_MODE:-compat}' "Compose defaults CSP enforcement to compat"
 file_contains "docker-compose.prod.yml" 'CSP_REPORT_ONLY_MODE=${CSP_REPORT_ONLY_MODE:-off}' "Compose defaults CSP report-only to off"
@@ -574,8 +638,11 @@ file_contains ".github/workflows/test_docker_build.yml" "push: false" "Docker te
 file_contains ".github/workflows/test_docker_build.yml" "BUILD_REVISION=" "Docker test CI injects OCI provenance"
 file_contains ".github/workflows/test_docker_build.yml" "concurrency:" "Docker test CI cancels superseded builds"
 file_contains ".github/workflows/test_docker_build.yml" "load: true" "Docker test CI loads the single-platform image for inspection"
+file_contains ".github/workflows/test_docker_build.yml" "runs-on: ubuntu-24.04" "Docker test CI pins the native amd64 runner image"
+file_contains ".github/workflows/test_docker_build.yml" 'test "$(uname -m)" = x86_64' "Docker test CI refuses architecture emulation"
 file_contains ".github/workflows/test_docker_build.yml" "provenance: false" "Docker test CI exports a classic offline-loadable image"
 file_contains ".github/workflows/test_docker_build.yml" "git ls-files --error-unmatch" "Docker test CI requires release automation to be tracked"
+file_fixed_count ".github/workflows/test_docker_build.yml" "persist-credentials: false" 2 "Docker release jobs do not retain checkout credentials"
 file_exists "scripts/verify-release-candidate.sh" "Reusable release candidate verifier exists"
 file_contains ".github/workflows/test_docker_build.yml" "bash scripts/verify-release-candidate.sh" "Docker test CI uses the reusable release candidate verifier"
 file_contains "scripts/verify-release-candidate.sh" "node scripts/release-manifest.mjs generate" "Release candidate verifier creates the canonical manifest"
@@ -585,9 +652,20 @@ file_not_contains_regex "scripts/verify-release-candidate.sh" "config_digest=.*d
 file_contains "scripts/verify-release-candidate.sh" "docker image rm" "Release candidate verifier removes the original image tag before reload"
 file_contains "scripts/verify-release-candidate.sh" "gzip -dc" "Release candidate verifier reloads only from the offline archive"
 file_contains "scripts/verify-release-candidate.sh" "--network none" "Release candidate smoke has no external network"
+file_contains "scripts/verify-release-candidate.sh" "--init" "Release candidate smoke uses the production PID 1 reaper"
 file_contains "scripts/verify-release-candidate.sh" "--read-only" "Release candidate smoke uses a read-only root filesystem"
 file_contains "scripts/verify-release-candidate.sh" "--cap-drop ALL" "Release candidate smoke drops all capabilities"
 file_contains "scripts/verify-release-candidate.sh" "no-new-privileges" "Release candidate smoke forbids privilege escalation"
+file_contains "scripts/verify-release-candidate.sh" "--pids-limit 512" "Release candidate smoke matches the production PID cap"
+file_contains "scripts/verify-release-candidate.sh" "scripts/verify-chromium-sandbox.sh" "Release candidate invokes the Chromium sandbox gate"
+file_contains "scripts/verify-chromium-sandbox.sh" "required_allow_syscalls='chroot clone unshare'" "Chromium gate requires the exact reviewed sandbox allow set"
+file_contains "scripts/verify-chromium-sandbox.sh" "chromiumSandbox: true" "Chromium gate exercises Playwright with its sandbox enabled"
+file_contains "scripts/verify-chromium-sandbox.sh" "raw_chromium_sandbox=passed" "Chromium gate exercises the raw browser binary"
+file_contains "scripts/verify-chromium-sandbox.sh" "playwright_sandbox=passed" "Chromium gate exercises the Playwright library"
+file_contains "scripts/verify-chromium-sandbox.sh" "puppeteer_sandbox=passed" "Chromium gate exercises the Puppeteer library"
+file_contains "scripts/verify-chromium-sandbox.sh" "clone3_namespace=blocked_enosys" "Chromium gate proves clone3 namespace requests stay blocked"
+file_contains "scripts/verify-chromium-sandbox.sh" "forbidden_sandbox_flags=absent" "Chromium gate proves sandbox-disable flags are absent"
+file_not_contains_regex "scripts/verify-chromium-sandbox.sh" '--no-sandbox|--disable-setuid-sandbox|seccomp=unconfined|--cap-add|--privileged' "Chromium gate has no unsafe bypass"
 file_contains ".github/workflows/test_docker_build.yml" "actions/upload-artifact@" "Docker test CI uploads the verified offline artifact"
 file_contains ".github/workflows/test_docker_build.yml" '${{ github.run_id }}' "Offline artifact identity includes the workflow run"
 file_contains ".github/workflows/test_docker_build.yml" '${{ github.run_attempt }}' "Offline artifact identity includes the workflow attempt"

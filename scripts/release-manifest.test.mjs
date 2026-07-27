@@ -26,10 +26,13 @@ const MODULE_PATH = fileURLToPath(new URL('./release-manifest.mjs', import.meta.
 const EDGE_SCRIPT_PATH = fileURLToPath(new URL('./verify-production-edge.sh', import.meta.url))
 const SECURITY_SCRIPT_PATH = fileURLToPath(new URL('./verify-security.sh', import.meta.url))
 const RELEASE_CANDIDATE_SCRIPT_PATH = fileURLToPath(new URL('./verify-release-candidate.sh', import.meta.url))
+const CHROMIUM_SANDBOX_SCRIPT_PATH = fileURLToPath(new URL('./verify-chromium-sandbox.sh', import.meta.url))
 const PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH = fileURLToPath(new URL('./publish-verified-image.sh', import.meta.url))
 const DOCKER_BUILD_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/test_docker_build.yml', import.meta.url))
 const DOCKERHUB_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-dockerhub.yml', import.meta.url))
 const READONLY_MONITOR_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/production-readonly-monitor.yml', import.meta.url))
+const CHROMIUM_SECCOMP_PROFILE_PATH = fileURLToPath(new URL('../docker/seccomp/chromium.json', import.meta.url))
+const CHROMIUM_SECCOMP_PROFILE_SHA256 = 'a1a19b1ab248ef5835972e3f867613a9aa838266855a3e7e6f8b3feac2eca8d3'
 const EXPECTED_TOOLCHAIN = Object.freeze({ node: 'v24.18.0', pnpm: '10.26.0', package_manager: 'pnpm@10.26.0' })
 const CONFIG_DIGEST = `sha256:${'a'.repeat(64)}`
 const OTHER_CONFIG_DIGEST = `sha256:${'b'.repeat(64)}`
@@ -77,8 +80,10 @@ const createFixture = ({ credentialRemote = false } = {}) => {
     write(repoRoot, 'pnpm-lock.yaml', "lockfileVersion: '9.0'\n")
     write(repoRoot, 'Dockerfile', 'FROM scratch\n')
     write(repoRoot, 'docker-compose.prod.yml', 'services: {}\n')
+    write(repoRoot, 'docker/seccomp/chromium.json', '{"defaultAction":"SCMP_ACT_ERRNO","syscalls":[]}\n')
     write(repoRoot, 'scripts/verify-release-source.sh', '#!/usr/bin/env bash\nexit 0\n')
     write(repoRoot, 'scripts/verify-security.sh', '#!/usr/bin/env bash\nexit 0\n')
+    copyFileSync(CHROMIUM_SANDBOX_SCRIPT_PATH, join(repoRoot, 'scripts/verify-chromium-sandbox.sh'))
     copyFileSync(PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH, join(repoRoot, 'scripts/publish-verified-image.sh'))
     mkdirSync(join(repoRoot, 'scripts'), { recursive: true })
     copyFileSync(MODULE_PATH, join(repoRoot, 'scripts/release-manifest.mjs'))
@@ -662,6 +667,14 @@ test('schema requires the exact fixed release input path set', () => {
     const fixture = createFixture()
     try {
         const manifest = generateManifest(manifestOptions(fixture))
+        assert.equal(
+            manifest.inputs.files.some((entry) => entry.path === 'docker/seccomp/chromium.json'),
+            true
+        )
+        assert.equal(
+            manifest.inputs.files.some((entry) => entry.path === 'scripts/verify-chromium-sandbox.sh'),
+            true
+        )
         const incomplete = {
             ...manifest,
             inputs: { ...manifest.inputs, files: manifest.inputs.files.slice(0, -1) }
@@ -670,6 +683,56 @@ test('schema requires the exact fixed release input path set', () => {
     } finally {
         fixture.cleanup()
     }
+})
+
+test('Chromium seccomp profile pins the reviewed sandbox operations and keeps clone3 on the filterable clone fallback', () => {
+    const profileBytes = readFileSync(CHROMIUM_SECCOMP_PROFILE_PATH)
+    assert.equal(createHash('sha256').update(profileBytes).digest('hex'), CHROMIUM_SECCOMP_PROFILE_SHA256)
+    const profile = JSON.parse(profileBytes)
+    assert.equal(profile.defaultAction, 'SCMP_ACT_ERRNO')
+    assert.equal(profile.defaultErrnoRet, 1)
+
+    const sandboxRules = profile.syscalls.slice(-5)
+    assert.deepEqual(sandboxRules, [
+        {
+            names: ['clone'],
+            action: 'SCMP_ACT_ALLOW',
+            args: [{ index: 0, value: 2114060288, valueTwo: 268435456, op: 'SCMP_CMP_MASKED_EQ' }],
+            excludes: { arches: ['s390', 's390x'] }
+        },
+        {
+            names: ['clone'],
+            action: 'SCMP_ACT_ALLOW',
+            args: [{ index: 0, value: 2114060288, valueTwo: 536870912, op: 'SCMP_CMP_MASKED_EQ' }],
+            excludes: { arches: ['s390', 's390x'] }
+        },
+        {
+            names: ['clone'],
+            action: 'SCMP_ACT_ALLOW',
+            args: [{ index: 0, value: 2114060288, valueTwo: 1879048192, op: 'SCMP_CMP_MASKED_EQ' }],
+            excludes: { arches: ['s390', 's390x'] }
+        },
+        {
+            names: ['unshare'],
+            action: 'SCMP_ACT_ALLOW',
+            args: [{ index: 0, value: 2114060288, valueTwo: 268435456, op: 'SCMP_CMP_MASKED_EQ' }]
+        },
+        {
+            names: ['chroot'],
+            action: 'SCMP_ACT_ALLOW'
+        }
+    ])
+
+    const socketcallRule = profile.syscalls.find((rule) => rule.names?.length === 1 && rule.names[0] === 'socketcall')
+    assert.equal(socketcallRule?.action, 'SCMP_ACT_ERRNO')
+    assert.equal(socketcallRule?.errnoRet, 38)
+    const clone3Rule = profile.syscalls.find((rule) => rule.names?.length === 1 && rule.names[0] === 'clone3')
+    assert.deepEqual(clone3Rule, {
+        names: ['clone3'],
+        action: 'SCMP_ACT_ERRNO',
+        errnoRet: 38,
+        excludes: { caps: ['CAP_SYS_ADMIN'] }
+    })
 })
 
 test('manifest files are atomically canonical and non-canonical bytes are rejected', () => {
@@ -873,10 +936,15 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
         'contents: read',
         'concurrency:',
         'timeout-minutes:',
+        'runs-on: ubuntu-24.04',
+        'test "$(uname -m)" = x86_64',
         'platforms: linux/amd64',
         'load: true',
         'push: false',
         'provenance: false',
+        'CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}',
+        'ref: ${{ env.CANDIDATE_SHA }}',
+        'persist-credentials: false',
         'git ls-files --error-unmatch',
         'pnpm audit --prod --audit-level critical',
         'bash scripts/verify-release-candidate.sh',
@@ -898,17 +966,25 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
         '--require-clean',
         'docker image rm',
         '--network none',
+        '--init',
         '--read-only',
         '--cap-drop ALL',
         'no-new-privileges',
         '--user 1000:1000',
-        '/api/v1/ping'
+        '--pids-limit 512',
+        '/api/v1/ping',
+        'scripts/verify-chromium-sandbox.sh',
+        'chromium_sandbox=passed',
+        'clone3_namespace=blocked_enosys',
+        'unsafe_chromium_flags=false'
     ]) {
         assert.equal(candidateScript.includes(required), true, `missing release candidate script contract: ${required}`)
     }
 
-    const combined = `${workflow}\n${candidateScript}`
+    const chromiumScript = readFileSync(CHROMIUM_SANDBOX_SCRIPT_PATH, 'utf8')
+    const combined = `${workflow}\n${candidateScript}\n${chromiumScript}`
     assert.doesNotMatch(combined, /docker\/login-action|push:\s*true|secrets\./)
+    assert.doesNotMatch(chromiumScript, /--no-sandbox|--disable-setuid-sandbox|seccomp=unconfined|--cap-add|--privileged/)
     assert.doesNotMatch(candidateScript, /config_digest=.*docker image inspect --format '\{\{\.Id\}\}'/)
     assert.doesNotMatch(workflow, /pnpm audit[^\n]*(?:\|\||;\s*true)/)
     assertExternalActionsAreCommitPinned(workflow, 'build-only release workflow')

@@ -200,7 +200,7 @@ class Playwright_DocumentLoaders implements INode {
             try {
                 let docs = []
 
-                const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH
+                const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.PLAYWRIGHT_EXECUTABLE_FILE_PATH
 
                 const config: PlaywrightWebBaseLoaderOptions = {
                     launchOptions: {
@@ -342,8 +342,8 @@ class Playwright_DocumentLoaders implements INode {
                 return docs
             } catch (err) {
                 if (isWebScraperPolicyError(err)) throw err
-                if (process.env.DEBUG === 'true')
-                    options.logger.error(`[${orgId}]: Error in PlaywrightWebBaseLoader: ${err.message}, on page: ${url}`)
+                options.logger.error(`[${orgId}]: Playwright web scraper failed`, err)
+                throw new Error('Playwright web scraper failed')
             }
         }
 
