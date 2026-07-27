@@ -513,6 +513,7 @@ file_contains "package.json" '"dompurify": "3.4.12"' "Root override pins DOMPuri
 file_contains "packages/ui/package.json" '"dompurify": "3.4.12"' "UI pins DOMPurify"
 file_contains "packages/agentflow/package.json" '"dompurify": "3.4.12"' "Agentflow pins DOMPurify"
 file_contains "packages/components/package.json" '"mammoth": "1.11.0"' "Components pins the remediated Mammoth release"
+file_fixed_count "packages/components/package.json" '"js-yaml": "4.3.0"' 1 "Components declares the OpenAPI Toolkit runtime YAML dependency"
 file_contains "package.json" '"release:manifest": "node scripts/release-manifest.mjs"' "package.json exposes the release manifest CLI"
 file_contains "package.json" '"test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs scripts/publish-verified-image.test.mjs scripts/deployment-bundle.test.mjs && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_flowise_production_release.py scripts/integration/test_flowise_legacy_bootstrap_docker.py"' "package.json exposes release contract tests"
 file_fixed_count "Dockerfile" "FROM docker.io/library/node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd" 2 "Dockerfile pins both Node stages to the reviewed registry index digest"

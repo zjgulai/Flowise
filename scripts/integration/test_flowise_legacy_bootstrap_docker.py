@@ -57,7 +57,7 @@ def isolated_compose_environment(work: Path, base_env: dict[str, str]) -> dict[s
     docker_config = work / "docker-config"
     plugin_dir = docker_config / "cli-plugins"
     plugin_dir.mkdir(mode=0o700, parents=True)
-    plugin = shutil.which("docker-compose")
+    plugin = shutil.which("docker-compose", path=base_env.get("PATH", os.defpath))
     if plugin is not None:
         (plugin_dir / "docker-compose").symlink_to(Path(plugin).resolve())
     safe_env = dict(base_env)
@@ -423,7 +423,7 @@ class ComposePluginDiscoveryTests(unittest.TestCase):
     def test_path_shim_is_linked_into_the_isolated_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             shutil, "which", return_value="/bin/true"
-        ), mock.patch.object(
+        ) as which, mock.patch.object(
             subprocess,
             "run",
             return_value=subprocess.CompletedProcess(["docker", "compose", "version"], 0),
@@ -435,6 +435,7 @@ class ComposePluginDiscoveryTests(unittest.TestCase):
                 (work / "docker-config/cli-plugins/docker-compose").resolve(),
                 Path("/bin/true").resolve(),
             )
+            which.assert_called_once_with("docker-compose", path="/usr/bin")
             self.assertEqual(probe.call_args.kwargs["env"], safe_env)
 
     def test_system_plugin_needs_no_path_shim(self) -> None:
