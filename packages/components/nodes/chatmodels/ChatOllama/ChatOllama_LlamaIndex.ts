@@ -1,6 +1,8 @@
 import { INode, INodeData, INodeParams } from '../../../src/Interface'
 import { getBaseClasses } from '../../../src/utils'
 import { OllamaParams, Ollama } from 'llamaindex'
+import { checkDenyList } from '../../../src/httpSecurity'
+import { buildOriginBoundSecureFetch } from '../providerUtils'
 
 class ChatOllama_LlamaIndex_ChatModels implements INode {
     label: string
@@ -192,11 +194,15 @@ class ChatOllama_LlamaIndex_ChatModels implements INode {
         const stop = nodeData.inputs?.stop as string
         const tfsZ = nodeData.inputs?.tfsZ as string
 
+        const activeBaseUrl = baseUrl || 'http://127.0.0.1:11434'
+        await checkDenyList(activeBaseUrl)
+
         const obj: OllamaParams = {
             model: modelName,
             options: {},
             config: {
-                host: baseUrl
+                host: activeBaseUrl,
+                fetch: buildOriginBoundSecureFetch(activeBaseUrl) as typeof fetch
             }
         }
 

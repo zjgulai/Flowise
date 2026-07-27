@@ -2,6 +2,8 @@ import { BaseCache } from '@langchain/core/caches'
 import { ChatOpenAI, ChatOpenAIFields } from '@langchain/openai'
 import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
 import { getBaseClasses, getCredentialData, getCredentialParam } from '../../../src/utils'
+import { checkDenyList } from '../../../src/httpSecurity'
+import { buildSecureProviderConfiguration, parseProviderHeaders } from '../providerUtils'
 
 class ChatNvdiaNIM_ChatModels implements INode {
     label: string
@@ -148,22 +150,11 @@ class ChatNvdiaNIM_ChatModels implements INode {
         if (timeout) obj.timeout = parseInt(timeout, 10)
         if (cache) obj.cache = cache
 
-        let parsedBaseOptions: any | undefined = undefined
+        const parsedBaseOptions = parseProviderHeaders(baseOptions, 'NVIDIA NIM')
 
-        if (baseOptions) {
-            try {
-                parsedBaseOptions = typeof baseOptions === 'object' ? baseOptions : JSON.parse(baseOptions)
-            } catch (exception) {
-                throw new Error("Invalid JSON in the Chat NVIDIA NIM's baseOptions: " + exception)
-            }
-        }
-
-        if (basePath || parsedBaseOptions) {
-            obj.configuration = {
-                baseURL: basePath,
-                defaultHeaders: parsedBaseOptions
-            }
-        }
+        const activeBasePath = basePath?.trim() || 'https://integrate.api.nvidia.com/v1'
+        await checkDenyList(activeBasePath)
+        obj.configuration = buildSecureProviderConfiguration(activeBasePath, parsedBaseOptions)
 
         const model = new ChatOpenAI(obj)
         return model

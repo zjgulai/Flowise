@@ -1,11 +1,13 @@
-import { Response } from 'node-fetch'
+import { Headers, Response } from 'node-fetch'
 import { secureFetch } from '../../src/httpSecurity'
 import {
+    buildOriginBoundSecureFetch,
     buildSecureProviderConfiguration,
     parseOptionalProviderNumber,
     parseProviderHeaders,
     requireProviderApiKey,
-    resolveProviderBaseUrl
+    resolveProviderBaseUrl,
+    toWebResponse
 } from './providerUtils'
 
 jest.mock('../../src/httpSecurity', () => ({
@@ -22,6 +24,7 @@ const deepseekPolicy = {
 describe('provider endpoint and input helpers', () => {
     afterEach(() => {
         delete process.env.DEEPSEEK_BASE_URL_ALLOWLIST
+        delete process.env.HTTP_SECURITY_CHECK
         jest.clearAllMocks()
     })
 
@@ -81,6 +84,15 @@ describe('provider endpoint and input helpers', () => {
         }
     )
 
+    it.each([
+        ['Host', 'models.example.com', /not allowed/i],
+        ['Authorization', 'Bearer fixture-secret', /credential header/i],
+        ['Connection', 'keep-alive', /not allowed/i],
+        ['X-Trace-Mode', 'fixture\r\nHost: internal.example', /control characters/i]
+    ])('rejects unsafe provider header %s', (name, value, expectedError) => {
+        expect(() => parseProviderHeaders({ [name]: value }, 'Deepseek')).toThrow(expectedError as RegExp)
+    })
+
     it.each(['["not-an-object"]', '{bad json', { 'X-Bad': 'line\r\nInjected: yes' }, { 'X-Bad': 42 }])(
         'rejects malformed provider headers %#',
         (headers) => {
@@ -125,12 +137,107 @@ describe('provider endpoint and input helpers', () => {
             expect.objectContaining({ method: 'GET' }),
             5,
             undefined,
-            expect.objectContaining({ enforceDefaultDenyList: true, validateUrl: expect.any(Function) })
+            expect.objectContaining({ enforceDefaultDenyList: false, validateUrl: expect.any(Function) })
         )
 
         const policy = (secureFetch as jest.Mock).mock.calls[0][4]
         expect(() => policy.validateUrl(new URL('https://api.deepseek.com/redirect'))).not.toThrow()
         expect(() => policy.validateUrl(new URL('https://other.example.com/redirect'))).toThrow(/origin/i)
         expect(() => policy.validateUrl(new URL('http://api.deepseek.com/redirect'))).toThrow(/HTTPS/i)
+    })
+
+    it('returns a WHATWG streaming response while keeping requests on the configured origin', async () => {
+        ;(secureFetch as jest.Mock).mockResolvedValue(
+            new Response(Buffer.from('stream-fixture'), {
+                status: 200,
+                headers: { 'content-type': 'text/plain' }
+            })
+        )
+        const providerFetch = buildOriginBoundSecureFetch('https://api.deepseek.com/v1')
+
+        const response = await providerFetch('https://api.deepseek.com/v1/chat/completions', { method: 'POST', body: '{}' })
+
+        expect(response).toBeInstanceOf(globalThis.Response)
+        expect(response.body?.getReader).toEqual(expect.any(Function))
+        const reader = response.body!.getReader()
+        const chunks: Uint8Array[] = []
+        let result: ReadableStreamReadResult<Uint8Array>
+        do {
+            result = await reader.read()
+            if (!result.done) chunks.push(result.value)
+        } while (!result.done)
+        expect(Buffer.concat(chunks).toString()).toBe('stream-fixture')
+
+        const policy = (secureFetch as jest.Mock).mock.calls[0][4]
+        expect(() => policy.validateUrl(new URL('https://api.deepseek.com/v1/next'))).not.toThrow()
+        expect(() => policy.validateUrl(new URL('https://redirect.example/v1/next'))).toThrow(/origin/i)
+    })
+
+    it('preserves Request method, headers, body, and signal when delegating to secureFetch', async () => {
+        ;(secureFetch as jest.Mock).mockResolvedValue(new Response('{}', { status: 200 }))
+        const controller = new AbortController()
+        const request = new globalThis.Request('https://api.deepseek.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'X-Request-Fixture': 'preserved' },
+            body: 'request-body',
+            signal: controller.signal
+        })
+        const providerFetch = buildOriginBoundSecureFetch('https://api.deepseek.com/v1')
+
+        await providerFetch(request)
+
+        const forwardedInit = (secureFetch as jest.Mock).mock.calls[0][1]
+        expect(forwardedInit.method).toBe('POST')
+        expect(new Headers(forwardedInit.headers).get('x-request-fixture')).toBe('preserved')
+        expect(Buffer.from(forwardedInit.body).toString()).toBe('request-body')
+        expect(forwardedInit.signal.aborted).toBe(false)
+        controller.abort()
+        expect(forwardedInit.signal.aborted).toBe(true)
+    })
+
+    it('supports a Buffer fixture body when bridging to a WHATWG response', async () => {
+        const response = toWebResponse({
+            body: Buffer.from('buffer-fixture'),
+            headers: new Headers({ 'content-type': 'text/plain' }),
+            status: 200,
+            statusText: 'OK',
+            url: 'https://api.deepseek.com/v1/models'
+        } as unknown as Response)
+
+        expect(response.body?.getReader).toEqual(expect.any(Function))
+        expect(await response.text()).toBe('buffer-fixture')
+        expect(response.url).toBe('https://api.deepseek.com/v1/models')
+    })
+
+    it('requires the explicit security opt-out for plain HTTP local providers', async () => {
+        expect(() => buildOriginBoundSecureFetch('http://127.0.0.1:11434')).toThrow(/HTTP_SECURITY_CHECK=false/)
+
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        ;(secureFetch as jest.Mock).mockResolvedValue(new Response('{}', { status: 200 }))
+        const localFetch = buildOriginBoundSecureFetch('http://127.0.0.1:11434')
+        await expect(localFetch('http://127.0.0.1:11434/api/chat')).resolves.toBeInstanceOf(globalThis.Response)
+
+        const policy = (secureFetch as jest.Mock).mock.calls[0][4]
+        expect(() => policy.validateUrl(new URL('http://127.0.0.1:11434/api/generate'))).not.toThrow()
+        expect(() => policy.validateUrl(new URL('http://127.0.0.1:11435/api/generate'))).toThrow(/origin/i)
+    })
+
+    it.each([
+        'https://user:password@api.deepseek.com/v1',
+        'https://api.deepseek.com/v1?token=fixture',
+        'https://api.deepseek.com/v1#fragment'
+    ])('rejects an unsafe origin-bound base URL: %s', (baseURL) => {
+        expect(() => buildOriginBoundSecureFetch(baseURL)).toThrow(/must not contain/)
+    })
+
+    it('supports an official-only provider policy with no environment allowlist', () => {
+        const googlePolicy = {
+            providerLabel: 'Google Gemini',
+            defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+            officialOrigins: ['https://generativelanguage.googleapis.com']
+        }
+
+        expect(resolveProviderBaseUrl(undefined, googlePolicy)).toBe('https://generativelanguage.googleapis.com')
+        expect(() => resolveProviderBaseUrl('https://proxy.example.com', googlePolicy)).toThrow(/origin is not allowed/)
     })
 })

@@ -1,4 +1,6 @@
 import type { ClientOptions } from 'openai'
+import { Readable } from 'node:stream'
+import type { Response as NodeFetchResponse } from 'node-fetch'
 import { validateCustomHeaders } from '../../src/headerValidation'
 import { secureFetch } from '../../src/httpSecurity'
 
@@ -6,7 +8,7 @@ export interface ProviderEndpointPolicy {
     providerLabel: string
     defaultBaseUrl: string
     officialOrigins: string[]
-    allowlistEnvVar: string
+    allowlistEnvVar?: string
 }
 
 export interface ProviderNumberOptions {
@@ -59,8 +61,8 @@ export function resolveProviderBaseUrl(input: unknown, policy: ProviderEndpointP
     }
 
     const allowedOrigins = new Set(policy.officialOrigins.map((origin) => parseAllowlistOrigin(origin, 'official provider policy')))
-    const additionalOrigins = process.env[policy.allowlistEnvVar]
-    if (additionalOrigins) {
+    const additionalOrigins = policy.allowlistEnvVar ? process.env[policy.allowlistEnvVar] : undefined
+    if (additionalOrigins && policy.allowlistEnvVar) {
         for (const entry of additionalOrigins
             .split(',')
             .map((value) => value.trim())
@@ -70,7 +72,8 @@ export function resolveProviderBaseUrl(input: unknown, policy: ProviderEndpointP
     }
 
     if (!allowedOrigins.has(url.origin)) {
-        throw invalidBasePath(policy.providerLabel, `origin is not allowed; configure ${policy.allowlistEnvVar} explicitly`)
+        const allowlistHint = policy.allowlistEnvVar ? `; configure ${policy.allowlistEnvVar} explicitly` : ''
+        throw invalidBasePath(policy.providerLabel, `origin is not allowed${allowlistHint}`)
     }
 
     return url.toString().replace(/\/+$/, '')
@@ -135,17 +138,90 @@ export function requireProviderApiKey(input: unknown, providerLabel: string): st
     return input.trim()
 }
 
-export function buildSecureProviderConfiguration(baseURL: string, headers?: Record<string, string>): ClientOptions {
-    const providerOrigin = new URL(baseURL).origin
-    const providerFetch: NonNullable<ClientOptions['fetch']> = async (url, init) => {
-        return (await secureFetch(String(url), init as any, 5, undefined, {
-            enforceDefaultDenyList: true,
-            validateUrl(target) {
-                if (target.protocol !== 'https:') throw new Error('Provider requests must use HTTPS')
-                if (target.origin !== providerOrigin) throw new Error('Provider redirect origin is not allowed')
-            }
-        })) as any
+type ProviderFetch = NonNullable<ClientOptions['fetch']>
+
+function getRequestUrl(input: Parameters<ProviderFetch>[0]): string {
+    if (typeof input === 'string' || input instanceof URL) return String(input)
+    if (input && typeof input === 'object' && 'url' in input) return String(input.url)
+    return String(input)
+}
+
+async function getRequestInit(input: Parameters<ProviderFetch>[0], init: Parameters<ProviderFetch>[1]): Promise<any> {
+    if (!(input instanceof globalThis.Request)) return init
+
+    const request = init ? new globalThis.Request(input, init as RequestInit) : input
+    const requestInit: RequestInit = {
+        ...(init ?? {}),
+        method: request.method,
+        headers: Array.from(request.headers.entries()),
+        signal: request.signal
     }
+
+    if (request.body) requestInit.body = Buffer.from(await request.arrayBuffer())
+    else delete requestInit.body
+    return requestInit
+}
+
+/** Convert node-fetch's Node Readable response into the WHATWG response expected by provider SDKs. */
+export function toWebResponse(response: NodeFetchResponse): globalThis.Response {
+    const statusForbidsBody = [101, 204, 205, 304].includes(response.status)
+    let body: BodyInit | null = statusForbidsBody ? null : (response.body as unknown as BodyInit | null)
+
+    if (body && typeof (body as unknown as { pipe?: unknown }).pipe === 'function') {
+        body = Readable.toWeb(body as unknown as Readable) as unknown as BodyInit
+    }
+
+    const webResponse = new globalThis.Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Array.from(response.headers.entries())
+    })
+
+    if (response.url) Object.defineProperty(webResponse, 'url', { configurable: true, value: response.url })
+    return webResponse
+}
+
+/**
+ * Build a provider fetch that pins DNS through secureFetch and refuses every
+ * redirect or request that leaves the configured origin. Plain HTTP is only
+ * available through the operator's explicit HTTP_SECURITY_CHECK=false opt-out.
+ */
+export function buildOriginBoundSecureFetch(baseURL: string, validateTarget?: (target: URL) => void): ProviderFetch {
+    const endpoint = new URL(baseURL)
+    if (!['http:', 'https:'].includes(endpoint.protocol)) throw new Error('Provider Base Path must use HTTP or HTTPS')
+    if (endpoint.username || endpoint.password) throw new Error('Provider Base Path must not contain credentials')
+    if (endpoint.search || endpoint.hash) throw new Error('Provider Base Path must not contain a query or fragment')
+    if (endpoint.protocol === 'http:' && process.env.HTTP_SECURITY_CHECK !== 'false') {
+        throw new Error('Provider Base Path must use HTTPS unless HTTP_SECURITY_CHECK=false')
+    }
+
+    const providerOrigin = endpoint.origin
+    const validateUrl = (target: URL): void => {
+        if (!['http:', 'https:'].includes(target.protocol)) throw new Error('Provider requests must use HTTP or HTTPS')
+        if (target.username || target.password) throw new Error('Provider requests must not contain URL credentials')
+        if (target.protocol === 'http:' && process.env.HTTP_SECURITY_CHECK !== 'false') {
+            throw new Error('Provider requests must use HTTPS unless HTTP_SECURITY_CHECK=false')
+        }
+        if (target.origin !== providerOrigin) throw new Error('Provider redirect origin is not allowed')
+        validateTarget?.(target)
+    }
+
+    return async (url, init) => {
+        const requestUrl = getRequestUrl(url)
+        validateUrl(new URL(requestUrl))
+        const requestInit = await getRequestInit(url, init)
+        const response = await secureFetch(requestUrl, requestInit, 5, undefined, {
+            // false preserves the environment-controlled local endpoint opt-out;
+            // secureFetch still enables the default deny list unless that opt-out is explicit.
+            enforceDefaultDenyList: false,
+            validateUrl
+        })
+        return toWebResponse(response)
+    }
+}
+
+export function buildSecureProviderConfiguration(baseURL: string, headers?: Record<string, string>): ClientOptions {
+    const providerFetch = buildOriginBoundSecureFetch(baseURL)
 
     return {
         baseURL,

@@ -6,6 +6,7 @@ import { CallbackManager, CallbackManagerForLLMRun } from '@langchain/core/callb
 import { ChatResult } from '@langchain/core/outputs'
 import { FailedAttemptHandler } from '@langchain/core/utils/async_caller'
 import { getBaseClasses, INode, INodeData, INodeParams } from '../../../src'
+import { checkDenyList } from '../../../src/httpSecurity'
 
 export interface ChatNemoGuardrailsCallOptions extends BaseChatModelCallOptions {
     /**
@@ -109,6 +110,8 @@ class ChatNemoGuardrailsChatModel implements INode {
     async init(nodeData: INodeData): Promise<any> {
         const configurationId = nodeData.inputs?.configurationId
         const baseUrl = nodeData.inputs?.baseUrl
+        if (typeof baseUrl !== 'string' || !baseUrl.trim()) throw new Error('Nemo Guardrails Base URL is required')
+        await checkDenyList(baseUrl)
         const obj: Partial<ChatNemoGuardrailsInput> = {
             configurationId: configurationId,
             baseUrl: baseUrl
