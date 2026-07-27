@@ -461,6 +461,7 @@ export interface IExecuteFlowParams extends IPredictionQueueAppServer {
     incomingInput: IncomingInput
     chatflow: IChatFlow
     chatId: string
+    abortControllerId?: string
     orgId: string
     workspaceId: string
     subscriptionId: string

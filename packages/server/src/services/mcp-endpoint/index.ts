@@ -185,7 +185,8 @@ async function chatflowCallback(
     chatflow: ChatFlow,
     chatId: string,
     req: Request,
-    args: any
+    args: any,
+    signal: AbortSignal
 ): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> {
     const inputType = getToolInputType(chatflow)
     const body = inputType === 'form' ? { form: args.form || {} } : { question: args.question || '' }
@@ -198,7 +199,7 @@ async function chatflowCallback(
         sourceRequest: req
     })
 
-    const result = await utilBuildChatflow(mockReq, true, ChatType.MCP)
+    const result = await utilBuildChatflow(mockReq, true, ChatType.MCP, { signal })
 
     // Extract the text response from the result
     let textContent: string
@@ -250,11 +251,30 @@ function handleServiceError(error: unknown, res: Response): boolean {
  * The token is verified against the stored config (constant-time comparison).
  */
 const handleMcpRequest = async (chatflowId: string, token: string, req: Request, res: Response): Promise<void> => {
+    const requestAbortController = new AbortController()
+    const abortRequest = () => requestAbortController.abort()
+    let activeMcpServer: McpServer | undefined
+
+    // Register disconnect handling before the first asynchronous operation so
+    // an abort during token verification or SDK connection cannot be lost.
+    req.once('aborted', abortRequest)
+    res.once('close', () => {
+        req.removeListener('aborted', abortRequest)
+        if (!res.writableFinished) {
+            abortRequest()
+        }
+        activeMcpServer?.close().catch(() => {})
+    })
+    if (req.aborted || res.destroyed) {
+        abortRequest()
+    }
+
     let chatflow: ChatFlow
     let config: IMcpServerConfig | null
 
     try {
         chatflow = await mcpServerService.getChatflowByIdAndVerifyToken(chatflowId, token)
+        if (requestAbortController.signal.aborted) return
         config = mcpServerService.parseMcpConfig(chatflow)
     } catch (error) {
         if (handleServiceError(error, res)) return
@@ -286,11 +306,19 @@ const handleMcpRequest = async (chatflowId: string, token: string, req: Request,
             }
         }
     )
+    activeMcpServer = mcpServer
 
-    mcpServer.tool(toolName, toolDescription, inputSchema as any, async (args: any) => {
+    mcpServer.tool(toolName, toolDescription, inputSchema as any, async (args: any, extra?: { signal?: AbortSignal }) => {
+        const abortFromSdk = () => abortRequest()
+        if (extra?.signal?.aborted) {
+            abortFromSdk()
+        } else {
+            extra?.signal?.addEventListener('abort', abortFromSdk, { once: true })
+        }
+
         try {
             const chatId = uuidv4() // Generate a unique chat ID for this execution
-            return await chatflowCallback(chatflow, chatId, req, args)
+            return await chatflowCallback(chatflow, chatId, req, args, requestAbortController.signal)
         } catch (error) {
             const errorMessage = getErrorMessage(error)
             logger.error(`[MCP] Error executing tool ${toolName} for chatflow ${chatflow.id}: ${errorMessage}`)
@@ -298,6 +326,8 @@ const handleMcpRequest = async (chatflowId: string, token: string, req: Request,
                 content: [{ type: 'text' as const, text: 'An error occurred while executing the tool. Please try again later.' }],
                 isError: true
             }
+        } finally {
+            extra?.signal?.removeEventListener('abort', abortFromSdk)
         }
     })
 
@@ -308,19 +338,20 @@ const handleMcpRequest = async (chatflowId: string, token: string, req: Request,
 
     // Connect server to transport
     await mcpServer.connect(transport)
+    if (requestAbortController.signal.aborted) {
+        await mcpServer.close().catch(() => {})
+        return
+    }
 
     // Clean up when the HTTP response finishes.
     // NOTE: We must NOT close the server immediately after handleRequest() because
     // the transport's handlePostRequest() fires onmessage() without awaiting it.
     // If we close() too early, the SSE response stream is terminated before the
     // McpServer has finished processing the request and writing its JSON-RPC response.
-    res.on('close', () => {
-        mcpServer.close().catch(() => {})
-    })
-
     // Handle the incoming request.
     // The transport handles POST (JSON-RPC), GET (SSE), and DELETE (session).
-    await transport.handleRequest(req, res, req.body)
+    const transportResponse = res as unknown as Parameters<StreamableHTTPServerTransport['handleRequest']>[1]
+    await transport.handleRequest(req, transportResponse, req.body)
 }
 
 /**

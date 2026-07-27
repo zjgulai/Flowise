@@ -87,6 +87,7 @@ jest.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
 // --- Import after mocking ---
 import { StatusCodes } from 'http-status-codes'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+import { ChatType } from '../../Interface'
 import mcpEndpointService from '.'
 
 // --- Helpers ---
@@ -113,12 +114,18 @@ function makeConfig(overrides: Record<string, any> = {}) {
 }
 
 function makeReq(overrides: Record<string, any> = {}) {
+    const abortedHandlers: Function[] = []
     return {
         params: { chatflowId: 'flow-123' },
         headers: {},
         query: {},
         body: { question: 'hello' },
         get: jest.fn(),
+        once: jest.fn().mockImplementation((event: string, handler: Function) => {
+            if (event === 'aborted') abortedHandlers.push(handler)
+        }),
+        removeListener: jest.fn(),
+        triggerAborted: () => abortedHandlers.forEach((fn) => fn()),
         ...overrides
     }
 }
@@ -130,7 +137,8 @@ function makeRes() {
         status: jest.fn().mockReturnThis(),
         json: jest.fn().mockReturnThis(),
         locals: {},
-        on: jest.fn().mockImplementation((event: string, handler: Function) => {
+        writableFinished: false,
+        once: jest.fn().mockImplementation((event: string, handler: Function) => {
             if (event === 'close') closeHandlers.push(handler)
         }),
         triggerClose: () => closeHandlers.forEach((fn) => fn())
@@ -246,15 +254,29 @@ describe('handleMcpRequest', () => {
         expect(registeredDesc).toContain('My Chatflow')
     })
 
-    it('sets up res.on("close") to close the MCP server', async () => {
+    it('sets up res.once("close") to close the MCP server', async () => {
         const res = makeRes()
 
         await mcpEndpointService.handleMcpRequest('flow-123', 'token', makeReq() as any, res)
 
-        expect(res.on).toHaveBeenCalledWith('close', expect.any(Function))
+        expect(res.once).toHaveBeenCalledWith('close', expect.any(Function))
         // Firing close should call mcpServer.close
         res.triggerClose()
         expect(mockMcpClose).toHaveBeenCalled()
+    })
+
+    it('passes an already-aborted signal when the client disconnects before tool execution starts', async () => {
+        const res = makeRes()
+
+        await mcpEndpointService.handleMcpRequest('flow-123', 'token', makeReq() as any, res)
+        res.triggerClose()
+
+        const toolCallback = mockMcpTool.mock.calls[0][3]
+        await toolCallback({ question: 'late request' })
+
+        expect(mockUtilBuildChatflow).toHaveBeenCalledWith(expect.anything(), true, ChatType.MCP, {
+            signal: expect.objectContaining({ aborted: true })
+        })
     })
 
     describe('input schema selection', () => {
