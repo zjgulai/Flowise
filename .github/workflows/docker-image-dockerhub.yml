@@ -40,11 +40,7 @@ jobs:
         environment:
             name: dockerhub-release
         env:
-            ARCHIVE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64.tar.gz
-            EVIDENCE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-evidence.txt
             IMAGE_TAG: flowise-ci:git-${{ github.sha }}
-            MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-manifest.json
-            IMMUTABILITY_SETTINGS_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-repository-settings.json
             PUBLISH_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
             PUBLISH_ENABLED: ${{ vars.DOCKERHUB_RELEASE_ENABLED }}
             PUBLISH_TAG: ${{ needs.validate.outputs.tag_version }}
@@ -119,6 +115,10 @@ jobs:
                       BUILD_VERSION=git-${{ github.sha }}
                       BUILD_CREATED=${{ steps.metadata.outputs.created }}
             - name: Verify the exact offline candidate before registry credentials
+              env:
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-linux-amd64.tar.gz
+                  EVIDENCE_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-evidence.txt
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-manifest.json
               run: |
                   bash scripts/verify-release-candidate.sh \
                       --image-tag "$IMAGE_TAG" \
@@ -144,6 +144,7 @@ jobs:
                   test "${PUBLISH_IMAGE%%/*}" = "$registry_username"
             - name: Verify Docker Hub server-side immutable-tag enforcement
               env:
+                  IMMUTABILITY_SETTINGS_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-repository-settings.json
                   REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
                   REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
               run: |
@@ -176,6 +177,9 @@ jobs:
                   username: ${{ secrets.DOCKERHUB_USERNAME }}
                   password: ${{ secrets.DOCKERHUB_TOKEN }}
             - name: Publish the verified image without overwriting existing tags
+              env:
+                  IMMUTABILITY_SETTINGS_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-repository-settings.json
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-manifest.json
               run: |
                   set -euo pipefail
                   bash scripts/publish-verified-image.sh \
@@ -187,4 +191,6 @@ jobs:
                       --immutability-settings "$IMMUTABILITY_SETTINGS_PATH"
             - name: Remove Docker Hub policy evidence
               if: always()
+              env:
+                  IMMUTABILITY_SETTINGS_PATH: ${{ runner.temp }}/flowise-dockerhub-git-${{ github.sha }}-repository-settings.json
               run: rm -f -- "$IMMUTABILITY_SETTINGS_PATH"

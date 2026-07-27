@@ -23,11 +23,8 @@ jobs:
         env:
             CANDIDATE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
             CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-            ARCHIVE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64.tar.gz
             ARTIFACT_NAME: flowise-release-git-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-linux-amd64
-            EVIDENCE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-evidence.txt
             IMAGE_TAG: flowise-ci:git-${{ github.event.pull_request.head.sha || github.sha }}
-            MANIFEST_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-manifest.json
             PUPPETEER_SKIP_DOWNLOAD: true
             SMOKE_NAME: flowise-ci-smoke-${{ github.run_id }}-${{ github.run_attempt }}
         steps:
@@ -97,6 +94,10 @@ jobs:
                       BUILD_VERSION=${{ steps.metadata.outputs.version }}
                       BUILD_CREATED=${{ steps.metadata.outputs.created }}
             - name: Verify canonical offline artifact and isolated runtime
+              env:
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64.tar.gz
+                  EVIDENCE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-evidence.txt
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-manifest.json
               run: |
                   bash scripts/verify-release-candidate.sh \
                       --image-tag "$IMAGE_TAG" \
@@ -111,6 +112,10 @@ jobs:
             - name: Upload short-lived offline release artifact
               if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              env:
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64.tar.gz
+                  EVIDENCE_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-evidence.txt
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-git-${{ github.event.pull_request.head.sha || github.sha }}-linux-amd64-manifest.json
               with:
                   name: ${{ env.ARTIFACT_NAME }}
                   path: |
@@ -131,9 +136,7 @@ jobs:
         environment:
             name: release-readiness
         env:
-            ARCHIVE_PATH: ${{ runner.temp }}/flowise-release/flowise-git-${{ github.sha }}-linux-amd64.tar.gz
             ARTIFACT_NAME: flowise-release-git-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-linux-amd64
-            MANIFEST_PATH: ${{ runner.temp }}/flowise-release/flowise-git-${{ github.sha }}-linux-amd64-manifest.json
         steps:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
@@ -151,6 +154,9 @@ jobs:
                   name: ${{ env.ARTIFACT_NAME }}
                   path: ${{ runner.temp }}/flowise-release
             - name: Verify the approved source and artifact remain exact
+              env:
+                  ARCHIVE_PATH: ${{ runner.temp }}/flowise-release/flowise-git-${{ github.sha }}-linux-amd64.tar.gz
+                  MANIFEST_PATH: ${{ runner.temp }}/flowise-release/flowise-git-${{ github.sha }}-linux-amd64-manifest.json
               run: |
                   set -euo pipefail
                   test "$GITHUB_SHA" = "$(git rev-parse HEAD)"

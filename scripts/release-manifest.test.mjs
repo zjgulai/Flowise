@@ -987,6 +987,7 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
     assert.doesNotMatch(chromiumScript, /--no-sandbox|--disable-setuid-sandbox|seccomp=unconfined|--cap-add|--privileged/)
     assert.doesNotMatch(candidateScript, /config_digest=.*docker image inspect --format '\{\{\.Id\}\}'/)
     assert.doesNotMatch(workflow, /pnpm audit[^\n]*(?:\|\||;\s*true)/)
+    assert.doesNotMatch(workflow, /^ {12}[A-Z_]+:\s*\$\{\{\s*runner\.temp\b/gm)
     assertExternalActionsAreCommitPinned(workflow, 'build-only release workflow')
 })
 
@@ -1061,6 +1062,7 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
     assert.match(workflow, /test "\$\{PUBLISH_IMAGE%%\/\*\}" = "\$registry_username"/)
     assert.doesNotMatch(workflow, /docker push/)
     assert.doesNotMatch(workflow, /pnpm audit[^\n]*(?:\|\||;\s*true)/)
+    assert.doesNotMatch(workflow, /^ {12}[A-Z_]+:\s*\$\{\{\s*runner\.temp\b/gm)
     assert.equal((workflow.match(/\$\{\{ inputs\.tag_version \}\}/g) ?? []).length, 1)
     assert.ok(workflow.indexOf('bash scripts/verify-release-candidate.sh') < workflow.indexOf('docker/login-action@'))
     assert.ok(workflow.indexOf('node scripts/verify-dockerhub-immutability.mjs') < workflow.indexOf('docker/login-action@'))
