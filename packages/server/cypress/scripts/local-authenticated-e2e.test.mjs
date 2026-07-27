@@ -8,6 +8,7 @@ import {
     APPROVED_SPECS,
     assertCleanupProcessSucceeded,
     assertLoopbackHttpUrl,
+    buildChildEnvironment,
     cleanupRunResources,
     formatCleanupEvent,
     formatFailureEvent,
@@ -43,6 +44,20 @@ describe('assertLoopbackHttpUrl', () => {
         for (const value of ['https://127.0.0.1:3010', 'http://flowise.example.com', 'http://user@127.0.0.1:3010']) {
             assert.throws(() => assertLoopbackHttpUrl(value), /loopback HTTP origin/)
         }
+    })
+})
+
+describe('isolated child environment', () => {
+    it('enables local owner provisioning only inside the isolated loopback harness', () => {
+        const environment = buildChildEnvironment({
+            baseUrl: 'http://127.0.0.1:3010',
+            runId: 'test-run',
+            tempDirectory: '/safe/tmp/flowise-e2e-test-run'
+        })
+
+        assert.equal(environment.ADMIN_ONLY_MODE, 'false')
+        assert.equal(environment.FLOWISE_E2E_ISOLATED, '1')
+        assert.equal(environment.APP_URL, 'http://127.0.0.1:3010')
     })
 })
 

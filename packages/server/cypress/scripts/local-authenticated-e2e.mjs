@@ -151,7 +151,7 @@ const createChildResult = (child) =>
         child.once('close', (code, signal) => resolve({ code, signal }))
     })
 
-const buildChildEnvironment = ({ baseUrl, runId, tempDirectory }) => {
+export const buildChildEnvironment = ({ baseUrl, runId, tempDirectory }) => {
     const inheritedKeys = [
         'PATH',
         'HOME',
@@ -178,6 +178,7 @@ const buildChildEnvironment = ({ baseUrl, runId, tempDirectory }) => {
 
     return {
         ...environment,
+        ADMIN_ONLY_MODE: 'false',
         APP_URL: baseUrl,
         CORS_ORIGINS: baseUrl,
         DATABASE_PATH: tempDirectory,

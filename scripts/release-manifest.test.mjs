@@ -933,6 +933,10 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
 
     assert.match(workflow, /^\s*run:\s*pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand\s*$/m)
     assert.doesNotMatch(workflow, /^\s*run:\s*pnpm test:coverage\s*$/m)
+    const cypressStep = workflow.match(/^ {12}- name: Cypress test\n(?:^ {14,}.*(?:\n|$))+/m)?.[0]
+    assert.ok(cypressStep, 'main CI must retain the Cypress test step')
+    assert.match(cypressStep, /^ {18}ADMIN_ONLY_MODE: 'false'\s*$/m)
+    assert.equal(workflow.match(/^\s+ADMIN_ONLY_MODE: 'false'\s*$/gm)?.length, 1)
 
     for (const workspace of ['agentflow', 'observe', 'components', 'server']) {
         const packageJsonPath = fileURLToPath(new URL(`../packages/${workspace}/package.json`, import.meta.url))
