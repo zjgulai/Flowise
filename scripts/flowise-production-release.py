@@ -78,6 +78,8 @@ EXPECTED_BOUNDARIES = {
     "secrets_read": False,
 }
 EXPECTED_TOOLCHAIN = {"node": "v24.18.0", "package_manager": "pnpm@10.26.0", "pnpm": "10.26.0"}
+EXPECTED_BUILDX_VERSION = "v0.34.1"
+EXPECTED_BUILDKIT_VERSION = "v0.30.0"
 EXPECTED_MANIFEST_INPUTS = (
     ".npmrc",
     ".nvmrc",
@@ -102,6 +104,8 @@ EXPECTED_EVIDENCE_KEYS = (
     "store_identity",
     "image_config_digest",
     "platform",
+    "buildx_version",
+    "buildkit_version",
     "archive_bytes",
     "archive_sha256",
     "manifest_sha256",
@@ -896,6 +900,8 @@ def validate_release_evidence(
         "store_identity": image_config_digest,
         "image_config_digest": image_config_digest,
         "platform": "linux/amd64",
+        "buildx_version": EXPECTED_BUILDX_VERSION,
+        "buildkit_version": EXPECTED_BUILDKIT_VERSION,
         "archive_bytes": str(archive_entry["bytes"]),
         "archive_sha256": archive_entry["digest"].removeprefix("sha256:"),
         "manifest_sha256": entries["release_manifest"]["digest"].removeprefix("sha256:"),

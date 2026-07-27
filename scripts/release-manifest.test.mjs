@@ -1726,6 +1726,7 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
         'production_wrapper_sha256=',
         "EXPECTED_BUILDX_VERSION='v0.34.1'",
         "EXPECTED_BUILDKIT_VERSION='v0.30.0'",
+        '[[ "$store_identity" == "$image_config_digest" ]]',
         'buildx_version=',
         'buildkit_version=',
         '--require-clean',
