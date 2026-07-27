@@ -129,6 +129,23 @@ workflow_actions_commit_pinned() {
     fi
 }
 
+apk_lock_valid() {
+    local file=$1
+    local label=$2
+    local lines
+    lines="$(wc -l < "$REPO_ROOT/$file" | tr -d '[:space:]')"
+    if [[ "$lines" -gt 100 ]] &&
+        LC_ALL=C sort -c -u "$REPO_ROOT/$file" >/dev/null 2>&1 &&
+        awk -F= '
+            NF != 2 || $1 !~ /^[A-Za-z0-9+_.-]+$/ || $2 !~ /^[A-Za-z0-9+_.~-]+$/ { invalid = 1 }
+            END { exit invalid }
+        ' "$REPO_ROOT/$file"; then
+        pass "$label"
+    else
+        fail "$label"
+    fi
+}
+
 file_contains_in_order() {
     local file=$1
     local first=$2
@@ -503,6 +520,23 @@ file_not_contains_regex "Dockerfile" '^FROM[[:space:]]+node:' "Dockerfile has no
 file_contains "Dockerfile" "COPY package.json pnpm-workspace.yaml .npmrc ./" "Dockerfile applies the pnpm workspace config before install"
 file_contains "Dockerfile" "RUN pnpm install --frozen-lockfile" "Dockerfile uses frozen lockfile install"
 file_not_contains_regex "Dockerfile" "pnpm install --frozen-lockfile[[:space:]]*\\|\\|" "Dockerfile has no pnpm install fallback"
+file_not_contains_regex "Dockerfile" '(^|[[:space:]])apk update([[:space:]]|$)' "Dockerfile does not resolve from a refreshed mutable APK index"
+apk_lock_valid "docker/apk-build.lock" "Build-stage APK lock is complete, exact, sorted and unique"
+apk_lock_valid "docker/apk-runtime.lock" "Runtime APK lock is complete, exact, sorted and unique"
+file_contains "Dockerfile" "COPY docker/apk-build.lock /tmp/apk-build.lock" "Dockerfile consumes the build-stage APK closure lock"
+file_contains "Dockerfile" "COPY docker/apk-runtime.lock /tmp/apk-runtime.lock" "Dockerfile consumes the runtime APK closure lock"
+file_contains "Dockerfile" "cmp -s /tmp/apk-build.lock /tmp/apk-actual.lock" "Build-stage transitive APK drift fails closed"
+file_contains "Dockerfile" "cmp -s /tmp/apk-runtime.lock /tmp/apk-actual.lock" "Runtime transitive APK drift fails closed"
+file_contains "Dockerfile" "ARG SOURCE_DATE_EPOCH=0" "Dockerfile gives non-release consumers a valid deterministic epoch fallback"
+file_fixed_count "Dockerfile" "ARG SOURCE_DATE_EPOCH" 3 "Dockerfile defines the epoch fallback and supplies it to both independent stages"
+file_fixed_count "Dockerfile" "SOURCE_DATE_EPOCH must be a non-negative integer" 2 "Dockerfile rejects an absent or invalid reproducible epoch in both independent stages"
+file_fixed_count "Dockerfile" 'SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" fc-cache -fv' 2 "Dockerfile makes both font cache builds consume the reproducible epoch"
+file_contains "Dockerfile" "node_modules/.cache/turbo" "Dockerfile removes the root Turbo cache before the runtime copy"
+file_contains "Dockerfile" "packages/api-documentation/.turbo" "Dockerfile removes the API documentation Turbo log before the runtime copy"
+file_contains "Dockerfile" "packages/components/.turbo" "Dockerfile removes the components Turbo log before the runtime copy"
+file_contains "Dockerfile" "packages/server/.turbo" "Dockerfile removes the server Turbo log before the runtime copy"
+file_contains "Dockerfile" "packages/ui/.turbo" "Dockerfile removes the UI Turbo log before the runtime copy"
+file_not_contains_regex "Dockerfile" 'node_modules/\.cache/\*|packages/\*/\.turbo' "Dockerfile does not use a broad wildcard to remove Turbo output"
 file_contains "Dockerfile" "COPY packages/agentflow/package.json ./packages/agentflow/" "Dockerfile installs the agentflow workspace"
 file_contains "Dockerfile" "COPY packages/observe/package.json ./packages/observe/" "Dockerfile installs the observe workspace"
 file_contains "Dockerfile" 'CMD [ "node", "packages/server/bin/run", "start" ]' "Runtime starts through the built Node CLI"
@@ -637,12 +671,16 @@ file_contains ".github/workflows/test_docker_build.yml" "file: Dockerfile" "Dock
 file_contains ".github/workflows/test_docker_build.yml" "push: false" "Docker test CI never pushes"
 file_contains ".github/workflows/test_docker_build.yml" "BUILD_REVISION=" "Docker test CI injects OCI provenance"
 file_contains ".github/workflows/test_docker_build.yml" "concurrency:" "Docker test CI cancels superseded builds"
-file_contains ".github/workflows/test_docker_build.yml" "load: true" "Docker test CI loads the single-platform image for inspection"
+file_contains ".github/workflows/test_docker_build.yml" 'outputs: type=docker,name=flowise-chinese:${{ steps.metadata.outputs.version }},rewrite-timestamp=true' "Docker test CI reproducibly exports and loads the single-platform image for inspection"
+file_fixed_count ".github/workflows/test_docker_build.yml" "rewrite-timestamp=true" 2 "Build-only and readiness images both rewrite layer timestamps"
+file_not_contains_regex ".github/workflows/test_docker_build.yml" 'load:[[:space:]]*true|--load' "Build-only and readiness images do not bypass the configured Docker exporter"
 file_contains ".github/workflows/test_docker_build.yml" "runs-on: ubuntu-24.04" "Docker test CI pins the native amd64 runner image"
 file_contains ".github/workflows/test_docker_build.yml" 'test "$(uname -m)" = x86_64' "Docker test CI refuses architecture emulation"
 file_contains ".github/workflows/test_docker_build.yml" "provenance: false" "Docker test CI exports a classic offline-loadable image"
 file_contains ".github/workflows/test_docker_build.yml" "git ls-files --error-unmatch" "Docker test CI requires release automation to be tracked"
 file_fixed_count ".github/workflows/test_docker_build.yml" "persist-credentials: false" 2 "Docker release jobs do not retain checkout credentials"
+file_fixed_count ".github/workflows/test_docker_build.yml" "version: v0.34.1" 2 "Build-only and readiness jobs pin Docker Buildx"
+file_fixed_count ".github/workflows/test_docker_build.yml" "image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f" 2 "Build-only and readiness jobs pin the BuildKit image by digest"
 file_exists "scripts/verify-release-candidate.sh" "Reusable release candidate verifier exists"
 file_contains ".github/workflows/test_docker_build.yml" "bash scripts/verify-release-candidate.sh" "Docker test CI uses the reusable release candidate verifier"
 file_contains "scripts/verify-release-candidate.sh" "node scripts/release-manifest.mjs generate" "Release candidate verifier creates the canonical manifest"
@@ -704,7 +742,11 @@ file_contains ".github/workflows/docker-image-dockerhub.yml" 'test "${PUBLISH_IM
 file_contains ".github/workflows/docker-image-dockerhub.yml" "file: Dockerfile" "Docker Hub release builds the canonical root Dockerfile"
 file_contains ".github/workflows/docker-image-dockerhub.yml" "platforms: linux/amd64" "Docker Hub release is restricted to the reviewed architecture"
 file_contains ".github/workflows/docker-image-dockerhub.yml" "git ls-files --error-unmatch" "Docker Hub release requires its automation to be tracked"
-file_contains ".github/workflows/docker-image-dockerhub.yml" "load: true" "Docker Hub release loads the candidate for verification"
+file_fixed_count ".github/workflows/docker-image-dockerhub.yml" "persist-credentials: false" 1 "Docker Hub checkout does not retain credentials"
+file_fixed_count ".github/workflows/docker-image-dockerhub.yml" "version: v0.34.1" 1 "Docker Hub release pins Docker Buildx"
+file_fixed_count ".github/workflows/docker-image-dockerhub.yml" "image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f" 1 "Docker Hub release pins the BuildKit image by digest"
+file_contains ".github/workflows/docker-image-dockerhub.yml" 'outputs: type=docker,name=flowise-chinese:git-${{ github.sha }},rewrite-timestamp=true' "Docker Hub release reproducibly exports and loads the candidate for verification"
+file_not_contains_regex ".github/workflows/docker-image-dockerhub.yml" 'load:[[:space:]]*true|--load' "Docker Hub release does not bypass the configured Docker exporter"
 file_contains ".github/workflows/docker-image-dockerhub.yml" "push: false" "Docker Hub build action cannot push an unverified image"
 file_contains ".github/workflows/docker-image-dockerhub.yml" "bash scripts/verify-release-candidate.sh" "Docker Hub release verifies the exact offline candidate"
 file_contains_in_order ".github/workflows/docker-image-dockerhub.yml" "bash scripts/verify-release-candidate.sh" "docker/login-action@" "Docker Hub candidate verification precedes registry credentials"
@@ -716,8 +758,15 @@ file_contains ".github/workflows/docker-image-dockerhub.yml" 'git tag --format='
 file_contains ".github/workflows/docker-image-dockerhub.yml" "pnpm audit --prod --audit-level high" "Docker Hub release fails closed on high and critical production advisories"
 file_contains ".github/workflows/docker-image-dockerhub.yml" "SOURCE_DATE_EPOCH:" "Docker Hub release normalizes build timestamps for independent identity comparison"
 file_contains ".github/workflows/test_docker_build.yml" "SOURCE_DATE_EPOCH:" "Build-only release normalizes build timestamps for independent identity comparison"
+file_contains ".github/workflows/docker-image-dockerhub.yml" 'SOURCE_DATE_EPOCH=${{ steps.metadata.outputs.source_date_epoch }}' "Docker Hub release passes the exact epoch as a build argument"
+file_contains ".github/workflows/test_docker_build.yml" 'SOURCE_DATE_EPOCH=${{ steps.metadata.outputs.source_date_epoch }}' "Primary build passes the exact epoch as a build argument"
+file_contains ".github/workflows/test_docker_build.yml" '--build-arg "SOURCE_DATE_EPOCH=$source_date_epoch"' "Readiness rebuild passes the same exact epoch as a build argument"
 file_contains ".github/workflows/test_docker_build.yml" "Independently rebuild and bind the candidate config identity" "Release readiness uses a separate-runner rebuild rather than trusting artifact metadata alone"
 file_contains ".github/workflows/test_docker_build.yml" 'test "$independent_config_digest" = "$expected_config_digest"' "Release readiness requires independent and primary config identities to match"
+file_contains "scripts/verify-release-candidate.sh" "EXPECTED_BUILDX_VERSION='v0.34.1'" "Release evidence verifies the pinned Buildx version"
+file_contains "scripts/verify-release-candidate.sh" "EXPECTED_BUILDKIT_VERSION='v0.30.0'" "Release evidence verifies the pinned BuildKit version"
+file_contains "scripts/deployment-bundle.mjs" "buildx_version: 'v0.34.1'" "Deployment bundle binds the Buildx evidence"
+file_contains "scripts/deployment-bundle.mjs" "buildkit_version: 'v0.30.0'" "Deployment bundle binds the BuildKit evidence"
 file_contains_in_order ".github/workflows/test_docker_build.yml" "Download the same-run offline release artifact" "docker buildx build" "Release readiness rebuild follows the same-run artifact download"
 file_contains_in_order ".github/workflows/test_docker_build.yml" "docker buildx build" 'test "$independent_config_digest" = "$expected_config_digest"' "Release readiness compares the downloaded candidate with an independently rebuilt image"
 file_contains ".github/workflows/docker-image-dockerhub.yml" "bash scripts/publish-verified-image.sh" "Docker Hub publication uses the immutable tag guard"

@@ -18,6 +18,8 @@ MANIFEST_PATH=''
 EVIDENCE_PATH=''
 SMOKE_NAME=''
 SMOKE_CREATED=false
+EXPECTED_BUILDX_VERSION='v0.34.1'
+EXPECTED_BUILDKIT_VERSION='v0.30.0'
 
 fail() {
     echo "Release candidate verification failed: $1" >&2
@@ -83,6 +85,15 @@ cleanup() {
 trap 'cleanup || true' EXIT
 
 docker image inspect "$IMAGE_TAG" >/dev/null 2>&1 || fail 'candidate image is missing'
+buildx_version_output="$(docker buildx version)" || fail 'Docker Buildx version is unavailable'
+buildx_version="$(printf '%s\n' "$buildx_version_output" | awk '$1 == "github.com/docker/buildx" { print $2 }')"
+[[ "$buildx_version" == "$EXPECTED_BUILDX_VERSION" ]] || fail 'Docker Buildx version mismatch'
+buildkit_inspect="$(docker buildx inspect --bootstrap)" || fail 'Docker BuildKit inspection failed'
+buildkit_version="$(
+    printf '%s\n' "$buildkit_inspect" |
+        awk -F': *' '$1 == "BuildKit version" { print $2 }'
+)"
+[[ "$buildkit_version" == "$EXPECTED_BUILDKIT_VERSION" ]] || fail 'Docker BuildKit version mismatch'
 store_identity="$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")"
 [[ "$store_identity" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'Docker store identity is invalid'
 [[ "$(docker image inspect --format '{{.Os}}' "$IMAGE_TAG")" == linux ]] || fail 'candidate operating system is not linux'
@@ -218,6 +229,8 @@ bash "$REPO_ROOT/scripts/verify-chromium-sandbox.sh" \
     echo "store_identity=$store_identity"
     echo "image_config_digest=$image_config_digest"
     echo 'platform=linux/amd64'
+    echo "buildx_version=$buildx_version"
+    echo "buildkit_version=$buildkit_version"
     echo "archive_bytes=$(wc -c < "$ARCHIVE_PATH" | tr -d ' ')"
     echo "archive_sha256=$(sha256sum "$ARCHIVE_PATH" | awk '{print $1}')"
     echo "manifest_sha256=$(sha256sum "$MANIFEST_PATH" | awk '{print $1}')"

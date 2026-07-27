@@ -8,25 +8,38 @@
 #   Stage 1 (builder): 安装编译依赖、安装 pnpm 依赖、构建项目
 #   Stage 2 (runtime): 保留运行时系统依赖和构建产物
 
+# Release workflows override this fallback with the exact Git commit epoch.
+ARG SOURCE_DATE_EPOCH=0
+
 # ==========================================
 # Stage 1: Builder
 # ==========================================
 FROM docker.io/library/node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS deps
 
-# 安装编译依赖和中文字体
-RUN apk update && \
+ARG SOURCE_DATE_EPOCH
+
+# 安装完整版本锁定的编译依赖和中文字体；传递依赖漂移时构建失败。
+COPY docker/apk-build.lock /tmp/apk-build.lock
+RUN case "$SOURCE_DATE_EPOCH" in \
+        ''|*[!0-9]*) echo 'SOURCE_DATE_EPOCH must be a non-negative integer' >&2; exit 1 ;; \
+    esac && \
+    awk -F: '/^P:/{package=$2} /^V:/{print package "=" $2}' /lib/apk/db/installed | LC_ALL=C sort > /tmp/apk-before.lock && \
     apk add --no-cache \
-    libc6-compat \
-    python3 \
-    make \
-    g++ \
-    build-base \
-    cairo-dev \
-    pango-dev \
-    git \
-    font-noto-cjk \
-    fontconfig && \
-    fc-cache -fv
+        gcompat=1.1.0-r4 \
+        python3=3.14.5-r0 \
+        make=4.4.1-r4 \
+        g++=15.2.0-r5 \
+        build-base=0.5-r4 \
+        cairo-dev=1.18.4-r1 \
+        pango-dev=1.57.1-r0 \
+        git=2.54.0-r0 \
+        font-noto-cjk=0_git20220127-r1 \
+        fontconfig=2.17.1-r1 && \
+    awk -F: '/^P:/{package=$2} /^V:/{print package "=" $2}' /lib/apk/db/installed | LC_ALL=C sort > /tmp/apk-after.lock && \
+    comm -13 /tmp/apk-before.lock /tmp/apk-after.lock > /tmp/apk-actual.lock && \
+    cmp -s /tmp/apk-build.lock /tmp/apk-actual.lock && \
+    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" fc-cache -fv && \
+    rm -f /tmp/apk-before.lock /tmp/apk-after.lock /tmp/apk-actual.lock /tmp/apk-build.lock
 
 # 安装 pnpm
 RUN npm install -g pnpm@10.26.0
@@ -62,8 +75,15 @@ FROM deps AS builder
 # 复制完整源代码
 COPY . .
 
-# 构建项目（排除 agentflow 和 observe 以匹配原构建行为），并清理仅构建期需要的配置
-RUN pnpm build:docker && rm -f .npmrc
+# 构建项目（排除 agentflow 和 observe 以匹配原构建行为），并清理仅构建期需要的配置和动态 Turbo 输出
+RUN pnpm build:docker && \
+    rm -f .npmrc && \
+    rm -rf \
+        node_modules/.cache/turbo \
+        packages/api-documentation/.turbo \
+        packages/components/.turbo \
+        packages/server/.turbo \
+        packages/ui/.turbo
 
 # ==========================================
 # Stage 2: Runtime
@@ -71,6 +91,7 @@ RUN pnpm build:docker && rm -f .npmrc
 FROM docker.io/library/node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS runtime
 
 # Immutable release provenance is supplied by the release pipeline.
+ARG SOURCE_DATE_EPOCH
 ARG BUILD_SOURCE
 ARG BUILD_REVISION
 ARG BUILD_VERSION
@@ -85,19 +106,27 @@ LABEL org.opencontainers.image.source="${BUILD_SOURCE}" \
     org.opencontainers.image.version="${BUILD_VERSION}" \
     org.opencontainers.image.created="${BUILD_CREATED}"
 
-# 安装当前运行时节点所需的系统依赖和工具；编译工具链只保留在 builder
-RUN apk update && \
+# 安装完整版本锁定的运行时依赖；传递依赖漂移时构建失败。
+COPY docker/apk-runtime.lock /tmp/apk-runtime.lock
+RUN case "$SOURCE_DATE_EPOCH" in \
+        ''|*[!0-9]*) echo 'SOURCE_DATE_EPOCH must be a non-negative integer' >&2; exit 1 ;; \
+    esac && \
+    awk -F: '/^P:/{package=$2} /^V:/{print package "=" $2}' /lib/apk/db/installed | LC_ALL=C sort > /tmp/apk-before.lock && \
     apk add --no-cache \
-    libc6-compat \
-    python3 \
-    cairo-dev \
-    pango-dev \
-    chromium \
-    curl \
-    font-noto-cjk \
-    fontconfig \
-    git && \
-    fc-cache -fv
+        gcompat=1.1.0-r4 \
+        python3=3.14.5-r0 \
+        cairo-dev=1.18.4-r1 \
+        pango-dev=1.57.1-r0 \
+        chromium=150.0.7871.128-r0 \
+        curl=8.21.0-r0 \
+        font-noto-cjk=0_git20220127-r1 \
+        fontconfig=2.17.1-r1 \
+        git=2.54.0-r0 && \
+    awk -F: '/^P:/{package=$2} /^V:/{print package "=" $2}' /lib/apk/db/installed | LC_ALL=C sort > /tmp/apk-after.lock && \
+    comm -13 /tmp/apk-before.lock /tmp/apk-after.lock > /tmp/apk-actual.lock && \
+    cmp -s /tmp/apk-runtime.lock /tmp/apk-actual.lock && \
+    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" fc-cache -fv && \
+    rm -f /tmp/apk-before.lock /tmp/apk-after.lock /tmp/apk-actual.lock /tmp/apk-runtime.lock
 
 # 本地浏览器加载器统一使用镜像内已安装的 Chromium
 ENV PUPPETEER_SKIP_DOWNLOAD=true
