@@ -72,6 +72,7 @@ export async function buildLoggedInUser(
         workspaceUser.lastLogin = new Date().toISOString()
         workspaceUser.updatedBy = workspaceUser.userId
         organizationUser.status = OrganizationUserStatus.ACTIVE
+        organizationUser.updatedBy = organizationUser.userId
         await workspaceUserService.updateWorkspaceUser(workspaceUser, queryRunner)
         await organizationUserService.updateOrganizationUser(organizationUser)
     }

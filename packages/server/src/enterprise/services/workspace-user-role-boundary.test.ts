@@ -1,6 +1,11 @@
 import { OrganizationUser } from '../database/entities/organization-user.entity'
 import { WorkspaceUser, WorkspaceUserStatus } from '../database/entities/workspace-user.entity'
-import { assertWorkspaceOwnerMutationAllowed, assertWorkspaceRoleAssignmentAllowed, WorkspaceUserService } from './workspace-user.service'
+import {
+    assertWorkspaceInvitationActivationAllowed,
+    assertWorkspaceOwnerMutationAllowed,
+    assertWorkspaceRoleAssignmentAllowed,
+    WorkspaceUserService
+} from './workspace-user.service'
 
 const workspace = { id: 'workspace-a', organizationId: 'org-a', name: 'Workspace A' }
 const memberRole = { id: 'member-role', organizationId: null, name: 'member', permissions: '[]' }
@@ -84,6 +89,8 @@ describe('WorkspaceUserService role tenant boundary', () => {
 
         expect(queryRunner.startTransaction).not.toHaveBeenCalled()
         expect(manager.save).not.toHaveBeenCalled()
+        expect(queryRunner.rollbackTransaction).not.toHaveBeenCalled()
+        expect(queryRunner.release).toHaveBeenCalledTimes(1)
     })
 
     it('accepts only well-formed permission arrays and enforces subset assignment', () => {
@@ -116,6 +123,33 @@ describe('WorkspaceUserService role tenant boundary', () => {
                 actorOrganizationRoleId: memberRole.id,
                 targetWorkspaceRoleId: ownerRole.id,
                 ownerRoleId: ownerRole.id
+            })
+        ).toThrow(expect.objectContaining({ statusCode: 403 }))
+    })
+
+    it('allows only the invited workspace member to activate their own membership', () => {
+        expect(() =>
+            assertWorkspaceInvitationActivationAllowed({
+                currentStatus: WorkspaceUserStatus.INVITED,
+                requestedStatus: WorkspaceUserStatus.ACTIVE,
+                targetUserId: 'target-user',
+                actorUserId: 'target-user'
+            })
+        ).not.toThrow()
+        expect(() =>
+            assertWorkspaceInvitationActivationAllowed({
+                currentStatus: WorkspaceUserStatus.INVITED,
+                requestedStatus: WorkspaceUserStatus.ACTIVE,
+                targetUserId: 'target-user',
+                actorUserId: 'admin-user'
+            })
+        ).toThrow(expect.objectContaining({ statusCode: 403 }))
+        expect(() =>
+            assertWorkspaceInvitationActivationAllowed({
+                currentStatus: WorkspaceUserStatus.INVITED,
+                requestedStatus: WorkspaceUserStatus.DISABLE,
+                targetUserId: 'target-user',
+                actorUserId: 'admin-user'
             })
         ).toThrow(expect.objectContaining({ statusCode: 403 }))
     })
@@ -203,6 +237,87 @@ describe('WorkspaceUserService role tenant boundary', () => {
 
         expect(queryRunner.startTransaction).toHaveBeenCalledTimes(1)
         expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1)
+        expect(queryRunner.release).toHaveBeenCalledTimes(1)
         expect((service as any).roleService.saveRole).not.toHaveBeenCalled()
+    })
+
+    it('forces a newly created workspace membership to invited even when the client requests active', async () => {
+        const { service } = makeHarness(customRole)
+
+        await expect(
+            service.createWorkspaceUser({
+                workspaceId: workspace.id,
+                userId: 'target-user',
+                roleId: customRole.id,
+                status: WorkspaceUserStatus.ACTIVE,
+                createdBy: 'actor-user'
+            })
+        ).resolves.toMatchObject({ status: WorkspaceUserStatus.INVITED })
+
+        expect((service as any).saveWorkspaceUser).toHaveBeenCalledWith(
+            expect.objectContaining({ status: WorkspaceUserStatus.INVITED }),
+            expect.anything()
+        )
+    })
+
+    it.each([WorkspaceUserStatus.ACTIVE, WorkspaceUserStatus.DISABLE])(
+        'rejects an administrator changing another user invitation to %s',
+        async (requestedStatus) => {
+            const { service, queryRunner } = makeHarness(customRole)
+            ;(service as any).readWorkspaceUserByWorkspaceIdUserId.mockResolvedValue({
+                workspace,
+                workspaceUser: {
+                    workspaceId: workspace.id,
+                    userId: 'target-user',
+                    roleId: customRole.id,
+                    role: customRole,
+                    status: WorkspaceUserStatus.INVITED,
+                    createdBy: 'actor-user'
+                } as WorkspaceUser
+            })
+
+            await expect(
+                service.updateWorkspaceUser(
+                    {
+                        workspaceId: workspace.id,
+                        userId: 'target-user',
+                        status: requestedStatus,
+                        updatedBy: 'actor-user'
+                    },
+                    queryRunner
+                )
+            ).rejects.toThrow('Forbidden')
+
+            expect(queryRunner.manager.save).not.toHaveBeenCalled()
+        }
+    )
+
+    it('rejects invalid empty workspace membership status before any write', async () => {
+        const { service, queryRunner } = makeHarness(customRole)
+        ;(service as any).readWorkspaceUserByWorkspaceIdUserId.mockResolvedValue({
+            workspace,
+            workspaceUser: {
+                workspaceId: workspace.id,
+                userId: 'target-user',
+                roleId: customRole.id,
+                role: customRole,
+                status: WorkspaceUserStatus.INVITED,
+                createdBy: 'actor-user'
+            } as WorkspaceUser
+        })
+
+        await expect(
+            service.updateWorkspaceUser(
+                {
+                    workspaceId: workspace.id,
+                    userId: 'target-user',
+                    status: '',
+                    updatedBy: 'actor-user'
+                },
+                queryRunner
+            )
+        ).rejects.toEqual(expect.objectContaining({ statusCode: 400 }))
+
+        expect(queryRunner.manager.save).not.toHaveBeenCalled()
     })
 })

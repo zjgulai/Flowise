@@ -55,6 +55,22 @@ export function assertWorkspaceOwnerMutationAllowed(input: {
     }
 }
 
+export function assertWorkspaceInvitationActivationAllowed(input: {
+    currentStatus?: string
+    requestedStatus?: string
+    targetUserId?: string
+    actorUserId?: string
+}): void {
+    if (
+        input.currentStatus === WorkspaceUserStatus.INVITED &&
+        input.requestedStatus !== undefined &&
+        input.requestedStatus !== WorkspaceUserStatus.INVITED &&
+        input.targetUserId !== input.actorUserId
+    ) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+    }
+}
+
 export class WorkspaceUserService {
     private dataSource: DataSource
     private userService: UserService
@@ -72,7 +88,7 @@ export class WorkspaceUserService {
     }
 
     public validateWorkspaceUserStatus(status: string | undefined) {
-        if (status && !Object.values(WorkspaceUserStatus).includes(status as WorkspaceUserStatus))
+        if (status !== undefined && !Object.values(WorkspaceUserStatus).includes(status as WorkspaceUserStatus))
             throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, WorkspaceUserErrorMessage.INVALID_WORKSPACE_USER_SATUS)
     }
 
@@ -246,7 +262,7 @@ export class WorkspaceUserService {
     }
 
     public createNewWorkspaceUser(data: Partial<WorkspaceUser>, queryRunner: QueryRunner) {
-        if (data.status) this.validateWorkspaceUserStatus(data.status)
+        if (data.status !== undefined) this.validateWorkspaceUserStatus(data.status)
         data.updatedBy = data.createdBy
 
         return queryRunner.manager.create(WorkspaceUser, data)
@@ -351,30 +367,31 @@ export class WorkspaceUserService {
 
     public async createWorkspaceUser(data: Partial<WorkspaceUser>) {
         const queryRunner = this.dataSource.createQueryRunner()
-        await queryRunner.connect()
-
-        const { workspace, workspaceUser } = await this.readWorkspaceUserByWorkspaceIdUserId(data.workspaceId, data.userId, queryRunner)
-        if (workspaceUser) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, WorkspaceUserErrorMessage.WORKSPACE_USER_ALREADY_EXISTS)
-        const assignedRole = await this.readAssignableWorkspaceRole(workspace, data.userId, data.roleId, queryRunner)
-        const createdBy = await this.userService.readUserById(data.createdBy, queryRunner)
-        if (!createdBy) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
-        await this.assertActorMayAssignWorkspaceRole(workspace, createdBy.id, assignedRole, queryRunner)
-
-        let newWorkspaceUser = this.createNewWorkspaceUser(data, queryRunner)
-        workspace.updatedBy = data.createdBy
         try {
+            await queryRunner.connect()
+
+            const { workspace, workspaceUser } = await this.readWorkspaceUserByWorkspaceIdUserId(data.workspaceId, data.userId, queryRunner)
+            if (workspaceUser)
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, WorkspaceUserErrorMessage.WORKSPACE_USER_ALREADY_EXISTS)
+            const assignedRole = await this.readAssignableWorkspaceRole(workspace, data.userId, data.roleId, queryRunner)
+            const createdBy = await this.userService.readUserById(data.createdBy, queryRunner)
+            if (!createdBy) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
+            await this.assertActorMayAssignWorkspaceRole(workspace, createdBy.id, assignedRole, queryRunner)
+
+            const workspaceUserData = { ...data, status: WorkspaceUserStatus.INVITED }
+            let newWorkspaceUser = this.createNewWorkspaceUser(workspaceUserData, queryRunner)
+            workspace.updatedBy = data.createdBy
             await queryRunner.startTransaction()
             newWorkspaceUser = await this.saveWorkspaceUser(newWorkspaceUser, queryRunner)
             await this.workspaceService.saveWorkspace(workspace, queryRunner)
             await queryRunner.commitTransaction()
+            return newWorkspaceUser
         } catch (error) {
-            await queryRunner.rollbackTransaction()
+            if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
             throw error
         } finally {
-            await queryRunner.release()
+            if (!queryRunner.isReleased) await queryRunner.release()
         }
-
-        return newWorkspaceUser
     }
 
     public async createWorkspace(data: Partial<Workspace>) {
@@ -484,7 +501,13 @@ export class WorkspaceUserService {
         }
         const updatedBy = await this.userService.readUserById(newWorkspaserUser.updatedBy, queryRunner)
         if (!updatedBy) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
-        if (newWorkspaserUser.status) this.validateWorkspaceUserStatus(newWorkspaserUser.status)
+        if (newWorkspaserUser.status !== undefined) this.validateWorkspaceUserStatus(newWorkspaserUser.status)
+        assertWorkspaceInvitationActivationAllowed({
+            currentStatus: workspaceUser.status,
+            requestedStatus: newWorkspaserUser.status,
+            targetUserId: workspaceUser.userId,
+            actorUserId: updatedBy.id
+        })
         if (newWorkspaserUser.lastLogin) this.validateWorkspaceUserLastLogin(newWorkspaserUser.lastLogin)
         newWorkspaserUser.createdBy = workspaceUser.createdBy
 

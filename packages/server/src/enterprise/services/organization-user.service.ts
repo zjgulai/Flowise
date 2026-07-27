@@ -3,6 +3,7 @@ import { DataSource, Not, QueryRunner } from 'typeorm'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { GeneralErrorMessage } from '../../utils/constants'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
+import { sanitizeUser } from '../../utils/sanitize.util'
 import { OrganizationUser, OrganizationUserStatus } from '../database/entities/organization-user.entity'
 import { Organization } from '../database/entities/organization.entity'
 import { GeneralRole } from '../database/entities/role.entity'
@@ -33,6 +34,47 @@ export function assertOrganizationOwnerMutationAllowed(input: {
     }
 }
 
+function assertOrganizationOwnerRoleTransitionAllowed(input: {
+    currentRoleId?: string
+    requestedRoleId: string
+    requestedRoleName: string
+}): void {
+    if (input.requestedRoleName === GeneralRole.OWNER && input.currentRoleId !== input.requestedRoleId) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, RoleErrorMessage.INVALID_ROLE_PERMISSIONS)
+    }
+}
+
+export function assertOrganizationOwnerContinuity(input: {
+    currentRoleId: string
+    requestedRoleId?: string
+    requestedStatus?: string
+    ownerRoleId: string
+}): void {
+    if (input.currentRoleId !== input.ownerRoleId) return
+
+    const removesOwnerRole = input.requestedRoleId !== undefined && input.requestedRoleId !== input.ownerRoleId
+    const deactivatesOwner = input.requestedStatus !== undefined && input.requestedStatus !== OrganizationUserStatus.ACTIVE
+    if (removesOwnerRole || deactivatesOwner) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, RoleErrorMessage.INVALID_ROLE_PERMISSIONS)
+    }
+}
+
+export function assertOrganizationInvitationActivationAllowed(input: {
+    currentStatus?: string
+    requestedStatus?: string
+    targetUserId?: string
+    actorUserId?: string
+}): void {
+    if (
+        input.currentStatus === OrganizationUserStatus.INVITED &&
+        input.requestedStatus !== undefined &&
+        input.requestedStatus !== OrganizationUserStatus.INVITED &&
+        input.targetUserId !== input.actorUserId
+    ) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
+    }
+}
+
 export class OrganizationUserService {
     private dataSource: DataSource
     private userService: UserService
@@ -48,7 +90,7 @@ export class OrganizationUserService {
     }
 
     public validateOrganizationUserStatus(status: string | undefined) {
-        if (status && !Object.values(OrganizationUserStatus).includes(status as OrganizationUserStatus))
+        if (status !== undefined && !Object.values(OrganizationUserStatus).includes(status as OrganizationUserStatus))
             throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, OrganizationUserErrorMessage.INVALID_ORGANIZATION_USER_SATUS)
     }
 
@@ -192,7 +234,7 @@ export class OrganizationUserService {
                 // get the user's name and email
                 const userDetails = await this.userService.readUserById(organizationOwner[0].userId, queryRunner)
                 if (userDetails) {
-                    user.user = userDetails
+                    user.user = sanitizeUser(userDetails) as User
                 }
             }
         }
@@ -213,7 +255,7 @@ export class OrganizationUserService {
     }
 
     public createNewOrganizationUser(data: Partial<OrganizationUser>, queryRunner: QueryRunner) {
-        if (data.status) this.validateOrganizationUserStatus(data.status)
+        if (data.status !== undefined) this.validateOrganizationUserStatus(data.status)
         data.updatedBy = data.createdBy
 
         return queryRunner.manager.create(OrganizationUser, data)
@@ -229,12 +271,12 @@ export class OrganizationUserService {
         targetRoleId: string | undefined,
         requestedRoleId: string | undefined,
         queryRunner: QueryRunner
-    ): Promise<void> {
+    ): Promise<string> {
         if (!organizationId || !actorUserId) {
             throw new InternalFlowiseError(StatusCodes.FORBIDDEN, GeneralErrorMessage.FORBIDDEN)
         }
         const ownerRole = await this.roleService.readGeneralRoleByName(GeneralRole.OWNER, queryRunner)
-        if (targetRoleId !== ownerRole.id && requestedRoleId !== ownerRole.id) return
+        if (targetRoleId !== ownerRole.id && requestedRoleId !== ownerRole.id) return ownerRole.id
 
         const actorMembership = await queryRunner.manager.findOneBy(OrganizationUser, {
             organizationId,
@@ -246,40 +288,42 @@ export class OrganizationUserService {
             requestedRoleId,
             ownerRoleId: ownerRole.id
         })
+        return ownerRole.id
     }
 
     public async createOrganizationUser(data: Partial<OrganizationUser>) {
         const queryRunner = this.dataSource.createQueryRunner()
-        await queryRunner.connect()
-
-        const { organization, organizationUser } = await this.readOrganizationUserByOrganizationIdUserId(
-            data.organizationId,
-            data.userId,
-            queryRunner
-        )
-        if (organizationUser)
-            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, OrganizationUserErrorMessage.ORGANIZATION_USER_ALREADY_EXISTS)
-        const role = await this.roleService.readRoleIsGeneral(data.roleId, queryRunner)
-        if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
-        const createdBy = await this.userService.readUserById(data.createdBy, queryRunner)
-        if (!createdBy) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
-        await this.assertActorMayMutateOwnerBoundary(organization.id, createdBy.id, undefined, role.id, queryRunner)
-
-        let newOrganizationUser = this.createNewOrganizationUser(data, queryRunner)
-        organization.updatedBy = data.createdBy
         try {
+            await queryRunner.connect()
+
+            const { organization, organizationUser } = await this.readOrganizationUserByOrganizationIdUserId(
+                data.organizationId,
+                data.userId,
+                queryRunner
+            )
+            if (organizationUser)
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, OrganizationUserErrorMessage.ORGANIZATION_USER_ALREADY_EXISTS)
+            const role = await this.roleService.readRoleIsGeneral(data.roleId, queryRunner)
+            if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
+            assertOrganizationOwnerRoleTransitionAllowed({ requestedRoleId: role.id, requestedRoleName: role.name })
+            const createdBy = await this.userService.readUserById(data.createdBy, queryRunner)
+            if (!createdBy) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, UserErrorMessage.USER_NOT_FOUND)
+            await this.assertActorMayMutateOwnerBoundary(organization.id, createdBy.id, undefined, role.id, queryRunner)
+
+            const organizationUserData = { ...data, status: OrganizationUserStatus.INVITED }
+            let newOrganizationUser = this.createNewOrganizationUser(organizationUserData, queryRunner)
+            organization.updatedBy = data.createdBy
             await queryRunner.startTransaction()
             newOrganizationUser = await this.saveOrganizationUser(newOrganizationUser, queryRunner)
             await this.organizationService.saveOrganization(organization, queryRunner)
             await queryRunner.commitTransaction()
+            return newOrganizationUser
         } catch (error) {
-            await queryRunner.rollbackTransaction()
+            if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
             throw error
         } finally {
-            await queryRunner.release()
+            if (!queryRunner.isReleased) await queryRunner.release()
         }
-
-        return newOrganizationUser
     }
 
     public async createOrganization(data: Pick<Organization, 'name'>, createdBy: string) {
@@ -338,54 +382,74 @@ export class OrganizationUserService {
 
     public async updateOrganizationUser(newOrganizationUser: Partial<OrganizationUser>) {
         const queryRunner = this.dataSource.createQueryRunner()
-        await queryRunner.connect()
-
-        const { organizationUser } = await this.readOrganizationUserByOrganizationIdUserId(
-            newOrganizationUser.organizationId,
-            newOrganizationUser.userId,
-            queryRunner
-        )
-        if (!organizationUser)
-            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationUserErrorMessage.ORGANIZATION_USER_NOT_FOUND)
-
-        if (newOrganizationUser.roleId) {
-            const role = await this.roleService.readRoleIsGeneral(newOrganizationUser.roleId, queryRunner)
-            if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
-        }
-
-        await this.assertActorMayMutateOwnerBoundary(
-            newOrganizationUser.organizationId,
-            newOrganizationUser.updatedBy,
-            organizationUser.roleId,
-            newOrganizationUser.roleId,
-            queryRunner
-        )
-
-        if (newOrganizationUser.status) this.validateOrganizationUserStatus(newOrganizationUser.status)
-
-        const authorizationChanged =
-            (newOrganizationUser.roleId !== undefined && newOrganizationUser.roleId !== organizationUser.roleId) ||
-            (newOrganizationUser.status !== undefined && newOrganizationUser.status !== organizationUser.status)
-
-        newOrganizationUser.createdBy = organizationUser.createdBy
-
-        let updateOrganizationUser = queryRunner.manager.merge(OrganizationUser, organizationUser, newOrganizationUser)
+        let authorizationChanged = false
+        let updateOrganizationUser: Partial<OrganizationUser> | undefined
         try {
+            await queryRunner.connect()
+
+            const { organizationUser } = await this.readOrganizationUserByOrganizationIdUserId(
+                newOrganizationUser.organizationId,
+                newOrganizationUser.userId,
+                queryRunner
+            )
+            if (!organizationUser)
+                throw new InternalFlowiseError(StatusCodes.NOT_FOUND, OrganizationUserErrorMessage.ORGANIZATION_USER_NOT_FOUND)
+
+            if (newOrganizationUser.roleId) {
+                const role = await this.roleService.readRoleIsGeneral(newOrganizationUser.roleId, queryRunner)
+                if (!role) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, RoleErrorMessage.ROLE_NOT_FOUND)
+                assertOrganizationOwnerRoleTransitionAllowed({
+                    currentRoleId: organizationUser.roleId,
+                    requestedRoleId: role.id,
+                    requestedRoleName: role.name
+                })
+            }
+
+            if (newOrganizationUser.status !== undefined) this.validateOrganizationUserStatus(newOrganizationUser.status)
+            assertOrganizationInvitationActivationAllowed({
+                currentStatus: organizationUser.status,
+                requestedStatus: newOrganizationUser.status,
+                targetUserId: organizationUser.userId,
+                actorUserId: newOrganizationUser.updatedBy
+            })
+
+            const ownerRoleId = await this.assertActorMayMutateOwnerBoundary(
+                newOrganizationUser.organizationId,
+                newOrganizationUser.updatedBy,
+                organizationUser.roleId,
+                newOrganizationUser.roleId,
+                queryRunner
+            )
+            assertOrganizationOwnerContinuity({
+                currentRoleId: organizationUser.roleId,
+                requestedRoleId: newOrganizationUser.roleId,
+                requestedStatus: newOrganizationUser.status,
+                ownerRoleId
+            })
+
+            authorizationChanged =
+                (newOrganizationUser.roleId !== undefined && newOrganizationUser.roleId !== organizationUser.roleId) ||
+                (newOrganizationUser.status !== undefined && newOrganizationUser.status !== organizationUser.status)
+
+            newOrganizationUser.createdBy = organizationUser.createdBy
+            let mergedOrganizationUser = queryRunner.manager.merge(OrganizationUser, organizationUser, newOrganizationUser)
             await queryRunner.startTransaction()
-            updateOrganizationUser = await this.saveOrganizationUser(updateOrganizationUser, queryRunner)
+            mergedOrganizationUser = await this.saveOrganizationUser(mergedOrganizationUser, queryRunner)
             await queryRunner.commitTransaction()
+            updateOrganizationUser = mergedOrganizationUser
         } catch (error) {
-            await queryRunner.rollbackTransaction()
+            if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction()
             throw error
         } finally {
-            await queryRunner.release()
+            if (!queryRunner.isReleased) await queryRunner.release()
         }
 
-        if (authorizationChanged && updateOrganizationUser.userId) {
-            await destroyAllSessionsForUser(updateOrganizationUser.userId)
+        const committedOrganizationUser = updateOrganizationUser as Partial<OrganizationUser>
+        if (authorizationChanged && committedOrganizationUser.userId) {
+            await destroyAllSessionsForUser(committedOrganizationUser.userId)
         }
 
-        return updateOrganizationUser
+        return committedOrganizationUser
     }
 
     public async deleteOrganizationUser(queryRunner: QueryRunner, organizationId: string | undefined, userId: string | undefined) {

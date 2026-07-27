@@ -174,6 +174,13 @@ describe('buildLoggedInUser', () => {
 
         expect(harness.updateWorkspaceUser).toHaveBeenCalledTimes(1)
         expect(harness.updateOrganizationUser).toHaveBeenCalledTimes(1)
+        expect(harness.updateOrganizationUser).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: user.id,
+                status: OrganizationUserStatus.ACTIVE,
+                updatedBy: user.id
+            })
+        )
     })
 
     it.each(['workspace', 'organization'] as const)('rejects inactive %s membership without activating it', async (membership) => {
