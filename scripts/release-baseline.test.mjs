@@ -158,8 +158,9 @@ test('compiler toolchain stays in the builder and is excluded from the runtime s
     const runtime = source.slice(runtimeOffset)
     for (const packageName of ['make', 'g++', 'build-base']) {
         const escapedPackageName = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        const packagePattern = new RegExp(`^\\s*${escapedPackageName}\\s*\\\\?$`, 'm')
-        assert.match(builder, packagePattern, `builder must retain ${packageName}`)
-        assert.doesNotMatch(runtime, packagePattern, `runtime must exclude ${packageName}`)
+        const pinnedBuilderPattern = new RegExp(`^\\s*${escapedPackageName}=[A-Za-z0-9+_.~-]+\\s*\\\\?$`, 'm')
+        const runtimePattern = new RegExp(`^\\s*${escapedPackageName}(?:=[A-Za-z0-9+_.~-]+)?\\s*\\\\?$`, 'm')
+        assert.match(builder, pinnedBuilderPattern, `builder must retain an exact ${packageName} version`)
+        assert.doesNotMatch(runtime, runtimePattern, `runtime must exclude ${packageName}`)
     }
 })

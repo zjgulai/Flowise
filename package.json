@@ -37,7 +37,7 @@
         "release:manifest": "node scripts/release-manifest.mjs",
         "release:baseline": "node scripts/release-baseline.mjs",
         "release:slim-probe": "bash scripts/verify-runtime-without-compilers.sh",
-        "test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs scripts/publish-verified-image.test.mjs scripts/deployment-bundle.test.mjs && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_flowise_production_release.py",
+        "test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs scripts/publish-verified-image.test.mjs scripts/deployment-bundle.test.mjs && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_flowise_production_release.py scripts/integration/test_flowise_legacy_bootstrap_docker.py",
         "migration:create": "pnpm typeorm migration:create",
         "changeset": "changeset",
         "changeset:version": "changeset version"
@@ -61,6 +61,7 @@
         "eslint-plugin-react-hooks": "^4.6.0",
         "eslint-plugin-unused-imports": "^2.0.0",
         "husky": "^8.0.1",
+        "js-yaml": "4.3.0",
         "kill-port": "2.0.1",
         "lint-staged": "^13.0.3",
         "prettier": "^2.7.1",

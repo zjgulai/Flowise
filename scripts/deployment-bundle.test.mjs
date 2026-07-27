@@ -56,6 +56,8 @@ const createFixture = () => {
     write(repoRoot, 'pnpm-lock.yaml', "lockfileVersion: '9.0'\n")
     write(repoRoot, 'Dockerfile', 'FROM scratch\n')
     const composePath = write(repoRoot, 'docker-compose.prod.yml', 'services:\n    flowise:\n        image: ${FLOWISE_IMAGE}\n')
+    write(repoRoot, 'docker/apk-build.lock', 'build-package=1-r0\n')
+    write(repoRoot, 'docker/apk-runtime.lock', 'runtime-package=1-r0\n')
     const seccompPath = write(repoRoot, 'docker/seccomp/chromium.json', '{"defaultAction":"SCMP_ACT_ERRNO","syscalls":[]}\n')
     const wrapperPath = write(repoRoot, 'scripts/flowise-production-release.py', '#!/usr/bin/env python3\nraise SystemExit(0)\n')
     write(repoRoot, 'scripts/verify-release-source.sh', '#!/usr/bin/env bash\nexit 0\n')
@@ -103,6 +105,8 @@ const createFixture = () => {
             `store_identity=sha256:${'b'.repeat(64)}`,
             `image_config_digest=${CONFIG_DIGEST}`,
             'platform=linux/amd64',
+            'buildx_version=v0.34.1',
+            'buildkit_version=v0.30.0',
             `archive_bytes=${archiveBytes.length}`,
             `archive_sha256=${sha256Hex(archiveBytes)}`,
             `manifest_sha256=${sha256Hex(readFileSync(manifestPath))}`,

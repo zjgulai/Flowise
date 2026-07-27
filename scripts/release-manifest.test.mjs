@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { gzipSync, zstdCompressSync } from 'node:zlib'
+import { load as loadYaml } from 'js-yaml'
 
 import {
     canonicalStringify,
@@ -33,6 +34,9 @@ const PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH = fileURLToPath(new URL('./publish-veri
 const MAIN_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/main.yml', import.meta.url))
 const DOCKER_BUILD_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/test_docker_build.yml', import.meta.url))
 const DOCKERHUB_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-dockerhub.yml', import.meta.url))
+const ROOT_DOCKERFILE_PATH = fileURLToPath(new URL('../Dockerfile', import.meta.url))
+const APK_BUILD_LOCK_PATH = fileURLToPath(new URL('../docker/apk-build.lock', import.meta.url))
+const APK_RUNTIME_LOCK_PATH = fileURLToPath(new URL('../docker/apk-runtime.lock', import.meta.url))
 const READONLY_MONITOR_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/production-readonly-monitor.yml', import.meta.url))
 const CHROMIUM_SECCOMP_PROFILE_PATH = fileURLToPath(new URL('../docker/seccomp/chromium.json', import.meta.url))
 const CHROMIUM_SECCOMP_PROFILE_SHA256 = 'a1a19b1ab248ef5835972e3f867613a9aa838266855a3e7e6f8b3feac2eca8d3'
@@ -44,6 +48,14 @@ const REMOTE_PASSWORD_SENTINEL = 'REMOTE_PASSWORD_SENTINEL'
 const REMOTE_QUERY_SENTINEL = 'REMOTE_QUERY_SENTINEL'
 const REMOTE_FRAGMENT_SENTINEL = 'REMOTE_FRAGMENT_SENTINEL'
 const FIXED_NOW = '2026-07-12T00:00:00.000Z'
+const BUILD_PUSH_ACTION = 'docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8'
+const SETUP_BUILDX_ACTION = 'docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd'
+const BUILDX_VERSION = 'v0.34.1'
+const BUILDKIT_IMAGE = 'moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f'
+const PINNED_BUILDX_STEP_NAME = 'Set up the pinned Docker Buildx and BuildKit toolchain'
+const PRIMARY_BUILD_STEP_NAME = 'Build root Dockerfile without pushing'
+const READINESS_REBUILD_STEP_NAME = 'Independently rebuild and bind the candidate config identity'
+const DOCKERHUB_BUILD_STEP_NAME = 'Build the canonical current-source candidate without pushing'
 
 const writeTarOctal = (header, offset, length, value) => {
     const octal = value.toString(8)
@@ -121,6 +133,8 @@ const createFixture = ({ credentialRemote = false } = {}) => {
     write(repoRoot, 'pnpm-lock.yaml', "lockfileVersion: '9.0'\n")
     write(repoRoot, 'Dockerfile', 'FROM scratch\n')
     write(repoRoot, 'docker-compose.prod.yml', 'services: {}\n')
+    write(repoRoot, 'docker/apk-build.lock', 'build-package=1-r0\n')
+    write(repoRoot, 'docker/apk-runtime.lock', 'runtime-package=1-r0\n')
     write(repoRoot, 'docker/seccomp/chromium.json', '{"defaultAction":"SCMP_ACT_ERRNO","syscalls":[]}\n')
     write(repoRoot, 'scripts/verify-release-source.sh', '#!/usr/bin/env bash\nexit 0\n')
     write(repoRoot, 'scripts/verify-security.sh', '#!/usr/bin/env bash\nexit 0\n')
@@ -331,6 +345,181 @@ const assertExternalActionsAreCommitPinned = (workflow, label) => {
         if (action.startsWith('./')) continue
         assert.match(action, /^[^@\s]+@[0-9a-f]{40}$/, `${label} action is not commit-pinned: ${action}`)
     }
+}
+
+const parseWorkflowDocument = (workflowSource, label) => {
+    assert.equal(typeof workflowSource, 'string', `${label} source must be text`)
+    const workflow = loadYaml(workflowSource)
+    assert.ok(workflow && typeof workflow === 'object' && !Array.isArray(workflow), `${label} must be a YAML object`)
+    assert.ok(workflow.jobs && typeof workflow.jobs === 'object' && !Array.isArray(workflow.jobs), `${label} jobs are missing`)
+    return workflow
+}
+
+const requireNamedWorkflowStep = (workflow, jobId, stepName, label) => {
+    const steps = workflow.jobs?.[jobId]?.steps
+    assert.ok(Array.isArray(steps), `${label} job ${jobId} steps are missing`)
+    const matches = steps.filter((step) => step && typeof step === 'object' && !Array.isArray(step) && step.name === stepName)
+    assert.equal(matches.length, 1, `${label} must contain exactly one ${jobId}/${stepName} step`)
+    return matches[0]
+}
+
+const parseActiveBuildArgs = (value, label) => {
+    assert.equal(typeof value, 'string', `${label} build-args must be an active YAML scalar`)
+    const entries = {}
+    for (const rawLine of value.split('\n')) {
+        const line = rawLine.trim()
+        if (!line) continue
+        assert.doesNotMatch(line, /^#/, `${label} build-args must not use commented contract text`)
+        const separator = line.indexOf('=')
+        assert.ok(separator > 0, `${label} build-arg is malformed: ${line}`)
+        const key = line.slice(0, separator)
+        assert.match(key, /^[A-Z][A-Z0-9_]*$/, `${label} build-arg key is malformed: ${key}`)
+        assert.equal(Object.hasOwn(entries, key), false, `${label} build-arg is duplicated: ${key}`)
+        entries[key] = line.slice(separator + 1)
+    }
+    return entries
+}
+
+const activeShellLines = (run, label) => {
+    assert.equal(typeof run, 'string', `${label} run must be an active YAML scalar`)
+    return run
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#'))
+}
+
+const requireSingleActiveLine = (lines, expected, label) => {
+    const indexes = lines.flatMap((line, indexValue) => (line === expected ? [indexValue] : []))
+    assert.equal(indexes.length, 1, `${label} must be one active command in the named step`)
+    return indexes[0]
+}
+
+const validatePinnedBuildxStep = (workflow, jobId, stepName = PINNED_BUILDX_STEP_NAME) => {
+    const step = requireNamedWorkflowStep(workflow, jobId, stepName, `${jobId} Buildx setup`)
+    assert.equal(step.uses, SETUP_BUILDX_ACTION)
+    assert.deepEqual(step.with, {
+        version: BUILDX_VERSION,
+        driver: 'docker-container',
+        'driver-opts': `image=${BUILDKIT_IMAGE}`
+    })
+    return step
+}
+
+const validatePrimaryBuildStep = (workflowSource) => {
+    const workflow = parseWorkflowDocument(workflowSource, 'build-only workflow')
+    validatePinnedBuildxStep(workflow, 'build')
+    const metadata = requireNamedWorkflowStep(workflow, 'build', 'Resolve immutable build metadata', 'primary build metadata')
+    requireSingleActiveLine(
+        activeShellLines(metadata.run, 'primary build metadata'),
+        'echo "source_date_epoch=$(git show -s --format=%ct "$CANDIDATE_SHA")" >> "$GITHUB_OUTPUT"',
+        'primary SOURCE_DATE_EPOCH producer'
+    )
+    const step = requireNamedWorkflowStep(workflow, 'build', PRIMARY_BUILD_STEP_NAME, 'primary build')
+    assert.equal(step.uses, BUILD_PUSH_ACTION)
+    assert.equal(step.env?.SOURCE_DATE_EPOCH, '${{ steps.metadata.outputs.source_date_epoch }}')
+    assert.equal(step.with?.context, '.')
+    assert.equal(step.with?.file, 'Dockerfile')
+    assert.equal(step.with?.platforms, 'linux/amd64')
+    assert.equal(step.with?.outputs, 'type=docker,name=flowise-chinese:${{ steps.metadata.outputs.version }},rewrite-timestamp=true')
+    assert.equal(step.with?.load, undefined)
+    assert.equal(step.with?.push, false)
+    assert.equal(step.with?.provenance, false)
+    assert.deepEqual(parseActiveBuildArgs(step.with?.['build-args'], 'primary build'), {
+        SOURCE_DATE_EPOCH: '${{ steps.metadata.outputs.source_date_epoch }}',
+        BUILD_SOURCE: '${{ steps.metadata.outputs.source }}',
+        BUILD_REVISION: '${{ steps.metadata.outputs.revision }}',
+        BUILD_VERSION: '${{ steps.metadata.outputs.version }}',
+        BUILD_CREATED: '${{ steps.metadata.outputs.created }}'
+    })
+    return step
+}
+
+const validateReadinessRebuildStep = (workflowSource) => {
+    const workflow = parseWorkflowDocument(workflowSource, 'build-only workflow')
+    validatePinnedBuildxStep(workflow, 'release_readiness')
+    const step = requireNamedWorkflowStep(workflow, 'release_readiness', READINESS_REBUILD_STEP_NAME, 'readiness rebuild')
+    assert.equal(step.uses, undefined)
+    assert.equal(step.env?.INDEPENDENT_ARCHIVE_PATH, '${{ runner.temp }}/flowise-release-readiness-independent.tar.gz')
+    const lines = activeShellLines(step.run, 'readiness rebuild')
+    requireSingleActiveLine(lines, 'source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"', 'readiness SOURCE_DATE_EPOCH producer')
+    const buildIndex = requireSingleActiveLine(
+        lines,
+        'SOURCE_DATE_EPOCH="$source_date_epoch" docker buildx build \\',
+        'readiness build invocation'
+    )
+    const outputIndex = requireSingleActiveLine(
+        lines,
+        '--output "type=docker,name=$REBUILD_TAG,rewrite-timestamp=true" \\',
+        'readiness Docker exporter'
+    )
+    const epochIndex = requireSingleActiveLine(
+        lines,
+        '--build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \\',
+        'readiness SOURCE_DATE_EPOCH build argument'
+    )
+    const independentDigestIndex = requireSingleActiveLine(
+        lines,
+        'independent_config_digest="$(node scripts/release-manifest.mjs verify-archive \\',
+        'readiness independently derived config digest'
+    )
+    const expectedDigestIndex = lines.findIndex((line) => line.startsWith('expected_config_digest="$(jq -er '))
+    assert.notEqual(expectedDigestIndex, -1, 'readiness expected config digest assignment must be active')
+    const equalityIndex = requireSingleActiveLine(
+        lines,
+        'test "$independent_config_digest" = "$expected_config_digest"',
+        'readiness raw config digest equality'
+    )
+    assert.ok(buildIndex < outputIndex)
+    assert.ok(outputIndex < epochIndex)
+    assert.ok(epochIndex < independentDigestIndex)
+    assert.ok(independentDigestIndex < expectedDigestIndex)
+    assert.ok(expectedDigestIndex < equalityIndex)
+    assert.equal(lines[equalityIndex + 1], 'cleanup_independent_rebuild')
+    assert.equal(lines[equalityIndex + 2], 'trap - EXIT')
+    assert.equal(equalityIndex + 2, lines.length - 1, 'readiness digest equality must remain on the executed top-level tail')
+    assert.equal(
+        lines.some((line) => line === '--load \\' || line === '--load'),
+        false
+    )
+    return step
+}
+
+const validateDockerHubBuildStep = (workflowSource) => {
+    const workflow = parseWorkflowDocument(workflowSource, 'Docker Hub workflow')
+    validatePinnedBuildxStep(workflow, 'publish', 'Set up Docker Buildx')
+    const checkout = requireNamedWorkflowStep(workflow, 'publish', 'Checkout the exact source revision', 'Docker Hub checkout')
+    assert.equal(checkout.with?.['persist-credentials'], false)
+    const metadata = requireNamedWorkflowStep(workflow, 'publish', 'Resolve immutable OCI metadata', 'Docker Hub metadata')
+    requireSingleActiveLine(
+        activeShellLines(metadata.run, 'Docker Hub metadata'),
+        `printf 'source_date_epoch=%s\\n' "$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"`,
+        'Docker Hub SOURCE_DATE_EPOCH producer'
+    )
+    const step = requireNamedWorkflowStep(workflow, 'publish', DOCKERHUB_BUILD_STEP_NAME, 'Docker Hub build')
+    assert.equal(step.uses, BUILD_PUSH_ACTION)
+    assert.equal(step.env?.SOURCE_DATE_EPOCH, '${{ steps.metadata.outputs.source_date_epoch }}')
+    assert.equal(step.with?.context, '.')
+    assert.equal(step.with?.file, 'Dockerfile')
+    assert.equal(step.with?.platforms, 'linux/amd64')
+    assert.equal(step.with?.outputs, 'type=docker,name=flowise-chinese:git-${{ github.sha }},rewrite-timestamp=true')
+    assert.equal(step.with?.load, undefined)
+    assert.equal(step.with?.push, false)
+    assert.equal(step.with?.provenance, false)
+    assert.deepEqual(parseActiveBuildArgs(step.with?.['build-args'], 'Docker Hub build'), {
+        SOURCE_DATE_EPOCH: '${{ steps.metadata.outputs.source_date_epoch }}',
+        BUILD_SOURCE: '${{ steps.metadata.outputs.source }}',
+        BUILD_REVISION: '${{ github.sha }}',
+        BUILD_VERSION: 'git-${{ github.sha }}',
+        BUILD_CREATED: '${{ steps.metadata.outputs.created }}'
+    })
+    return step
+}
+
+const replaceWorkflowTextOnce = (workflowSource, expected, replacement, label) => {
+    const firstIndex = workflowSource.indexOf(expected)
+    assert.notEqual(firstIndex, -1, `${label} mutation target is missing`)
+    assert.equal(workflowSource.indexOf(expected, firstIndex + expected.length), -1, `${label} mutation target is ambiguous`)
+    return `${workflowSource.slice(0, firstIndex)}${replacement}${workflowSource.slice(firstIndex + expected.length)}`
 }
 
 test('action pin validation covers uses beneath named workflow steps', () => {
@@ -1458,9 +1647,46 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
     }
 })
 
+test('root Dockerfile removes dynamic Turbo output and supplies a validated epoch to fontconfig', () => {
+    const dockerfile = readFileSync(ROOT_DOCKERFILE_PATH, 'utf8')
+    const buildLock = readFileSync(APK_BUILD_LOCK_PATH, 'utf8').trim().split('\n')
+    const runtimeLock = readFileSync(APK_RUNTIME_LOCK_PATH, 'utf8').trim().split('\n')
+    const cleanup = dockerfile.match(/RUN pnpm build:docker[\s\S]*?(?=\n\n# ==========================================)/)?.[0]
+
+    assert.ok(cleanup, 'Dockerfile must clean build-only output before the runtime copy')
+    for (const [label, entries] of [
+        ['build', buildLock],
+        ['runtime', runtimeLock]
+    ]) {
+        assert.ok(entries.length > 100, `${label} APK lock must bind the complete transitive closure`)
+        assert.deepEqual(entries, [...new Set(entries)].sort(), `${label} APK lock must be sorted and unique`)
+        assert.equal(
+            entries.every((entry) => /^[A-Za-z0-9+_.-]+=[A-Za-z0-9+_.~-]+$/.test(entry)),
+            true,
+            `${label} APK lock entries must contain exact versions`
+        )
+    }
+    assert.doesNotMatch(dockerfile, /\bapk update\b/)
+    assert.match(dockerfile, /COPY docker\/apk-build\.lock \/tmp\/apk-build\.lock/)
+    assert.match(dockerfile, /COPY docker\/apk-runtime\.lock \/tmp\/apk-runtime\.lock/)
+    assert.equal(dockerfile.match(/comm -13 \/tmp\/apk-before\.lock \/tmp\/apk-after\.lock/g)?.length, 2)
+    assert.match(dockerfile, /cmp -s \/tmp\/apk-build\.lock \/tmp\/apk-actual\.lock/)
+    assert.match(dockerfile, /cmp -s \/tmp\/apk-runtime\.lock \/tmp\/apk-actual\.lock/)
+    assert.equal(dockerfile.match(/^ARG SOURCE_DATE_EPOCH=0$/gm)?.length, 1)
+    assert.equal(dockerfile.match(/^ARG SOURCE_DATE_EPOCH$/gm)?.length, 2)
+    assert.equal(dockerfile.match(/SOURCE_DATE_EPOCH must be a non-negative integer/g)?.length, 2)
+    assert.equal(dockerfile.match(/SOURCE_DATE_EPOCH="\$SOURCE_DATE_EPOCH" fc-cache -fv/g)?.length, 2)
+    assert.match(
+        cleanup,
+        /rm -rf \\\n\s+node_modules\/\.cache\/turbo \\\n\s+packages\/api-documentation\/\.turbo \\\n\s+packages\/components\/\.turbo \\\n\s+packages\/server\/\.turbo \\\n\s+packages\/ui\/\.turbo/
+    )
+    assert.doesNotMatch(cleanup, /node_modules\/\.cache\/\*|packages\/\*\/\.turbo/)
+})
+
 test('build-only Docker CI produces and reconsumes a canonical offline release artifact without registry side effects', () => {
     const workflow = readFileSync(DOCKER_BUILD_WORKFLOW_PATH, 'utf8')
     const candidateScript = readFileSync(RELEASE_CANDIDATE_SCRIPT_PATH, 'utf8')
+    validatePrimaryBuildStep(workflow)
 
     for (const required of [
         'permissions:',
@@ -1469,11 +1695,6 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
         'timeout-minutes:',
         'runs-on: ubuntu-24.04',
         'test "$(uname -m)" = x86_64',
-        'platforms: linux/amd64',
-        'SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}',
-        'load: true',
-        'push: false',
-        'provenance: false',
         'CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}',
         'ref: ${{ env.CANDIDATE_SHA }}',
         'persist-credentials: false',
@@ -1503,6 +1724,10 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
         'node "$REPO_ROOT/scripts/deployment-bundle.mjs" verify',
         'production_compose_sha256=',
         'production_wrapper_sha256=',
+        "EXPECTED_BUILDX_VERSION='v0.34.1'",
+        "EXPECTED_BUILDKIT_VERSION='v0.30.0'",
+        'buildx_version=',
+        'buildkit_version=',
         '--require-clean',
         'docker image rm',
         '--network none',
@@ -1533,6 +1758,7 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
 
 test('manual release-readiness verification is main-only, environment-gated and read-only', () => {
     const workflow = readFileSync(DOCKER_BUILD_WORKFLOW_PATH, 'utf8')
+    validateReadinessRebuildStep(workflow)
 
     for (const required of [
         "github.event_name == 'workflow_dispatch'",
@@ -1540,9 +1766,6 @@ test('manual release-readiness verification is main-only, environment-gated and 
         'name: release-readiness',
         'timeout-minutes: 120',
         'actions/download-artifact@',
-        'Independently rebuild and bind the candidate config identity',
-        'docker buildx build',
-        'test "$independent_config_digest" = "$expected_config_digest"',
         'expected_tag="flowise-chinese:git-${GITHUB_SHA}"',
         'expected_source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"',
         'expected_version="git-${GITHUB_SHA}"',
@@ -1558,18 +1781,14 @@ test('manual release-readiness verification is main-only, environment-gated and 
         assert.equal(workflow.includes(required), true, `missing release-readiness contract: ${required}`)
     }
 
-    const downloadIndex = workflow.indexOf('actions/download-artifact@')
-    const independentBuildIndex = workflow.indexOf('docker buildx build')
-    const identityComparisonIndex = workflow.indexOf('test "$independent_config_digest" = "$expected_config_digest"')
-    assert.ok(downloadIndex < independentBuildIndex)
-    assert.ok(independentBuildIndex < identityComparisonIndex)
-
     assert.doesNotMatch(workflow, /\bssh\b|\bscp\b|docker\/login-action|push:\s*true|secrets\./i)
     assert.doesNotMatch(workflow, /manifest\.image\.(?:tag|config_digest)/)
+    assert.doesNotMatch(workflow, /^\s+load:\s*true\s*$|--load\b/m)
 })
 
 test('Docker Hub publishing validates a reviewed alias before credentials and builds only the canonical root Dockerfile', () => {
     const workflow = readFileSync(DOCKERHUB_WORKFLOW_PATH, 'utf8')
+    validateDockerHubBuildStep(workflow)
 
     for (const required of [
         'type: string',
@@ -1583,13 +1802,8 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
         "if: github.ref == 'refs/heads/main'",
         '[[ ${#TAG_VERSION} -le 128 ]]',
         '[[ "$TAG_VERSION" =~',
-        'file: Dockerfile',
-        'platforms: linux/amd64',
-        'SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}',
         'pnpm audit --prod --audit-level high',
         'git ls-files --error-unmatch',
-        'load: true',
-        'push: false',
         'bash scripts/verify-release-candidate.sh',
         'git tag --format=',
         'BUILD_REVISION=${{ github.sha }}',
@@ -1612,6 +1826,7 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
         workflow,
         /default:\s*['"]?latest|docker\/Dockerfile|docker\/worker\/Dockerfile|npm install -g flowise|push:\s*true/
     )
+    assert.doesNotMatch(workflow, /^\s+load:\s*true\s*$|--load\b/m)
     assert.doesNotMatch(workflow, /PUBLISH_IMAGE:\s*flowiseai\/flowise/)
     assert.doesNotMatch(workflow, /\/v2\/users\/login\//)
     assert.match(workflow, /\[\[ "\$PUBLISH_IMAGE" != flowiseai\/\* \]\]/)
@@ -1634,6 +1849,131 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
     assert.ok(workflow.indexOf('test "$actual_config_digest" = "$EXPECTED_IMAGE_CONFIG_DIGEST"') < workflow.indexOf('docker/login-action@'))
     assert.ok(workflow.indexOf('node scripts/verify-dockerhub-immutability.mjs') < workflow.indexOf('docker/login-action@'))
     assertExternalActionsAreCommitPinned(workflow, 'Docker Hub publishing workflow')
+})
+
+test('workflow reproducibility contracts reject commented or removed active fields in their named build steps', () => {
+    const buildWorkflow = readFileSync(DOCKER_BUILD_WORKFLOW_PATH, 'utf8')
+    const dockerHubWorkflow = readFileSync(DOCKERHUB_WORKFLOW_PATH, 'utf8')
+    const contracts = [
+        {
+            label: 'primary SOURCE_DATE_EPOCH producer',
+            validate: validatePrimaryBuildStep,
+            source: buildWorkflow,
+            activeText: 'echo "source_date_epoch=$(git show -s --format=%ct "$CANDIDATE_SHA")" >> "$GITHUB_OUTPUT"'
+        },
+        {
+            label: 'primary SOURCE_DATE_EPOCH environment',
+            validate: validatePrimaryBuildStep,
+            source: buildWorkflow,
+            activeText: 'SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}'
+        },
+        {
+            label: 'primary outputs',
+            validate: validatePrimaryBuildStep,
+            source: buildWorkflow,
+            activeText: 'outputs: type=docker,name=flowise-chinese:${{ steps.metadata.outputs.version }},rewrite-timestamp=true'
+        },
+        {
+            label: 'primary SOURCE_DATE_EPOCH build argument',
+            validate: validatePrimaryBuildStep,
+            source: buildWorkflow,
+            activeText: 'SOURCE_DATE_EPOCH=${{ steps.metadata.outputs.source_date_epoch }}'
+        },
+        {
+            label: 'readiness SOURCE_DATE_EPOCH producer',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            activeText: 'source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"'
+        },
+        {
+            label: 'readiness independent archive environment',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            activeText: 'INDEPENDENT_ARCHIVE_PATH: ${{ runner.temp }}/flowise-release-readiness-independent.tar.gz'
+        },
+        {
+            label: 'readiness Docker exporter',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            activeText: '--output "type=docker,name=$REBUILD_TAG,rewrite-timestamp=true" \\'
+        },
+        {
+            label: 'readiness SOURCE_DATE_EPOCH build argument',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            activeText: '--build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \\'
+        },
+        {
+            label: 'readiness raw digest equality',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            activeText: 'test "$independent_config_digest" = "$expected_config_digest"'
+        },
+        {
+            label: 'Docker Hub SOURCE_DATE_EPOCH producer',
+            validate: validateDockerHubBuildStep,
+            source: dockerHubWorkflow,
+            activeText: `printf 'source_date_epoch=%s\\n' "$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"`
+        },
+        {
+            label: 'Docker Hub SOURCE_DATE_EPOCH environment',
+            validate: validateDockerHubBuildStep,
+            source: dockerHubWorkflow,
+            activeText: 'SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}'
+        },
+        {
+            label: 'Docker Hub outputs',
+            validate: validateDockerHubBuildStep,
+            source: dockerHubWorkflow,
+            activeText: 'outputs: type=docker,name=flowise-chinese:git-${{ github.sha }},rewrite-timestamp=true'
+        },
+        {
+            label: 'Docker Hub SOURCE_DATE_EPOCH build argument',
+            validate: validateDockerHubBuildStep,
+            source: dockerHubWorkflow,
+            activeText: 'SOURCE_DATE_EPOCH=${{ steps.metadata.outputs.source_date_epoch }}'
+        }
+    ]
+
+    for (const contract of contracts) {
+        for (const mutation of ['commented', 'removed']) {
+            const label = `${contract.label} ${mutation}`
+            const replacement = mutation === 'commented' ? `# ${contract.activeText}` : ''
+            const mutated = replaceWorkflowTextOnce(contract.source, contract.activeText, replacement, label)
+            assert.throws(() => contract.validate(mutated), `${label} must invalidate the named-step contract`)
+        }
+    }
+
+    assert.throws(() =>
+        validatePrimaryBuildStep(
+            replaceWorkflowTextOnce(
+                buildWorkflow,
+                'git show -s --format=%ct "$CANDIDATE_SHA"',
+                'date +%s',
+                'primary SOURCE_DATE_EPOCH wrong producer'
+            )
+        )
+    )
+    assert.throws(() =>
+        validateReadinessRebuildStep(
+            replaceWorkflowTextOnce(
+                buildWorkflow,
+                'git show -s --format=%ct "$GITHUB_SHA"',
+                'date +%s',
+                'readiness SOURCE_DATE_EPOCH wrong producer'
+            )
+        )
+    )
+    assert.throws(() =>
+        validateDockerHubBuildStep(
+            replaceWorkflowTextOnce(
+                dockerHubWorkflow,
+                'git show -s --format=%ct "$GITHUB_SHA"',
+                'date +%s',
+                'Docker Hub SOURCE_DATE_EPOCH wrong producer'
+            )
+        )
+    )
 })
 
 test('scheduled production monitor performs only public edge and TLS expiry checks', () => {

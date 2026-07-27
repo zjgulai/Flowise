@@ -13,6 +13,7 @@ import argparse
 import copy
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -33,6 +34,7 @@ LIVE_ENV = BASE_DIR / ".env.production"
 LIVE_COMPOSE = BASE_DIR / "docker-compose.prod.yml"
 LIVE_SECCOMP = BASE_DIR / "docker/seccomp/chromium.json"
 RUNS_DIR = BASE_DIR / "deployments"
+LEGACY_RELEASES_DIR = BASE_DIR / "releases"
 LOCK_DIR = Path("/run/lock/flowise-production-release")
 LOCK_PATH = LOCK_DIR / "deploy.lock"
 PERSISTENT_KEY = Path("/var/lib/docker/volumes/flowise_flowise_data/_data/encryption.key")
@@ -57,7 +59,9 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 REVISION_RE = re.compile(r"[0-9a-f]{40}\Z")
 RUN_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\Z")
 CONFIG_HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
+DOCKER_ID_RE = re.compile(r"[0-9a-f]{64}\Z")
 ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+LEGACY_BOOTSTRAP_REVISION = "c947339b7033c930be37591918f59c7725800bbe"
 
 EXPECTED_BUNDLE_FILES = {
     "image_archive": "image.tar.gz",
@@ -194,6 +198,204 @@ EXPECTED_DATABASE_ENVIRONMENT_KEYS = {
     "DATABASE_REJECT_UNAUTHORIZED",
 }
 ROLLBACK_ATTEMPTED_STATE = "rollback_attempted_manual_confirmation_required"
+LEGACY_BOOTSTRAP_POLICY = {
+    "mode": "legacy_c947_to_hardened_c947_v1",
+    "rollback": "legacy_frozen_v1",
+    "runtime_config_hash": "permit_bound_label_vs_live_computed_v1",
+}
+RECEIPT_POLICY_BY_NAME = {
+    "bootstrap-prepare": LEGACY_BOOTSTRAP_POLICY,
+    "bootstrap-complete": LEGACY_BOOTSTRAP_POLICY,
+    "bootstrap-rollback": LEGACY_BOOTSTRAP_POLICY,
+}
+CURRENT_CONTROL_BASENAMES = {
+    "journal.json",
+    "prepare-receipt.json",
+    "cutover-receipt.json",
+    "rollback-receipt.json",
+    "bootstrap-prepare-receipt.json",
+    "bootstrap-complete-receipt.json",
+    "bootstrap-rollback-receipt.json",
+}
+CURRENT_TERMINAL_STATES = {
+    "prepared",
+    "complete_candidate_active",
+    "manual_rollback_complete",
+    "failed",
+    "failed_before_live_write",
+    "rolled_back",
+    "interrupted_prepare_aborted",
+    "interrupted_run_recovered_to_rollback",
+    "prepared_legacy_frozen",
+    "complete_hardened_baseline",
+    "bootstrap_rolled_back_legacy",
+    "bootstrap_failed_before_live_write",
+    "interrupted_bootstrap_before_live_write",
+    "interrupted_bootstrap_recovered_to_legacy",
+    "manual_legacy_rollback_complete",
+}
+CURRENT_UNRESOLVED_STATES = {
+    "in_progress",
+    "rolling_back",
+    ROLLBACK_ATTEMPTED_STATE,
+    "rollback_failed_manual_intervention_required",
+}
+CURRENT_RECEIPT_CONTRACTS = {
+    "prepare-receipt.json": ("prepare", "prepared"),
+    "cutover-receipt.json": ("cutover", "complete_candidate_active"),
+    "rollback-receipt.json": ("rollback", "manual_rollback_complete"),
+    "bootstrap-prepare-receipt.json": ("bootstrap", "prepared_legacy_frozen"),
+    "bootstrap-complete-receipt.json": ("bootstrap", "complete_hardened_baseline"),
+    "bootstrap-rollback-receipt.json": ("bootstrap-rollback", "manual_legacy_rollback_complete"),
+}
+CURRENT_JOURNAL_STATES_BY_OPERATION = {
+    "prepare": {"in_progress", "prepared", "failed", "interrupted_prepare_aborted"},
+    "cutover": {
+        "in_progress",
+        "complete_candidate_active",
+        "failed_before_live_write",
+        "rolled_back",
+        "interrupted_run_recovered_to_rollback",
+        ROLLBACK_ATTEMPTED_STATE,
+        "rolling_back",
+        "rollback_failed_manual_intervention_required",
+    },
+    "rollback": {
+        "in_progress",
+        "manual_rollback_complete",
+        ROLLBACK_ATTEMPTED_STATE,
+        "rolling_back",
+        "rollback_failed_manual_intervention_required",
+    },
+    "bootstrap": {
+        "in_progress",
+        "complete_hardened_baseline",
+        "bootstrap_rolled_back_legacy",
+        "bootstrap_failed_before_live_write",
+        "interrupted_bootstrap_before_live_write",
+        "interrupted_bootstrap_recovered_to_legacy",
+        ROLLBACK_ATTEMPTED_STATE,
+        "rolling_back",
+        "rollback_failed_manual_intervention_required",
+    },
+    "bootstrap-rollback": {
+        "in_progress",
+        "manual_legacy_rollback_complete",
+        ROLLBACK_ATTEMPTED_STATE,
+        "rolling_back",
+        "rollback_failed_manual_intervention_required",
+    },
+}
+LEGACY_FIXED_CONTROL_BASENAMES = {
+    "prepare-status.json",
+    "cutover-status.json",
+    "compose-cutover-status.json",
+    "candidate-manifest-attempt.json",
+}
+LEGACY_CONTROL_KEYS = {
+    "candidate-manifest-attempt.json": {
+        "boundaries",
+        "created_at",
+        "image",
+        "inputs",
+        "release_id",
+        "schema_version",
+        "source",
+        "toolchain",
+    },
+    "compose-cutover-status.json": {
+        "candidate_compose_sha256",
+        "live_compose_sha256",
+        "phase",
+        "production_write",
+        "provider_call",
+        "release_id",
+        "rollback_compose_sha256",
+        "run_id",
+        "state",
+        "updated_at",
+    },
+    "cutover-status.json": {
+        "after",
+        "before",
+        "database_before",
+        "effects",
+        "key_continuity",
+        "migration_up_executed",
+        "migrations_unchanged",
+        "operator_database_write",
+        "phase",
+        "production_database_write",
+        "provider_call",
+        "release_id",
+        "run_id",
+        "state",
+        "updated_at",
+    },
+    "post-acceptance-rollback": {
+        "after",
+        "before",
+        "migration_up_executed",
+        "migrations_unchanged",
+        "operator_database_write",
+        "production_database_write",
+        "provider_call",
+        "run_id",
+        "state",
+        "updated_at",
+    },
+}
+LEGACY_PREPARE_KEYS_BY_STATE_PHASE = {
+    ("prepared", "prepared_cutover_ready"): {
+        "after",
+        "artifacts",
+        "before",
+        "candidate_image_id",
+        "candidate_smoke",
+        "container_recreated",
+        "database",
+        "key_continuity",
+        "phase",
+        "production_database_write",
+        "provider_call",
+        "release_id",
+        "rollback_smoke",
+        "run_id",
+        "state",
+        "updated_at",
+    },
+    ("failed", "candidate_loaded"): {
+        "artifacts",
+        "before",
+        "candidate_image_id",
+        "database",
+        "error",
+        "phase",
+        "release_id",
+        "run_id",
+        "state",
+        "updated_at",
+    },
+    ("failed", "validated_pre_load"): {
+        "artifacts",
+        "before",
+        "database",
+        "error",
+        "phase",
+        "release_id",
+        "run_id",
+        "state",
+        "updated_at",
+    },
+    ("failed", "initialized"): {
+        "error",
+        "phase",
+        "release_id",
+        "run_id",
+        "state",
+        "updated_at",
+    },
+}
 
 
 class DeployError(RuntimeError):
@@ -212,6 +414,13 @@ class Bundle:
     image_tag: str
     image_config_digest: str
     bundle_digest: str
+
+
+@dataclass(frozen=True)
+class TransitionPermit:
+    path: Path
+    document: dict[str, Any]
+    digest: str
 
 
 def utc_now() -> str:
@@ -299,6 +508,47 @@ def parse_canonical_json(data: bytes, label: str) -> dict[str, Any]:
 def exact_keys(document: Any, keys: Iterable[str], label: str) -> None:
     if not isinstance(document, dict) or set(document) != set(keys):
         raise DeployError(f"{label}_FIELDS_INVALID")
+
+
+def _policy_copy(policy: dict[str, str]) -> dict[str, str]:
+    return dict(policy)
+
+
+def _validate_policy(document: Any, expected: dict[str, str], label: str) -> None:
+    exact_keys(document, expected, f"{label}_POLICY")
+    if document != expected:
+        raise DeployError(f"{label}_POLICY_INVALID")
+
+
+def _validate_receipt_policy(document: dict[str, Any], name: str) -> None:
+    expected = RECEIPT_POLICY_BY_NAME.get(name)
+    if expected is None:
+        raise DeployError("RECEIPT_POLICY_NAME_INVALID")
+    _validate_policy(document.get("policy"), expected, name.upper().replace("-", "_"))
+
+
+def _validate_network_identity_binding(value: Any, label: str) -> dict[str, dict[str, str]]:
+    exact_keys(value, ("flowise_internal", "reverse_proxy"), label)
+    if not isinstance(value, dict):
+        raise DeployError(f"{label}_FIELDS_INVALID")
+    expected_names = {
+        "flowise_internal": EXPECTED_TOP_LEVEL_NETWORKS["flowise_network"]["name"],
+        "reverse_proxy": EXPECTED_TOP_LEVEL_NETWORKS["reverse_proxy_network"]["name"],
+    }
+    normalized: dict[str, dict[str, str]] = {}
+    for role, expected_name in expected_names.items():
+        item = value.get(role)
+        exact_keys(item, ("name", "network_id"), f"{label}_{role.upper()}")
+        if not isinstance(item, dict):
+            raise DeployError(f"{label}_{role.upper()}_FIELDS_INVALID")
+        name = item.get("name")
+        network_id = item.get("network_id")
+        if name != expected_name or not isinstance(network_id, str) or not DOCKER_ID_RE.fullmatch(network_id):
+            raise DeployError(f"{label}_{role.upper()}_INVALID")
+        normalized[role] = {"name": expected_name, "network_id": network_id}
+    if normalized["flowise_internal"]["network_id"] == normalized["reverse_proxy"]["network_id"]:
+        raise DeployError(f"{label}_NETWORK_IDS_NOT_DISTINCT")
+    return normalized
 
 
 def require_root() -> None:
@@ -465,6 +715,65 @@ def verify_archive_contract(
     ):
         raise DeployError("IMAGE_ARCHIVE_OCI_CONTRACT_MISMATCH")
     return {"platform": "linux/amd64", "oci_labels_verified": True}
+
+
+def verify_legacy_archive_contract(
+    archive_path: Path,
+    *,
+    image_tag: str,
+    image_config_digest: str,
+    revision: str,
+    release_id: str,
+    repository_url: str,
+    created_at: str,
+) -> dict[str, Any]:
+    """Verify the frozen current image, including its exact OCI provenance."""
+
+    try:
+        with tarfile.open(archive_path, "r:gz") as archive:
+            manifest = _parse_archive_json(_archive_member_bytes(archive, "manifest.json", 1024 * 1024))
+            if not isinstance(manifest, list) or len(manifest) != 1 or not isinstance(manifest[0], dict):
+                raise DeployError("LEGACY_IMAGE_ARCHIVE_MANIFEST_INVALID")
+            entry = manifest[0]
+            if entry.get("RepoTags") != [image_tag]:
+                raise DeployError("LEGACY_IMAGE_ARCHIVE_TAG_MISMATCH")
+            config_name = entry.get("Config")
+            if not isinstance(config_name, str):
+                raise DeployError("LEGACY_IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH")
+            match = re.fullmatch(r"([0-9a-f]{64})\.json", config_name)
+            if match is None or f"sha256:{match.group(1)}" != image_config_digest:
+                raise DeployError("LEGACY_IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH")
+            config_bytes = _archive_member_bytes(archive, config_name, 16 * 1024 * 1024)
+    except (tarfile.TarError, OSError) as error:
+        raise DeployError("LEGACY_IMAGE_ARCHIVE_UNREADABLE") from error
+    if sha256_bytes(config_bytes) != image_config_digest:
+        raise DeployError("LEGACY_IMAGE_ARCHIVE_CONFIG_DIGEST_MISMATCH")
+    config = _parse_archive_json(config_bytes)
+    runtime = config.get("config") if isinstance(config, dict) else None
+    labels = runtime.get("Labels") if isinstance(runtime, dict) else None
+    labels = labels if isinstance(labels, dict) else {}
+    if (
+        not isinstance(runtime, dict)
+        or config.get("os") != "linux"
+        or config.get("architecture") != "amd64"
+        or runtime.get("User") != "node"
+        or runtime.get("WorkingDir") != "/usr/src/flowise"
+        or runtime.get("Cmd") != ["node", "packages/server/bin/run", "start"]
+        or labels.get("org.opencontainers.image.revision") != revision
+        or labels.get("org.opencontainers.image.version") != release_id
+        or labels.get("org.opencontainers.image.source") != repository_url
+        or labels.get("org.opencontainers.image.created") != created_at
+        or not _valid_timestamp(created_at)
+    ):
+        raise DeployError("LEGACY_IMAGE_ARCHIVE_RUNTIME_CONTRACT_MISMATCH")
+    return {
+        "platform": "linux/amd64",
+        "revision_label": revision,
+        "release_id": release_id,
+        "repository_url": repository_url,
+        "created_at": created_at,
+        "image_environment": _environment_from_entries(runtime.get("Env") or [], "LEGACY_IMAGE"),
+    }
 
 
 def validate_release_manifest(manifest: dict[str, Any]) -> None:
@@ -726,6 +1035,599 @@ def verify_bundle(bundle_dir: Path) -> Bundle:
         image_config_digest=image_config_digest,
         bundle_digest=sha256_bytes(bundle_bytes),
     )
+
+
+def verify_transition_permit(
+    path: Path,
+    expected_digest: str,
+    *,
+    bundle: Bundle,
+    run_id: str,
+) -> TransitionPermit:
+    """Verify the one-run, exact-state authorization for the c947 bootstrap."""
+
+    data = read_regular(
+        path.absolute(),
+        maximum=1024 * 1024,
+        expected_uid=0,
+        expected_gid=0,
+        expected_mode=0o600,
+    )
+    actual_digest = sha256_bytes(data)
+    if actual_digest != expected_digest:
+        raise DeployError("TRANSITION_PERMIT_DIGEST_MISMATCH")
+    document = parse_canonical_json(data, "TRANSITION_PERMIT")
+    exact_keys(
+        document,
+        (
+            "schema_version",
+            "policy",
+            "run_id",
+            "target_bundle",
+            "active_legacy",
+            "containers",
+            "live",
+            "database",
+            "network_identity",
+            "legacy_journal_inventory",
+        ),
+        "TRANSITION_PERMIT_ROOT",
+    )
+    if document.get("schema_version") != 1 or document.get("run_id") != run_id:
+        raise DeployError("TRANSITION_PERMIT_HEADER_INVALID")
+    _validate_policy(document.get("policy"), LEGACY_BOOTSTRAP_POLICY, "TRANSITION_PERMIT")
+
+    target_value = document.get("target_bundle")
+    exact_keys(
+        target_value,
+        ("bundle_digest", "revision", "image_tag", "image_config_digest"),
+        "TRANSITION_PERMIT_TARGET_BUNDLE",
+    )
+    if not isinstance(target_value, dict):
+        raise DeployError("TRANSITION_PERMIT_TARGET_BUNDLE_FIELDS_INVALID")
+    target: dict[str, Any] = target_value
+    if target != {
+        "bundle_digest": bundle.bundle_digest,
+        "revision": bundle.revision,
+        "image_tag": bundle.image_tag,
+        "image_config_digest": bundle.image_config_digest,
+    }:
+        raise DeployError("TRANSITION_PERMIT_TARGET_BUNDLE_MISMATCH")
+
+    active_value = document.get("active_legacy")
+    exact_keys(
+        active_value,
+        (
+            "image_tag",
+            "revision",
+            "release_id",
+            "repository_url",
+            "created_at",
+            "image_config_digest",
+            "runtime_label_config_hash",
+            "live_computed_config_hash",
+            "runtime_projection_digest",
+            "runtime_environment_keys",
+            "runtime_environment_hmac_sha256",
+        ),
+        "TRANSITION_PERMIT_ACTIVE_LEGACY",
+    )
+    if not isinstance(active_value, dict):
+        raise DeployError("TRANSITION_PERMIT_ACTIVE_LEGACY_FIELDS_INVALID")
+    active: dict[str, Any] = active_value
+    active_revision = active.get("revision")
+    active_tag = active.get("image_tag")
+    if (
+        not isinstance(active_revision, str)
+        or not REVISION_RE.fullmatch(active_revision)
+        or active_revision != LEGACY_BOOTSTRAP_REVISION
+        or active_tag != f"flowise-chinese:git-{active_revision}"
+        or active.get("release_id") != f"git-{active_revision}"
+        or not isinstance(active.get("repository_url"), str)
+        or not active["repository_url"].startswith(("https://", "ssh://"))
+        or not _valid_timestamp(active.get("created_at"))
+        or not isinstance(active.get("image_config_digest"), str)
+        or not DIGEST_RE.fullmatch(active["image_config_digest"])
+        or not isinstance(active.get("runtime_label_config_hash"), str)
+        or not CONFIG_HASH_RE.fullmatch(active["runtime_label_config_hash"])
+        or not isinstance(active.get("live_computed_config_hash"), str)
+        or not CONFIG_HASH_RE.fullmatch(active["live_computed_config_hash"])
+        or active["runtime_label_config_hash"] == active["live_computed_config_hash"]
+        or not isinstance(active.get("runtime_projection_digest"), str)
+        or not DIGEST_RE.fullmatch(active["runtime_projection_digest"])
+        or not isinstance(active.get("runtime_environment_keys"), list)
+        or any(
+            not isinstance(name, str) or not ENV_KEY_RE.fullmatch(name)
+            for name in active["runtime_environment_keys"]
+        )
+        or active["runtime_environment_keys"] != sorted(set(active["runtime_environment_keys"]))
+        or not isinstance(active.get("runtime_environment_hmac_sha256"), str)
+        or not DIGEST_RE.fullmatch(active["runtime_environment_hmac_sha256"])
+    ):
+        raise DeployError("TRANSITION_PERMIT_ACTIVE_LEGACY_INVALID")
+    if (
+        target["revision"] == active_revision
+        or target["image_tag"] == active_tag
+        or target["image_config_digest"] == active["image_config_digest"]
+    ):
+        raise DeployError("TRANSITION_PERMIT_TARGET_NOT_DISTINCT_FROM_ACTIVE_LEGACY")
+
+    containers_value = document.get("containers")
+    exact_keys(containers_value, MANAGED_CONTAINERS, "TRANSITION_PERMIT_CONTAINERS")
+    if not isinstance(containers_value, dict):
+        raise DeployError("TRANSITION_PERMIT_CONTAINERS_FIELDS_INVALID")
+    containers: dict[str, Any] = containers_value
+    if any(not isinstance(containers[name], str) or not DOCKER_ID_RE.fullmatch(containers[name]) for name in MANAGED_CONTAINERS):
+        raise DeployError("TRANSITION_PERMIT_CONTAINER_ID_INVALID")
+
+    _validate_network_identity_binding(
+        document.get("network_identity"),
+        "TRANSITION_PERMIT_NETWORK_IDENTITY",
+    )
+
+    live_value = document.get("live")
+    exact_keys(live_value, ("env_sha256", "compose_sha256", "seccomp"), "TRANSITION_PERMIT_LIVE")
+    if not isinstance(live_value, dict):
+        raise DeployError("TRANSITION_PERMIT_LIVE_FIELDS_INVALID")
+    live: dict[str, Any] = live_value
+    exact_keys(live.get("seccomp"), ("present", "digest"), "TRANSITION_PERMIT_LIVE_SECCOMP")
+    if (
+        not isinstance(live.get("env_sha256"), str)
+        or not DIGEST_RE.fullmatch(live["env_sha256"])
+        or not isinstance(live.get("compose_sha256"), str)
+        or not DIGEST_RE.fullmatch(live["compose_sha256"])
+        or live["seccomp"] != {"present": False, "digest": None}
+    ):
+        raise DeployError("TRANSITION_PERMIT_LIVE_INVALID")
+
+    database_value = document.get("database")
+    exact_keys(database_value, ("migration_count", "migration_name_sha256"), "TRANSITION_PERMIT_DATABASE")
+    if not isinstance(database_value, dict):
+        raise DeployError("TRANSITION_PERMIT_DATABASE_FIELDS_INVALID")
+    database: dict[str, Any] = database_value
+    if (
+        not isinstance(database.get("migration_count"), int)
+        or isinstance(database.get("migration_count"), bool)
+        or database["migration_count"] <= 0
+        or not isinstance(database.get("migration_name_sha256"), str)
+        or not DIGEST_RE.fullmatch(database["migration_name_sha256"])
+    ):
+        raise DeployError("TRANSITION_PERMIT_DATABASE_INVALID")
+
+    inventory_value = document.get("legacy_journal_inventory")
+    exact_keys(
+        inventory_value,
+        (
+            "root_paths",
+            "root_count",
+            "run_count",
+            "control_count",
+            "canonical_inventory_sha256",
+            "unresolved_rollback_count",
+        ),
+        "TRANSITION_PERMIT_LEGACY_JOURNAL_INVENTORY",
+    )
+    if not isinstance(inventory_value, dict):
+        raise DeployError("TRANSITION_PERMIT_LEGACY_JOURNAL_INVENTORY_FIELDS_INVALID")
+    inventory: dict[str, Any] = inventory_value
+    roots = inventory.get("root_paths")
+    expected_active_root = str(LEGACY_RELEASES_DIR / f"git-{active_revision}" / "deployments")
+    if (
+        not isinstance(roots, list)
+        or not roots
+        or roots != sorted(set(roots))
+        or expected_active_root not in roots
+        or any(
+            not isinstance(root, str)
+            or not re.fullmatch(r"/opt/flowise/releases/git-[0-9a-f]{40}/deployments", root)
+            for root in roots
+        )
+        or not isinstance(inventory.get("root_count"), int)
+        or isinstance(inventory.get("root_count"), bool)
+        or inventory["root_count"] != len(roots)
+        or not isinstance(inventory.get("run_count"), int)
+        or isinstance(inventory.get("run_count"), bool)
+        or inventory["run_count"] <= 0
+        or not isinstance(inventory.get("control_count"), int)
+        or isinstance(inventory.get("control_count"), bool)
+        or inventory["control_count"] <= 0
+        or not inventory["root_count"] <= inventory["run_count"] <= inventory["control_count"]
+        or not isinstance(inventory.get("canonical_inventory_sha256"), str)
+        or not DIGEST_RE.fullmatch(inventory["canonical_inventory_sha256"])
+        or inventory.get("unresolved_rollback_count") != 0
+    ):
+        raise DeployError("TRANSITION_PERMIT_LEGACY_JOURNAL_INVENTORY_INVALID")
+    return TransitionPermit(path=path.absolute(), document=document, digest=actual_digest)
+
+
+def _validate_inventory_directory(
+    path: Path,
+    label: str,
+    *,
+    expected_mode: int = 0o700,
+    allowed_uids: tuple[int, ...] = (0,),
+    allowed_gids: tuple[int, ...] = (0,),
+) -> None:
+    try:
+        info = path.lstat()
+    except OSError as error:
+        raise DeployError(f"{label}_DIRECTORY_UNAVAILABLE") from error
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid not in allowed_uids
+        or info.st_gid not in allowed_gids
+        or stat.S_IMODE(info.st_mode) != expected_mode
+    ):
+        raise DeployError(f"{label}_DIRECTORY_UNSAFE")
+
+
+def _validate_secure_run_directory(run_dir: Path) -> None:
+    if run_dir.parent != RUNS_DIR or not RUN_ID_RE.fullmatch(run_dir.name):
+        raise DeployError("RUN_DIRECTORY_PATH_INVALID")
+    _validate_inventory_directory(RUNS_DIR, "RUNS_ROOT")
+    _validate_inventory_directory(run_dir, "RUN")
+
+
+def _validate_secure_run_role(
+    run_dir: Path,
+    role: str,
+) -> Path:
+    if role not in {"candidate", "rollback", "legacy", "hardened_active", "target_bundle"}:
+        raise DeployError("RUN_ROLE_INVALID")
+    _validate_secure_run_directory(run_dir)
+    role_root = run_dir / role
+    _validate_inventory_directory(role_root, "RUN_ROLE")
+    docker_root = role_root / "docker"
+    seccomp_root = docker_root / "seccomp"
+    for path, label in ((docker_root, "RUN_ROLE_DOCKER"), (seccomp_root, "RUN_ROLE_SECCOMP")):
+        try:
+            info = path.lstat()
+        except FileNotFoundError as error:
+            raise DeployError(f"{label}_DIRECTORY_UNAVAILABLE") from error
+        except OSError as error:
+            raise DeployError(f"{label}_DIRECTORY_UNAVAILABLE") from error
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise DeployError(f"{label}_DIRECTORY_UNSAFE")
+        _validate_inventory_directory(path, label)
+    return role_root
+
+
+def _parse_control_json(path: Path, label: str) -> tuple[dict[str, Any], bytes]:
+    data = read_regular(
+        path,
+        maximum=2 * 1024 * 1024,
+        expected_uid=0,
+        expected_gid=0,
+        expected_mode=0o600,
+    )
+    try:
+        document = json.loads(data.decode("utf-8"), object_pairs_hook=_strict_object)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise DeployError(f"{label}_CONTROL_JSON_INVALID") from error
+    if not isinstance(document, dict):
+        raise DeployError(f"{label}_CONTROL_JSON_INVALID")
+    return document, data
+
+
+def _legacy_control_kind(name: str) -> str | None:
+    if name in LEGACY_FIXED_CONTROL_BASENAMES:
+        return name
+    match = re.fullmatch(
+        r"post-acceptance-rollback-(?P<timestamp>[0-9]{8}T[0-9]{6}\.[0-9]{6}Z)\.json",
+        name,
+    )
+    if match is not None:
+        try:
+            datetime.strptime(match.group("timestamp"), "%Y%m%dT%H%M%S.%fZ")
+        except ValueError as error:
+            raise DeployError("LEGACY_JOURNAL_POST_ROLLBACK_TIMESTAMP_INVALID") from error
+        return "post-acceptance-rollback"
+    return None
+
+
+def _validate_legacy_control(document: dict[str, Any], kind: str) -> tuple[str | None, bool]:
+    """Validate only the exact control shapes observed in the bound 41-file inventory."""
+
+    if "operation" in document:
+        raise DeployError("LEGACY_JOURNAL_CONTROL_SCHEMA_INVALID")
+    state = document.get("state")
+    phase = document.get("phase")
+    if (
+        state in {"in_progress", "rolling_back", ROLLBACK_ATTEMPTED_STATE}
+        or isinstance(state, str)
+        and (state.startswith("rollback_failed") or state.startswith("rollback_attempted"))
+    ):
+        return state if isinstance(state, str) else None, True
+    if kind == "candidate-manifest-attempt.json":
+        exact_keys(document, LEGACY_CONTROL_KEYS[kind], "LEGACY_JOURNAL_CANDIDATE_METADATA")
+        return None, False
+    allowed: dict[str, set[tuple[str, str | None]]] = {
+        "prepare-status.json": {
+            ("prepared", "prepared_cutover_ready"),
+            ("failed", "initialized"),
+            ("failed", "validated_pre_load"),
+            ("failed", "candidate_loaded"),
+        },
+        "cutover-status.json": {
+            ("complete_candidate_active", "complete_candidate_active"),
+            ("rolled_back", "rolled_back"),
+        },
+        "compose-cutover-status.json": {
+            ("failed_before_compose_promotion", "candidate_compose_not_promoted"),
+            ("rolled_back", "rollback_compose_restored"),
+            ("complete_candidate_active", "complete_candidate_compose_active"),
+            ("post_acceptance_rolled_back", "post_acceptance_rollback_compose_restored"),
+        },
+        "post-acceptance-rollback": {("post_acceptance_rolled_back", None)},
+    }
+    if not isinstance(state, str) or (state, phase) not in allowed[kind]:
+        raise DeployError("LEGACY_JOURNAL_CONTROL_STATE_UNKNOWN")
+    if kind == "prepare-status.json":
+        if not isinstance(phase, str):
+            raise DeployError("LEGACY_JOURNAL_CONTROL_STATE_UNKNOWN")
+        expected_keys = LEGACY_PREPARE_KEYS_BY_STATE_PHASE[(state, phase)]
+    else:
+        expected_keys = LEGACY_CONTROL_KEYS[kind]
+    exact_keys(document, expected_keys, "LEGACY_JOURNAL_CONTROL_SCHEMA")
+    return state, False
+
+
+def _legacy_deployments_inventory(
+    root: Path,
+    *,
+    relative_base: Path,
+) -> tuple[list[dict[str, str]], int, dict[str, list[tuple[str, str | None]]]]:
+    _validate_inventory_directory(root, "LEGACY_JOURNAL")
+    records: list[dict[str, str]] = []
+    unresolved = 0
+    runs: dict[str, list[tuple[str, str | None]]] = {}
+    for current, directory_names, file_names in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        _validate_inventory_directory(current_path, "LEGACY_JOURNAL")
+        for name in sorted(directory_names):
+            child = current_path / name
+            try:
+                info = child.lstat()
+            except OSError as error:
+                raise DeployError("LEGACY_JOURNAL_PATH_UNAVAILABLE") from error
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise DeployError("LEGACY_JOURNAL_PATH_UNSAFE")
+            _validate_inventory_directory(child, "LEGACY_JOURNAL")
+        for name in sorted(file_names):
+            path = current_path / name
+            try:
+                info = path.lstat()
+            except OSError as error:
+                raise DeployError("LEGACY_JOURNAL_PATH_UNAVAILABLE") from error
+            if (
+                stat.S_ISLNK(info.st_mode)
+                or not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != 0
+                or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
+                raise DeployError("LEGACY_JOURNAL_PATH_UNSAFE")
+            if path.suffix != ".json":
+                continue
+            kind = _legacy_control_kind(name)
+            if kind is None:
+                raise DeployError("LEGACY_JOURNAL_CONTROL_JSON_NAME_UNKNOWN")
+            relative = path.relative_to(relative_base).as_posix()
+            run_relative = path.relative_to(root)
+            if len(run_relative.parts) != 2 or not RUN_ID_RE.fullmatch(run_relative.parts[0]):
+                raise DeployError("LEGACY_JOURNAL_CONTROL_PATH_INVALID")
+            run_key = run_relative.parts[0]
+            document, _ = _parse_control_json(path, "LEGACY_JOURNAL")
+            if kind != "candidate-manifest-attempt.json" and document.get("run_id") != run_key:
+                raise DeployError("LEGACY_JOURNAL_RUN_ID_MISMATCH")
+            expected_release_id = root.parent.name
+            if kind != "post-acceptance-rollback" and document.get("release_id") != expected_release_id:
+                raise DeployError("LEGACY_JOURNAL_RELEASE_ID_MISMATCH")
+            state, item_unresolved = _validate_legacy_control(document, kind)
+            canonical_digest = sha256_bytes(canonical_json(document))
+            records.append({"path": relative, "canonical_sha256": canonical_digest})
+            runs.setdefault(run_key, []).append((kind, state))
+            unresolved += int(item_unresolved)
+    return records, unresolved, runs
+
+
+def _validate_legacy_run_associations(runs: dict[str, list[tuple[str, str | None]]]) -> None:
+    if not runs:
+        raise DeployError("LEGACY_JOURNAL_RUN_INVENTORY_EMPTY")
+    for controls in runs.values():
+        by_kind: dict[str, list[str | None]] = {}
+        for kind, state in controls:
+            by_kind.setdefault(kind, []).append(state)
+        prepare_states = by_kind.get("prepare-status.json", [])
+        cutover_states = by_kind.get("cutover-status.json", [])
+        compose_states = by_kind.get("compose-cutover-status.json", [])
+        post_states = by_kind.get("post-acceptance-rollback", [])
+        candidate_manifests = by_kind.get("candidate-manifest-attempt.json", [])
+        if (
+            len(prepare_states) != 1
+            or len(cutover_states) > 1
+            or len(compose_states) > 1
+            or len(post_states) > 1
+            or len(candidate_manifests) > 1
+        ):
+            raise DeployError("LEGACY_JOURNAL_RUN_ASSOCIATION_INVALID")
+        if prepare_states[0] == "prepared":
+            if len(cutover_states) != 1:
+                raise DeployError("LEGACY_JOURNAL_RUN_ASSOCIATION_INVALID")
+        elif prepare_states[0] == "failed":
+            if cutover_states or post_states or compose_states:
+                raise DeployError("LEGACY_JOURNAL_RUN_ASSOCIATION_INVALID")
+        else:
+            raise DeployError("LEGACY_JOURNAL_RUN_ASSOCIATION_INVALID")
+        if post_states and cutover_states != ["complete_candidate_active"]:
+            raise DeployError("LEGACY_JOURNAL_RUN_ASSOCIATION_INVALID")
+        if compose_states == ["post_acceptance_rolled_back"] and not post_states:
+            raise DeployError("LEGACY_JOURNAL_RUN_ASSOCIATION_INVALID")
+
+
+def legacy_journal_inventory() -> dict[str, Any]:
+    """Read, but never recover or mutate, release-scoped legacy journals."""
+
+    _validate_inventory_directory(
+        BASE_DIR,
+        "LEGACY_JOURNAL_PARENT",
+        expected_mode=0o755,
+        allowed_uids=(0, 1000),
+        allowed_gids=(0, 1000),
+    )
+    _validate_inventory_directory(LEGACY_RELEASES_DIR, "LEGACY_JOURNAL")
+    roots: list[str] = []
+    records: list[dict[str, str]] = []
+    unresolved = 0
+    runs: dict[str, list[tuple[str, str | None]]] = {}
+    try:
+        children = sorted(LEGACY_RELEASES_DIR.iterdir(), key=lambda path: path.name)
+    except OSError as error:
+        raise DeployError("LEGACY_JOURNAL_ROOT_ENUMERATION_FAILED") from error
+    for release_root in children:
+        if not re.fullmatch(r"git-[0-9a-f]{40}", release_root.name):
+            raise DeployError("LEGACY_JOURNAL_RELEASE_ROOT_UNKNOWN")
+        _validate_inventory_directory(release_root, "LEGACY_JOURNAL")
+        deployments = release_root / "deployments"
+        try:
+            deployments_info = deployments.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise DeployError("LEGACY_JOURNAL_DEPLOYMENTS_UNAVAILABLE") from error
+        if not stat.S_ISDIR(deployments_info.st_mode) or stat.S_ISLNK(deployments_info.st_mode):
+            raise DeployError("LEGACY_JOURNAL_DEPLOYMENTS_UNSAFE")
+        roots.append(str(deployments))
+        root_records, root_unresolved, root_runs = _legacy_deployments_inventory(
+            deployments,
+            relative_base=LEGACY_RELEASES_DIR,
+        )
+        records.extend(root_records)
+        unresolved += root_unresolved
+        for run_key, controls in root_runs.items():
+            scoped_key = f"{release_root.name}/{run_key}"
+            if scoped_key in runs:
+                raise DeployError("LEGACY_JOURNAL_RUN_DUPLICATE")
+            runs[scoped_key] = controls
+    if not roots or not records:
+        raise DeployError("LEGACY_JOURNAL_INVENTORY_EMPTY")
+    if unresolved:
+        raise DeployError("LEGACY_JOURNAL_UNRESOLVED_ROLLBACK")
+    _validate_legacy_run_associations(runs)
+    records.sort(key=lambda item: item["path"])
+    return {
+        "root_paths": sorted(roots),
+        "root_count": len(roots),
+        "run_count": len(runs),
+        "control_count": len(records),
+        "canonical_inventory_sha256": sha256_bytes(canonical_json(records)),
+        "unresolved_rollback_count": 0,
+    }
+
+
+def _current_deployments_inventory(
+    root: Path,
+    *,
+    exclude_run_id: str | None = None,
+) -> tuple[list[dict[str, str]], int]:
+    _validate_inventory_directory(root, "CURRENT_JOURNAL")
+    if exclude_run_id is not None and not RUN_ID_RE.fullmatch(exclude_run_id):
+        raise DeployError("CURRENT_JOURNAL_EXCLUDED_RUN_ID_INVALID")
+    records: list[dict[str, str]] = []
+    unresolved = 0
+    for current, directory_names, file_names in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        _validate_inventory_directory(current_path, "CURRENT_JOURNAL")
+        if current_path == root and any(not RUN_ID_RE.fullmatch(name) for name in directory_names):
+            raise DeployError("CURRENT_JOURNAL_RUN_DIRECTORY_UNKNOWN")
+        if current_path == root and exclude_run_id is not None:
+            directory_names[:] = [name for name in directory_names if name != exclude_run_id]
+        for name in sorted(directory_names):
+            child = current_path / name
+            try:
+                info = child.lstat()
+            except OSError as error:
+                raise DeployError("CURRENT_JOURNAL_PATH_UNAVAILABLE") from error
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise DeployError("CURRENT_JOURNAL_PATH_UNSAFE")
+            _validate_inventory_directory(child, "CURRENT_JOURNAL")
+        for name in sorted(file_names):
+            path = current_path / name
+            try:
+                info = path.lstat()
+            except OSError as error:
+                raise DeployError("CURRENT_JOURNAL_PATH_UNAVAILABLE") from error
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise DeployError("CURRENT_JOURNAL_PATH_UNSAFE")
+            relative = path.relative_to(root)
+            direct_control = (
+                len(relative.parts) == 2
+                and RUN_ID_RE.fullmatch(relative.parts[0]) is not None
+                and path.suffix == ".json"
+            )
+            if name not in CURRENT_CONTROL_BASENAMES and not name.endswith("-receipt.json") and not direct_control:
+                continue
+            if name not in CURRENT_CONTROL_BASENAMES:
+                raise DeployError("CURRENT_JOURNAL_CONTROL_JSON_NAME_UNKNOWN")
+            if not direct_control:
+                raise DeployError("CURRENT_JOURNAL_CONTROL_JSON_PATH_INVALID")
+            document, data = _parse_control_json(path, "CURRENT_JOURNAL")
+            state = document.get("state")
+            operation = document.get("operation")
+            if (
+                document.get("run_id") != relative.parts[0]
+                or not isinstance(state, str)
+                or not isinstance(operation, str)
+            ):
+                raise DeployError("CURRENT_JOURNAL_CONTROL_JSON_STATE_INVALID")
+            item_unresolved = state in CURRENT_UNRESOLVED_STATES
+            if not item_unresolved and state not in CURRENT_TERMINAL_STATES:
+                raise DeployError("CURRENT_JOURNAL_CONTROL_JSON_STATE_UNKNOWN")
+            if name.endswith("-receipt.json"):
+                receipt_name = name.removesuffix("-receipt.json")
+                if receipt_name.startswith("bootstrap-"):
+                    _validate_receipt_policy(document, receipt_name)
+                if (operation, state) != CURRENT_RECEIPT_CONTRACTS[name]:
+                    raise DeployError("CURRENT_JOURNAL_RECEIPT_CONTRACT_INVALID")
+            elif state not in CURRENT_JOURNAL_STATES_BY_OPERATION.get(operation, set()):
+                raise DeployError("CURRENT_JOURNAL_OPERATION_STATE_INVALID")
+            elif operation.startswith("bootstrap"):
+                _validate_policy(document.get("policy"), LEGACY_BOOTSTRAP_POLICY, "BOOTSTRAP_JOURNAL")
+            records.append(
+                {
+                    "path": path.relative_to(root).as_posix(),
+                    "canonical_sha256": sha256_bytes(canonical_json(document)),
+                    "bytes_sha256": sha256_bytes(data),
+                }
+            )
+            unresolved += int(item_unresolved)
+    return records, unresolved
+
+
+def current_journal_inventory(*, exclude_run_id: str | None = None) -> dict[str, Any]:
+    """Reject unsafe or unresolved journals in the wrapper's current root."""
+
+    if not RUNS_DIR.exists() and not RUNS_DIR.is_symlink():
+        return {
+            "root": str(RUNS_DIR),
+            "present": False,
+            "control_json_count": 0,
+            "control_json_sha256": sha256_bytes(canonical_json([])),
+            "unresolved_rollback_count": 0,
+        }
+    records, unresolved = _current_deployments_inventory(RUNS_DIR, exclude_run_id=exclude_run_id)
+    if unresolved:
+        raise DeployError("CURRENT_JOURNAL_UNRESOLVED_ROLLBACK")
+    records.sort(key=lambda item: item["path"])
+    return {
+        "root": str(RUNS_DIR),
+        "present": True,
+        "control_json_count": len(records),
+        "control_json_sha256": sha256_bytes(canonical_json(records)),
+        "unresolved_rollback_count": 0,
+    }
 
 
 def run_command(args: list[str], *, input_data: bytes | None = None, timeout: int = 300) -> bytes:
@@ -1154,6 +2056,73 @@ def validate_compose(candidate: dict[str, Any], rollback: dict[str, Any], candid
     _candidate_runtime_expectations(candidate)
 
 
+def validate_hardened_compose(config: dict[str, Any], image_tag: str, key: bytes) -> None:
+    """Apply the existing candidate contract without comparing to a legacy rollback config."""
+
+    reference = copy.deepcopy(config)
+    validate_compose(config, reference, image_tag, image_tag, key)
+
+
+def _environment_from_entries(entries: Any, label: str) -> dict[str, str]:
+    if not isinstance(entries, list):
+        raise DeployError(f"{label}_ENVIRONMENT_INVALID")
+    result: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, str):
+            raise DeployError(f"{label}_ENVIRONMENT_INVALID")
+        key, separator, value = entry.partition("=")
+        if not separator or not ENV_KEY_RE.fullmatch(key):
+            raise DeployError(f"{label}_ENVIRONMENT_INVALID")
+        if key in result:
+            raise DeployError(f"{label}_ENVIRONMENT_DUPLICATE_KEY")
+        result[key] = value
+    return result
+
+
+def expected_container_environment(
+    image_environment: dict[str, str],
+    compose_environment: dict[str, str],
+) -> dict[str, str]:
+    if any(not ENV_KEY_RE.fullmatch(key) or not isinstance(value, str) for key, value in image_environment.items()):
+        raise DeployError("IMAGE_ENVIRONMENT_INVALID")
+    if any(not ENV_KEY_RE.fullmatch(key) or not isinstance(value, str) for key, value in compose_environment.items()):
+        raise DeployError("COMPOSE_ENVIRONMENT_INVALID")
+    return {**image_environment, **compose_environment}
+
+
+def runtime_environment_binding(environment: dict[str, str], key: bytes) -> dict[str, Any]:
+    if len(key) != 32:
+        raise DeployError("RUNTIME_ENVIRONMENT_BINDING_KEY_INVALID")
+    if any(not ENV_KEY_RE.fullmatch(name) or not isinstance(value, str) for name, value in environment.items()):
+        raise DeployError("RUNTIME_ENVIRONMENT_BINDING_INPUT_INVALID")
+    return {
+        "runtime_environment_keys": sorted(environment),
+        "runtime_environment_hmac_sha256": "sha256:"
+        + hmac.new(key, canonical_json(environment), hashlib.sha256).hexdigest(),
+    }
+
+
+def _validate_runtime_environment_binding(
+    metadata: dict[str, Any],
+    environment: dict[str, str],
+    key: bytes,
+    label: str,
+) -> None:
+    keys = metadata.get("runtime_environment_keys")
+    keyed_digest = metadata.get("runtime_environment_hmac_sha256")
+    actual = runtime_environment_binding(environment, key)
+    if (
+        not isinstance(keys, list)
+        or any(not isinstance(name, str) or not ENV_KEY_RE.fullmatch(name) for name in keys)
+        or keys != sorted(set(keys))
+        or not isinstance(keyed_digest, str)
+        or not DIGEST_RE.fullmatch(keyed_digest)
+        or actual["runtime_environment_keys"] != keys
+        or not hmac.compare_digest(actual["runtime_environment_hmac_sha256"], keyed_digest)
+    ):
+        raise DeployError(f"{label}_RUNTIME_ENVIRONMENT_BINDING_MISMATCH")
+
+
 def _image_config_digest(document: dict[str, Any]) -> str:
     descriptor = document.get("Descriptor") or {}
     annotations = descriptor.get("annotations") or descriptor.get("Annotations") or {}
@@ -1175,6 +2144,7 @@ def inspect_image(
         raise DeployError("IMAGE_INSPECT_INVALID") from error
     config = document.get("Config") or {}
     labels = config.get("Labels") or {}
+    image_environment = _environment_from_entries(config.get("Env") or [], "IMAGE")
     digest = _image_config_digest(document)
     if expected_digest is not None and digest != expected_digest:
         raise DeployError("IMAGE_CONFIG_DIGEST_MISMATCH")
@@ -1203,6 +2173,8 @@ def inspect_image(
         "revision": labels.get("org.opencontainers.image.revision"),
         "release_id": labels.get("org.opencontainers.image.version"),
         "repository_url": labels.get("org.opencontainers.image.source"),
+        "created_at": labels.get("org.opencontainers.image.created"),
+        "image_environment": image_environment,
     }
 
 
@@ -1217,16 +2189,69 @@ def inspect_containers() -> dict[str, dict[str, Any]]:
     return result
 
 
-def _container_env(document: dict[str, Any]) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for item in (document.get("Config") or {}).get("Env") or []:
-        key, separator, value = str(item).partition("=")
-        if not separator or not ENV_KEY_RE.fullmatch(key):
-            raise DeployError("CONTAINER_ENVIRONMENT_INVALID")
-        if key in result:
-            raise DeployError("CONTAINER_ENVIRONMENT_DUPLICATE_KEY")
-        result[key] = value
+def inspect_legacy_recovery_containers() -> dict[str, dict[str, Any]]:
+    """Inspect exact sidecars while treating a proven-absent Flowise as data.
+
+    A force-recreate can leave the Flowise container absent.  The generic
+    inspector intentionally rejects that shape, so recovery first binds the two
+    mandatory sidecars and then distinguishes a genuinely absent Flowise name
+    from an inspect/daemon failure.
+    """
+
+    try:
+        sidecar_documents = json.loads(
+            run_command(["docker", "inspect", POSTGRES_CONTAINER, NGINX_CONTAINER], timeout=45)
+        )
+    except (json.JSONDecodeError, TypeError) as error:
+        raise DeployError("LEGACY_RECOVERY_SIDECAR_INSPECT_INVALID") from error
+    if not isinstance(sidecar_documents, list):
+        raise DeployError("LEGACY_RECOVERY_SIDECAR_INSPECT_INVALID")
+    result = {
+        str(item.get("Name", "")).lstrip("/"): item
+        for item in sidecar_documents
+        if isinstance(item, dict)
+    }
+    if len(sidecar_documents) != 2 or set(result) != {POSTGRES_CONTAINER, NGINX_CONTAINER}:
+        raise DeployError("LEGACY_RECOVERY_SIDECAR_SET_MISMATCH")
+    try:
+        flowise_documents = json.loads(
+            run_command(["docker", "inspect", FLOWISE_CONTAINER], timeout=45)
+        )
+    except DeployError as inspect_error:
+        # A second, successful daemon query must prove that the exact name is
+        # absent.  Any daemon/list failure propagates and cannot authorize a
+        # recovery write.
+        listing = run_command(
+            [
+                "docker",
+                "container",
+                "ls",
+                "-a",
+                "--filter",
+                f"name=^/{FLOWISE_CONTAINER}$",
+                "--format",
+                "{{.Names}}",
+            ],
+            timeout=45,
+        )
+        if listing.strip():
+            raise DeployError("LEGACY_RECOVERY_FLOWISE_INSPECT_FAILED") from inspect_error
+        return result
+    except (json.JSONDecodeError, TypeError) as error:
+        raise DeployError("LEGACY_RECOVERY_FLOWISE_INSPECT_INVALID") from error
+    if (
+        not isinstance(flowise_documents, list)
+        or len(flowise_documents) != 1
+        or not isinstance(flowise_documents[0], dict)
+        or str(flowise_documents[0].get("Name", "")).lstrip("/") != FLOWISE_CONTAINER
+    ):
+        raise DeployError("LEGACY_RECOVERY_FLOWISE_INSPECT_INVALID")
+    result[FLOWISE_CONTAINER] = flowise_documents[0]
     return result
+
+
+def _container_env(document: dict[str, Any]) -> dict[str, str]:
+    return _environment_from_entries((document.get("Config") or {}).get("Env") or [], "CONTAINER")
 
 
 def validate_database_runtime_identity(config: dict[str, Any], documents: dict[str, dict[str, Any]]) -> None:
@@ -1290,6 +2315,63 @@ def validate_database_runtime_identity(config: dict[str, Any], documents: dict[s
     network_id = postgres_endpoint.get("NetworkID")
     if not network_id or flowise_endpoint.get("NetworkID") != network_id or "postgres" not in aliases:
         raise DeployError("DATABASE_RUNTIME_NETWORK_IDENTITY_MISMATCH")
+
+
+def validate_runtime_network_identity(
+    documents: dict[str, dict[str, Any]],
+    expected_identity: dict[str, Any],
+) -> dict[str, dict[str, str]]:
+    """Bind both Flowise attachments to the exact unchanged sidecar networks."""
+
+    expected = _validate_network_identity_binding(expected_identity, "RUNTIME_NETWORK_IDENTITY")
+    try:
+        flowise_networks = documents[FLOWISE_CONTAINER]["NetworkSettings"]["Networks"]
+        postgres_networks = documents[POSTGRES_CONTAINER]["NetworkSettings"]["Networks"]
+        nginx_networks = documents[NGINX_CONTAINER]["NetworkSettings"]["Networks"]
+    except (KeyError, TypeError) as error:
+        raise DeployError("RUNTIME_NETWORK_ATTACHMENTS_MISSING") from error
+    if not all(isinstance(value, dict) for value in (flowise_networks, postgres_networks, nginx_networks)):
+        raise DeployError("RUNTIME_NETWORK_ATTACHMENTS_INVALID")
+    internal_name = expected["flowise_internal"]["name"]
+    proxy_name = expected["reverse_proxy"]["name"]
+    if (
+        set(flowise_networks) != {internal_name, proxy_name}
+        or set(postgres_networks) != {internal_name}
+        or proxy_name not in nginx_networks
+    ):
+        raise DeployError("RUNTIME_NETWORK_ATTACHMENT_SET_MISMATCH")
+    endpoints = {
+        "flowise_internal": flowise_networks.get(internal_name),
+        "postgres_internal": postgres_networks.get(internal_name),
+        "flowise_proxy": flowise_networks.get(proxy_name),
+        "nginx_proxy": nginx_networks.get(proxy_name),
+    }
+    if any(not isinstance(endpoint, dict) for endpoint in endpoints.values()):
+        raise DeployError("RUNTIME_NETWORK_ENDPOINT_INVALID")
+    identifiers = {
+        role: endpoint.get("NetworkID")
+        for role, endpoint in endpoints.items()
+        if isinstance(endpoint, dict)
+    }
+    if any(not isinstance(value, str) or not DOCKER_ID_RE.fullmatch(value) for value in identifiers.values()):
+        raise DeployError("RUNTIME_NETWORK_ID_INVALID")
+    observed = {
+        "flowise_internal": {
+            "name": internal_name,
+            "network_id": str(identifiers["flowise_internal"]),
+        },
+        "reverse_proxy": {
+            "name": proxy_name,
+            "network_id": str(identifiers["flowise_proxy"]),
+        },
+    }
+    if (
+        identifiers["flowise_internal"] != identifiers["postgres_internal"]
+        or identifiers["flowise_proxy"] != identifiers["nginx_proxy"]
+        or observed != expected
+    ):
+        raise DeployError("RUNTIME_NETWORK_IDENTITY_MISMATCH")
+    return observed
 
 
 def container_snapshot(documents: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -1374,6 +2456,94 @@ def validate_container_health(documents: dict[str, dict[str, Any]]) -> None:
             raise DeployError(f"CONTAINER_NOT_HEALTHY_{name}")
 
 
+def _hardened_runtime_stable_projection(flowise: dict[str, Any]) -> dict[str, Any]:
+    runtime = container_snapshot({FLOWISE_CONTAINER: flowise})[FLOWISE_CONTAINER]["runtime"]
+    healthcheck = copy.deepcopy(runtime["healthcheck"])
+    if healthcheck.get("StartInterval") == 0:
+        healthcheck.pop("StartInterval")
+    volume_mounts = [mount for mount in runtime["mounts"] if mount.get("type") == "volume"]
+    return {
+        "user": runtime["user"],
+        "healthcheck": healthcheck,
+        "readonly_rootfs": runtime["readonly_rootfs"],
+        "init": runtime["init"],
+        "privileged": runtime["privileged"],
+        "cap_add": runtime["cap_add"],
+        "cap_drop": runtime["cap_drop"],
+        "pids_limit": runtime["pids_limit"],
+        "memory": runtime["memory"],
+        "memory_reservation": runtime["memory_reservation"],
+        "nano_cpus": runtime["nano_cpus"],
+        "pid_mode": runtime["pid_mode"],
+        "ipc_mode": runtime["ipc_mode"],
+        "userns_mode": runtime["userns_mode"],
+        "uts_mode": runtime["uts_mode"],
+        "cgroupns_mode": runtime["cgroupns_mode"],
+        "network_mode": runtime["network_mode"],
+        "security_opt": runtime["security_opt"],
+        "devices": runtime["devices"],
+        "device_requests": runtime["device_requests"],
+        "binds": runtime["binds"],
+        "port_bindings": runtime["port_bindings"],
+        "publish_all_ports": runtime["publish_all_ports"],
+        "restart_policy": runtime["restart_policy"],
+        "log_config": runtime["log_config"],
+        "tmpfs": {
+            path: sorted(str(options).split(","))
+            for path, options in sorted(runtime["tmpfs"].items())
+        },
+        "volume_mounts": volume_mounts,
+        "network_names": [item["name"] for item in runtime["networks"]],
+    }
+
+
+def _expected_hardened_runtime_stable_projection(expected_compose: dict[str, Any]) -> dict[str, Any]:
+    expectations = _candidate_runtime_expectations(expected_compose)
+    volume_name = expectations["volume_name"]
+    return {
+        "user": "1000:1000",
+        "healthcheck": copy.deepcopy(EXPECTED_RUNTIME_HEALTHCHECK),
+        "readonly_rootfs": True,
+        "init": True,
+        "privileged": False,
+        "cap_add": [],
+        "cap_drop": ["ALL"],
+        "pids_limit": 512,
+        "memory": 4_294_967_296,
+        "memory_reservation": 2_147_483_648,
+        "nano_cpus": 2_000_000_000,
+        "pid_mode": "",
+        "ipc_mode": "private",
+        "userns_mode": "",
+        "uts_mode": "",
+        "cgroupns_mode": "private",
+        "network_mode": EXPECTED_TOP_LEVEL_NETWORKS["flowise_network"]["name"],
+        "security_opt": ["no-new-privileges", f"seccomp={LIVE_SECCOMP}"],
+        "devices": [],
+        "device_requests": [],
+        "binds": [],
+        "port_bindings": {"3000/tcp": [{"HostIp": "172.20.0.1", "HostPort": "3000"}]},
+        "publish_all_ports": False,
+        "restart_policy": {"Name": "always", "MaximumRetryCount": 0},
+        "log_config": copy.deepcopy(EXPECTED_RUNTIME_LOG_CONFIG),
+        "tmpfs": {
+            path: sorted(options.split(","))
+            for path, options in sorted(EXPECTED_TMPFS_BY_PATH.items())
+        },
+        "volume_mounts": [
+            {
+                "type": "volume",
+                "name": volume_name,
+                "source": f"/var/lib/docker/volumes/{volume_name}/_data",
+                "destination": "/usr/src/flowise/.flowise",
+                "rw": True,
+                "propagation": "",
+            }
+        ],
+        "network_names": expectations["network_names"],
+    }
+
+
 def validate_runtime(
     documents: dict[str, dict[str, Any]],
     *,
@@ -1382,8 +2552,10 @@ def validate_runtime(
     expected_config_hash: str,
     expected_environment: dict[str, str],
     require_candidate_hardening: bool = False,
+    require_exact_environment: bool = False,
     expected_compose: dict[str, Any] | None = None,
     expected_runtime: dict[str, Any] | None = None,
+    expected_runtime_stable: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_container_health(documents)
     flowise = documents[FLOWISE_CONTAINER]
@@ -1394,7 +2566,11 @@ def validate_runtime(
     if labels.get("com.docker.compose.config-hash") != expected_config_hash:
         raise DeployError("FLOWISE_RUNTIME_CONFIG_HASH_MISMATCH")
     actual_environment = _container_env(flowise)
-    if any(actual_environment.get(key) != value for key, value in expected_environment.items()):
+    if (
+        actual_environment != expected_environment
+        if require_exact_environment
+        else any(actual_environment.get(key) != value for key, value in expected_environment.items())
+    ):
         raise DeployError("FLOWISE_RUNTIME_ENVIRONMENT_MISMATCH")
     expected_database_environment = {
         key: value for key, value in expected_environment.items() if key.startswith("DATABASE_")
@@ -1495,10 +2671,16 @@ def validate_runtime(
             )
         ):
             raise DeployError("FLOWISE_RUNTIME_MOUNT_ALLOWLIST_MISMATCH")
-        if expected_runtime is None:
+        if expected_runtime is not None and expected_runtime_stable is not None:
+            raise DeployError("FLOWISE_RUNTIME_BASELINE_AMBIGUOUS")
+        if expected_runtime is None and expected_runtime_stable is None:
             raise DeployError("FLOWISE_RUNTIME_BASELINE_MISSING")
-        actual_runtime = container_snapshot({FLOWISE_CONTAINER: flowise})[FLOWISE_CONTAINER]["runtime"]
-        if actual_runtime != expected_runtime:
+        if expected_runtime is not None:
+            actual_runtime = container_snapshot({FLOWISE_CONTAINER: flowise})[FLOWISE_CONTAINER]["runtime"]
+            runtime_matches = actual_runtime == expected_runtime
+        else:
+            runtime_matches = _hardened_runtime_stable_projection(flowise) == expected_runtime_stable
+        if not runtime_matches:
             raise DeployError("FLOWISE_RUNTIME_BASELINE_DRIFT")
     return {
         "runtime_image_verified": True,
@@ -1506,6 +2688,73 @@ def validate_runtime(
         "runtime_environment_verified": True,
         "runtime_environment_key_count": len(expected_environment),
         "runtime_hardening_verified": require_candidate_hardening,
+    }
+
+
+def runtime_projection_digest(documents: dict[str, dict[str, Any]]) -> str:
+    try:
+        projection = container_snapshot(documents)[FLOWISE_CONTAINER]["runtime"]
+    except (KeyError, TypeError) as error:
+        raise DeployError("FLOWISE_RUNTIME_PROJECTION_MISSING") from error
+    return sha256_bytes(canonical_json(projection))
+
+
+def validate_legacy_runtime(
+    documents: dict[str, dict[str, Any]],
+    *,
+    image_tag: str,
+    image_digest: str,
+    expected_config_hash: str,
+    expected_environment: dict[str, str],
+    expected_runtime_projection_digest: str,
+) -> dict[str, Any]:
+    """Validate the exact permitted legacy runtime without a general bypass."""
+
+    runtime = validate_runtime(
+        documents,
+        image_tag=image_tag,
+        image_digest=image_digest,
+        expected_config_hash=expected_config_hash,
+        expected_environment=expected_environment,
+        require_candidate_hardening=False,
+        require_exact_environment=True,
+    )
+    projection_digest = runtime_projection_digest(documents)
+    if projection_digest != expected_runtime_projection_digest:
+        raise DeployError("LEGACY_RUNTIME_PROJECTION_MISMATCH")
+    return {**runtime, "runtime_projection_digest": projection_digest, "runtime_policy": "legacy_frozen_v1"}
+
+
+def validate_bootstrap_hardened_runtime(
+    documents: dict[str, dict[str, Any]],
+    *,
+    image_tag: str,
+    image_digest: str,
+    expected_config_hash: str,
+    expected_environment: dict[str, str],
+    expected_compose: dict[str, Any],
+    expected_network_identity: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply the unchanged hardening contract to the newly recreated baseline."""
+
+    expected_runtime_stable = _expected_hardened_runtime_stable_projection(expected_compose)
+    runtime = validate_runtime(
+        documents,
+        image_tag=image_tag,
+        image_digest=image_digest,
+        expected_config_hash=expected_config_hash,
+        expected_environment=expected_environment,
+        require_candidate_hardening=True,
+        require_exact_environment=True,
+        expected_compose=expected_compose,
+        expected_runtime_stable=expected_runtime_stable,
+    )
+    projection = _hardened_runtime_stable_projection(documents[FLOWISE_CONTAINER])
+    network_identity = validate_runtime_network_identity(documents, expected_network_identity)
+    return {
+        **runtime,
+        "runtime_projection_digest": sha256_bytes(canonical_json(projection)),
+        "runtime_network_identity": network_identity,
     }
 
 
@@ -1523,7 +2772,7 @@ def validate_key_continuity(documents: dict[str, dict[str, Any]], expected_envir
         raise DeployError("ENCRYPTION_KEY_CONTINUITY_MISMATCH")
 
 
-def database_state() -> dict[str, Any]:
+def database_state(*, include_name_digest: bool = False) -> dict[str, Any]:
     sql = b"""
 BEGIN TRANSACTION READ ONLY;
 SET LOCAL statement_timeout = '10s';
@@ -1561,7 +2810,15 @@ ROLLBACK;
     if not read_only or not migrations or migrations != sorted(migrations, key=lambda item: (item[0], item[1].encode())):
         raise DeployError("DATABASE_READ_ONLY_FINGERPRINT_INVALID")
     payload = "".join(f"{timestamp}\t{name}\n" for timestamp, name in migrations).encode()
-    return {"transaction_read_only": True, "migration_count": len(migrations), "migration_sha256": sha256_bytes(payload)}
+    names = "".join(f"{name}\n" for _, name in migrations).encode()
+    result = {
+        "transaction_read_only": True,
+        "migration_count": len(migrations),
+        "migration_sha256": sha256_bytes(payload),
+    }
+    if include_name_digest:
+        result["migration_name_sha256"] = sha256_bytes(names)
+    return result
 
 
 MIGRATION_INVENTORY_SCRIPT = r"""
@@ -1708,6 +2965,11 @@ def _create_run_dir(run_id: str) -> Path:
 
 def _write_staged_tree(root: Path, env: bytes, compose: bytes, seccomp: bytes | None) -> dict[str, Any]:
     _secure_directory(root)
+    # Keep the complete role path chain present even for an intentionally
+    # absent seccomp file, so every later staged/archive read can authenticate
+    # the same root-owned, non-symlink directory ancestry.
+    _secure_directory(root / "docker")
+    _secure_directory(root / "docker/seccomp")
     atomic_write(root / ".env.production", env, 0o600)
     atomic_write(root / "docker-compose.prod.yml", compose, 0o600)
     if seccomp is not None:
@@ -1843,6 +3105,7 @@ def _read_receipt(run_id: str, name: str, expected_digest: str | None = None) ->
     if not RUN_ID_RE.fullmatch(run_id):
         raise DeployError("RUN_ID_INVALID")
     run_dir = RUNS_DIR / run_id
+    _validate_secure_run_directory(run_dir)
     path = _receipt_path(run_dir, name)
     data = read_regular(path, maximum=2 * 1024 * 1024, expected_uid=0, expected_gid=0, expected_mode=0o600)
     if expected_digest is not None and sha256_bytes(data) != expected_digest:
@@ -1850,6 +3113,8 @@ def _read_receipt(run_id: str, name: str, expected_digest: str | None = None) ->
     document = parse_canonical_json(data, f"{name.upper()}_RECEIPT")
     if document.get("run_id") != run_id:
         raise DeployError(f"{name.upper()}_RECEIPT_RUN_MISMATCH")
+    if name.startswith("bootstrap-"):
+        _validate_receipt_policy(document, name)
     return run_dir, document
 
 
@@ -1862,11 +3127,14 @@ def _verify_staged_file(path: Path, digest: str) -> bytes:
 
 def _load_staged(receipt: dict[str, Any], role: str, run_dir: Path) -> tuple[Path, bytes, bytes, bytes | None]:
     metadata = receipt[role]
-    root = run_dir / role
-    env = _verify_staged_file(root / ".env.production", metadata["files"]["env"])
-    compose = _verify_staged_file(root / "docker-compose.prod.yml", metadata["files"]["compose"])
     seccomp_metadata = metadata["files"].get("seccomp")
     exact_keys(seccomp_metadata, ("present", "digest"), f"{role.upper()}_SECCOMP_STATE")
+    root = _validate_secure_run_role(
+        run_dir,
+        role,
+    )
+    env = _verify_staged_file(root / ".env.production", metadata["files"]["env"])
+    compose = _verify_staged_file(root / "docker-compose.prod.yml", metadata["files"]["compose"])
     seccomp_path = root / "docker/seccomp/chromium.json"
     if seccomp_metadata["present"] is True:
         if not isinstance(seccomp_metadata["digest"], str) or not DIGEST_RE.fullmatch(seccomp_metadata["digest"]):
@@ -1982,6 +3250,21 @@ def _journal(run_dir: Path, document: dict[str, Any]) -> None:
     atomic_json(run_dir / "journal.json", document)
 
 
+def _read_run_journal(run_dir: Path) -> dict[str, Any]:
+    _validate_secure_run_directory(run_dir)
+    data = read_regular(
+        run_dir / "journal.json",
+        maximum=2 * 1024 * 1024,
+        expected_uid=0,
+        expected_gid=0,
+        expected_mode=0o600,
+    )
+    journal = parse_canonical_json(data, "JOURNAL")
+    if journal.get("run_id") != run_dir.name:
+        raise DeployError("JOURNAL_RUN_ID_MISMATCH")
+    return journal
+
+
 def _mark_rollback_attempt(run_dir: Path, journal: dict[str, Any], phase: str) -> None:
     """Persist the one-way boundary before any rollback can mutate production.
 
@@ -2057,6 +3340,158 @@ def _prepare_preflight(bundle: Bundle) -> dict[str, Any]:
         "key": key,
         "database": database,
     }
+
+
+def _bootstrap_preflight(
+    bundle: Bundle,
+    permit: TransitionPermit,
+    *,
+    check_current_journals: bool,
+    current_run_id: str | None = None,
+) -> dict[str, Any]:
+    binding = permit.document
+    documents = inspect_containers()
+    validate_container_health(documents)
+    snapshot = container_snapshot(documents)
+    active = binding["active_legacy"]
+    active_tag = snapshot[FLOWISE_CONTAINER]["image_ref"]
+    if active_tag != active["image_tag"]:
+        raise DeployError("BOOTSTRAP_ACTIVE_IMAGE_TAG_MISMATCH")
+    active_image = inspect_image(
+        active_tag,
+        active["image_config_digest"],
+        active["revision"],
+        active["repository_url"],
+    )
+    if (
+        snapshot[FLOWISE_CONTAINER]["image_id"] != active["image_config_digest"]
+        or active_image.get("release_id") != active["release_id"]
+        or active_image.get("created_at") != active["created_at"]
+    ):
+        raise DeployError("BOOTSTRAP_ACTIVE_IMAGE_IDENTITY_MISMATCH")
+    observed_container_ids = {name: snapshot[name]["id"] for name in MANAGED_CONTAINERS}
+    if observed_container_ids != binding["containers"]:
+        raise DeployError("BOOTSTRAP_CONTAINER_ID_MISMATCH")
+    network_identity = validate_runtime_network_identity(
+        documents,
+        binding["network_identity"],
+    )
+
+    live_env, env_metadata = live_file(LIVE_ENV, 0o600)
+    live_compose, compose_metadata = live_file(LIVE_COMPOSE, 0o644)
+    live_hashes = _live_hashes()
+    if live_hashes != {
+        "env": binding["live"]["env_sha256"],
+        "compose": binding["live"]["compose_sha256"],
+        "seccomp": binding["live"]["seccomp"],
+    }:
+        raise DeployError("BOOTSTRAP_LIVE_FILE_BINDING_MISMATCH")
+    if live_hashes["seccomp"] != {"present": False, "digest": None}:
+        raise DeployError("BOOTSTRAP_LEGACY_SECCOMP_PRESENT")
+    if render_env(live_env, active_tag) != live_env:
+        raise DeployError("BOOTSTRAP_LIVE_ENV_IMAGE_ASSIGNMENT_DRIFT")
+
+    key = persistent_key()
+    legacy_config, computed_hash, legacy_compose_environment = _resolved_live(active_tag, key)
+    legacy_environment = expected_container_environment(
+        active_image["image_environment"],
+        legacy_compose_environment,
+    )
+    _validate_runtime_environment_binding(active, legacy_environment, key, "BOOTSTRAP_ACTIVE_LEGACY")
+    runtime_label_hash = snapshot[FLOWISE_CONTAINER]["compose_config_hash"]
+    if (
+        runtime_label_hash != active["runtime_label_config_hash"]
+        or computed_hash != active["live_computed_config_hash"]
+        or runtime_label_hash == computed_hash
+    ):
+        raise DeployError("BOOTSTRAP_CONFIG_HASH_EXCEPTION_BINDING_MISMATCH")
+    validate_database_runtime_identity(legacy_config, documents)
+    validate_key_continuity(documents, legacy_environment, key)
+    legacy_runtime = validate_legacy_runtime(
+        documents,
+        image_tag=active_tag,
+        image_digest=active["image_config_digest"],
+        expected_config_hash=runtime_label_hash,
+        expected_environment=legacy_environment,
+        expected_runtime_projection_digest=active["runtime_projection_digest"],
+    )
+    database = database_state(include_name_digest=True)
+    if {
+        "migration_count": database.get("migration_count"),
+        "migration_name_sha256": database.get("migration_name_sha256"),
+    } != binding["database"]:
+        raise DeployError("BOOTSTRAP_DATABASE_BINDING_MISMATCH")
+    legacy_inventory = legacy_journal_inventory()
+    if legacy_inventory != binding["legacy_journal_inventory"]:
+        raise DeployError("BOOTSTRAP_LEGACY_JOURNAL_INVENTORY_MISMATCH")
+    current_inventory = (
+        current_journal_inventory(exclude_run_id=current_run_id) if check_current_journals else None
+    )
+    runtime_pings()
+    return {
+        "documents": documents,
+        "snapshot": snapshot,
+        "active_tag": active_tag,
+        "active_revision": active["revision"],
+        "active_image_digest": active["image_config_digest"],
+        "active_image": active_image,
+        "live_env": live_env,
+        "live_compose": live_compose,
+        "live_seccomp": None,
+        "live_hashes": live_hashes,
+        "live_metadata": {
+            "env": list(env_metadata),
+            "compose": list(compose_metadata),
+            "seccomp": [compose_metadata[0], compose_metadata[1], 0o644],
+        },
+        "legacy_config": legacy_config,
+        "legacy_config_hash": computed_hash,
+        "legacy_runtime_label_hash": runtime_label_hash,
+        "legacy_environment": legacy_environment,
+        "legacy_environment_binding": runtime_environment_binding(legacy_environment, key),
+        "legacy_runtime": legacy_runtime,
+        "key": key,
+        "database": database,
+        "network_identity": network_identity,
+        "legacy_journal_inventory": legacy_inventory,
+        "current_journal_inventory": current_inventory,
+    }
+
+
+def _validate_bootstrap_cas(initial: dict[str, Any], current: dict[str, Any]) -> None:
+    compared = (
+        "snapshot",
+        "active_tag",
+        "active_revision",
+        "active_image_digest",
+        "active_image",
+        "live_env",
+        "live_compose",
+        "live_seccomp",
+        "live_hashes",
+        "live_metadata",
+        "legacy_config",
+        "legacy_config_hash",
+        "legacy_runtime_label_hash",
+        "legacy_environment",
+        "legacy_runtime",
+        "database",
+        "network_identity",
+        "legacy_journal_inventory",
+    )
+    if any(initial[name] != current[name] for name in compared) or initial["key"] != current["key"]:
+        raise DeployError("BOOTSTRAP_BASELINE_CAS_MISMATCH")
+    current_inventory_fields = (
+        "root",
+        "control_json_count",
+        "control_json_sha256",
+        "unresolved_rollback_count",
+    )
+    if any(
+        initial["current_journal_inventory"][name] != current["current_journal_inventory"][name]
+        for name in current_inventory_fields
+    ):
+        raise DeployError("BOOTSTRAP_CURRENT_JOURNAL_CAS_MISMATCH")
 
 
 def prepare(bundle_dir: Path, run_id: str) -> dict[str, Any]:
@@ -2289,7 +3724,8 @@ def _cutover_preflight(run_id: str, receipt_digest: str) -> tuple[Path, dict[str
 def _ensure_rollback_image(run_dir: Path, receipt: dict[str, Any]) -> None:
     rollback = receipt["rollback"]
     archive = rollback["archive"]
-    archive_path = run_dir / "rollback/image.tar.gz"
+    rollback_root = _validate_secure_run_role(run_dir, "rollback")
+    archive_path = rollback_root / "image.tar.gz"
     verify_regular_identity(
         archive_path,
         expected_bytes=archive["bytes"],
@@ -2355,6 +3791,1159 @@ def _restore_rollback(
         raise DeployError("DATABASE_DRIFT_AFTER_ROLLBACK")
     runtime_pings()
     return {"containers": container_snapshot(after), **runtime}
+
+
+def _compose_without_flowise_image(document: dict[str, Any]) -> dict[str, Any]:
+    projection = copy.deepcopy(document)
+    try:
+        projection["services"]["flowise"]["image"] = "__FLOWISE_RELEASE_IMAGE__"
+    except (KeyError, TypeError) as error:
+        raise DeployError("BOOTSTRAP_COMPOSE_FLOWISE_SERVICE_MISSING") from error
+    return projection
+
+
+def _verify_frozen_legacy_archive(run_dir: Path, receipt: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+    _validate_receipt_policy(receipt, "bootstrap-prepare")
+    legacy = receipt["legacy"]
+    archive = legacy["archive"]
+    legacy_root = _validate_secure_run_role(run_dir, "legacy")
+    archive_path = legacy_root / "image.tar.gz"
+    verify_regular_identity(
+        archive_path,
+        expected_bytes=archive["bytes"],
+        expected_digest=archive["digest"],
+    )
+    contract = verify_legacy_archive_contract(
+        archive_path,
+        image_tag=legacy["image_tag"],
+        image_config_digest=legacy["image_config_digest"],
+        revision=legacy["revision"],
+        release_id=legacy["release_id"],
+        repository_url=legacy["repository_url"],
+        created_at=legacy["created_at"],
+    )
+    return archive_path, contract
+
+
+def _ensure_legacy_image(run_dir: Path, receipt: dict[str, Any]) -> dict[str, Any]:
+    legacy = receipt["legacy"]
+    archive_path, archive_contract = _verify_frozen_legacy_archive(run_dir, receipt)
+
+    def inspect_exact() -> None:
+        observed = inspect_image(
+            legacy["image_tag"],
+            legacy["image_config_digest"],
+            legacy["revision"],
+            legacy["repository_url"],
+        )
+        if observed.get("release_id") != legacy["release_id"] or observed.get("created_at") != legacy["created_at"]:
+            raise DeployError("LEGACY_IMAGE_PROVENANCE_MISMATCH")
+
+    try:
+        inspect_exact()
+    except DeployError:
+        load_candidate(archive_path)
+        inspect_exact()
+    return archive_contract
+
+
+def _validate_legacy_restore_sidecars(
+    documents: dict[str, dict[str, Any]],
+    receipt: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    for name in (POSTGRES_CONTAINER, NGINX_CONTAINER):
+        document = documents.get(name)
+        if not isinstance(document, dict):
+            raise DeployError(f"LEGACY_ROLLBACK_SIDECAR_MISSING_{name}")
+        state = document.get("State") or {}
+        if state.get("Status") != "running" or (state.get("Health") or {}).get("Status") != "healthy":
+            raise DeployError(f"LEGACY_ROLLBACK_SIDECAR_NOT_HEALTHY_{name}")
+    snapshot = container_snapshot(documents)
+    for name in (POSTGRES_CONTAINER, NGINX_CONTAINER):
+        if snapshot.get(name) != receipt["baseline"]["containers"][name]:
+            raise DeployError(f"LEGACY_ROLLBACK_SIDECAR_BASELINE_DRIFT_{name}")
+    return snapshot
+
+
+def _legacy_restore_expected_state(
+    run_dir: Path,
+    receipt: dict[str, Any],
+    key: bytes,
+) -> dict[str, Any]:
+    _validate_network_identity_binding(
+        receipt["baseline"].get("network_identity"),
+        "LEGACY_ROLLBACK_NETWORK_IDENTITY",
+    )
+    _, archive_contract = _verify_frozen_legacy_archive(run_dir, receipt)
+    legacy_root, legacy_env, legacy_compose, legacy_seccomp = _load_staged(receipt, "legacy", run_dir)
+    hardened_root, hardened_env, hardened_compose, hardened_seccomp = _load_staged(
+        receipt,
+        "hardened_active",
+        run_dir,
+    )
+    if legacy_seccomp is not None or hardened_seccomp is None:
+        raise DeployError("LEGACY_ROLLBACK_STAGED_SECCOMP_STATE_INVALID")
+    legacy_config = compose_config(
+        legacy_root / ".env.production",
+        legacy_root / "docker-compose.prod.yml",
+        legacy_root,
+    )
+    hardened_config = compose_config(
+        hardened_root / ".env.production",
+        hardened_root / "docker-compose.prod.yml",
+        hardened_root,
+    )
+    try:
+        legacy_flowise = legacy_config["services"]["flowise"]
+    except (KeyError, TypeError) as error:
+        raise DeployError("LEGACY_ROLLBACK_STAGED_CONFIG_INVALID") from error
+    if legacy_flowise.get("image") != receipt["legacy"]["image_tag"] or "build" in legacy_flowise:
+        raise DeployError("LEGACY_ROLLBACK_STAGED_IMAGE_MISMATCH")
+    validate_hardened_compose(hardened_config, receipt["hardened_active"]["image_tag"], key)
+    if (
+        receipt["legacy"]["image_tag"] != receipt["hardened_active"]["image_tag"]
+        or receipt["legacy"]["image_config_digest"]
+        != receipt["hardened_active"]["image_config_digest"]
+    ):
+        raise DeployError("LEGACY_ROLLBACK_RECEIPT_IMAGE_BINDING_MISMATCH")
+    image_environment = archive_contract.get("image_environment")
+    if not isinstance(image_environment, dict) or any(
+        not isinstance(name, str) or not isinstance(value, str)
+        for name, value in image_environment.items()
+    ):
+        raise DeployError("LEGACY_IMAGE_ENVIRONMENT_INVALID")
+    legacy_environment = expected_container_environment(
+        image_environment,
+        service_environment(legacy_config),
+    )
+    hardened_environment = expected_container_environment(
+        image_environment,
+        service_environment(hardened_config),
+    )
+    _validate_runtime_environment_binding(receipt["legacy"], legacy_environment, key, "LEGACY")
+    _validate_runtime_environment_binding(
+        receipt["hardened_active"],
+        hardened_environment,
+        key,
+        "HARDENED_ACTIVE",
+    )
+    return {
+        "legacy_root": legacy_root,
+        "legacy_env": legacy_env,
+        "legacy_compose": legacy_compose,
+        "legacy_config": legacy_config,
+        "legacy_environment": legacy_environment,
+        "hardened_root": hardened_root,
+        "hardened_env": hardened_env,
+        "hardened_compose": hardened_compose,
+        "hardened_config": hardened_config,
+        "hardened_environment": hardened_environment,
+    }
+
+
+def _legacy_recreate_window_matches(
+    journal: dict[str, Any],
+    value: Any,
+    origin: str,
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    pre_recreate_id = value.get("pre_recreate_flowise_container_id")
+    if pre_recreate_id != "absent" and (
+        not isinstance(pre_recreate_id, str) or not DOCKER_ID_RE.fullmatch(pre_recreate_id)
+    ):
+        return False
+    try:
+        expected = _legacy_recreate_window_marker(journal, origin, pre_recreate_id)
+    except DeployError:
+        return False
+    return value == expected
+
+
+def _legacy_absent_flowise_authorization(
+    run_dir: Path,
+    receipt: dict[str, Any],
+    journal: dict[str, Any],
+) -> str | None:
+    """Return the exact persisted recreate window that permits absence."""
+
+    run_id = receipt.get("run_id")
+    prepare_digest = journal.get("bootstrap_prepare_receipt_sha256")
+    if (
+        not isinstance(run_id, str)
+        or run_dir.name != run_id
+        or journal.get("run_id") != run_id
+        or not isinstance(prepare_digest, str)
+        or not DIGEST_RE.fullmatch(prepare_digest)
+    ):
+        return None
+    operation = journal.get("operation")
+    state = journal.get("state")
+    phase = journal.get("phase")
+    step = journal.get("rollback_step")
+    if operation == "bootstrap":
+        if (
+            journal.get("permit_digest") != (receipt.get("permit") or {}).get("digest")
+            or journal.get("target_bundle_digest")
+            != (receipt.get("target_bundle") or {}).get("bundle_digest")
+        ):
+            return None
+        if (
+            state == "in_progress"
+            and phase == "hardened_recreate_intent"
+            and journal.get("live_write_started") is True
+            and journal.get("hardened_recreate_started") is True
+        ):
+            return "hardened_recreate_intent"
+        durable = journal.get("flowise_absent_recovery")
+        durable_origin = durable.get("origin") if isinstance(durable, dict) else None
+        if (
+            state == "rolling_back"
+            and durable_origin in {"hardened_recreate_intent", "legacy_recreate_starting"}
+            and _legacy_recreate_window_matches(journal, durable, str(durable_origin))
+            and phase
+            in {
+                "automatic_legacy_rollback_restoring",
+                "interrupted_legacy_rollback_restoring",
+                "legacy_rollback_files_restoring",
+                "legacy_recreate_starting",
+            }
+            and step
+            in {
+                "LLL",
+                "HLL",
+                "HHL",
+                "HHH",
+                "LHH",
+                "LLH",
+                "legacy_recreate_starting",
+            }
+        ):
+            return str(durable_origin)
+        return None
+    if operation == "bootstrap-rollback":
+        complete_digest = journal.get("bootstrap_complete_receipt_sha256")
+        if not isinstance(complete_digest, str) or not DIGEST_RE.fullmatch(complete_digest):
+            return None
+        durable = journal.get("flowise_absent_recovery")
+        if (
+            state == "rolling_back"
+            and isinstance(durable, dict)
+            and durable.get("origin") == "legacy_recreate_starting"
+            and _legacy_recreate_window_matches(
+                journal,
+                durable,
+                "legacy_recreate_starting",
+            )
+            and phase
+            in {
+                "manual_legacy_rollback_restoring",
+                "legacy_rollback_files_restoring",
+                "legacy_recreate_starting",
+            }
+            and step
+            in {
+                "LLL",
+                "HLL",
+                "HHL",
+                "HHH",
+                "LHH",
+                "LLH",
+                "legacy_recreate_starting",
+            }
+        ):
+            return "legacy_recreate_starting"
+    return None
+
+
+def _validate_present_legacy_recreate_marker(journal: dict[str, Any]) -> None:
+    """Reject any persisted recreate marker unless its full binding is exact."""
+
+    if journal.get("state") != "rolling_back" or "flowise_absent_recovery" not in journal:
+        return
+    marker = journal.get("flowise_absent_recovery")
+    origin = marker.get("origin") if isinstance(marker, dict) else None
+    operation = journal.get("operation")
+    allowed_origins = (
+        {"hardened_recreate_intent", "legacy_recreate_starting"}
+        if operation == "bootstrap"
+        else {"legacy_recreate_starting"}
+        if operation == "bootstrap-rollback"
+        else set()
+    )
+    if (
+        not isinstance(origin, str)
+        or origin not in allowed_origins
+        or not _legacy_recreate_window_matches(journal, marker, origin)
+    ):
+        raise DeployError("LEGACY_RECREATE_WINDOW_MARKER_INVALID")
+
+
+def _legacy_recreate_window_marker(
+    journal: dict[str, Any],
+    origin: str,
+    pre_recreate_flowise_container_id: str,
+) -> dict[str, str]:
+    if origin not in {"hardened_recreate_intent", "legacy_recreate_starting"}:
+        raise DeployError("LEGACY_RECREATE_WINDOW_ORIGIN_INVALID")
+    prepare_digest = journal.get("bootstrap_prepare_receipt_sha256")
+    if not isinstance(prepare_digest, str) or not DIGEST_RE.fullmatch(prepare_digest):
+        raise DeployError("LEGACY_RECREATE_WINDOW_PREPARE_BINDING_INVALID")
+    if pre_recreate_flowise_container_id != "absent" and not DOCKER_ID_RE.fullmatch(
+        pre_recreate_flowise_container_id
+    ):
+        raise DeployError("LEGACY_RECREATE_WINDOW_CONTAINER_ID_INVALID")
+    marker = {
+        "origin": origin,
+        "bootstrap_prepare_receipt_sha256": prepare_digest,
+        "pre_recreate_flowise_container_id": pre_recreate_flowise_container_id,
+    }
+    operation = journal.get("operation")
+    if operation == "bootstrap-rollback":
+        complete_digest = journal.get("bootstrap_complete_receipt_sha256")
+        if not isinstance(complete_digest, str) or not DIGEST_RE.fullmatch(complete_digest):
+            raise DeployError("LEGACY_RECREATE_WINDOW_COMPLETE_BINDING_INVALID")
+        marker["bootstrap_complete_receipt_sha256"] = complete_digest
+    elif operation != "bootstrap":
+        raise DeployError("LEGACY_RECREATE_WINDOW_OPERATION_INVALID")
+    return marker
+
+
+def _flowise_container_id(documents: dict[str, dict[str, Any]]) -> str | None:
+    flowise = documents.get(FLOWISE_CONTAINER)
+    if flowise is None:
+        return None
+    if not isinstance(flowise, dict):
+        raise DeployError("LEGACY_ROLLBACK_FLOWISE_DOCUMENT_INVALID")
+    identifier = flowise.get("Id")
+    if not isinstance(identifier, str) or not DOCKER_ID_RE.fullmatch(identifier):
+        raise DeployError("LEGACY_ROLLBACK_FLOWISE_CONTAINER_ID_INVALID")
+    return identifier
+
+
+def _legacy_recreate_already_observed(
+    journal: dict[str, Any],
+    documents: dict[str, dict[str, Any]],
+) -> bool:
+    """Prove a checkpointed force-recreate produced a different container."""
+
+    marker = journal.get("flowise_absent_recovery")
+    if not _legacy_recreate_window_active(journal):
+        return False
+    if not isinstance(marker, dict):
+        return False
+    current_id = _flowise_container_id(documents)
+    if current_id is None:
+        return False
+    previous_id = marker["pre_recreate_flowise_container_id"]
+    return previous_id == "absent" or current_id != previous_id
+
+
+def _legacy_recreate_checkpoint_active(journal: dict[str, Any]) -> bool:
+    return bool(
+        _legacy_recreate_window_active(journal)
+        and journal.get("phase") == "legacy_recreate_starting"
+        and journal.get("rollback_step") == "legacy_recreate_starting"
+    )
+
+
+def _legacy_recreate_window_active(journal: dict[str, Any]) -> bool:
+    marker = journal.get("flowise_absent_recovery")
+    return bool(
+        journal.get("state") == "rolling_back"
+        and isinstance(marker, dict)
+        and marker.get("origin") == "legacy_recreate_starting"
+        and _legacy_recreate_window_matches(journal, marker, "legacy_recreate_starting")
+        and journal.get("phase")
+        in {
+            "automatic_legacy_rollback_restoring",
+            "interrupted_legacy_rollback_restoring",
+            "manual_legacy_rollback_restoring",
+            "legacy_rollback_files_restoring",
+            "legacy_recreate_starting",
+        }
+        and journal.get("rollback_step")
+        in {*_LEGACY_FILE_SUCCESSOR, "legacy_recreate_starting"}
+    )
+
+
+_LEGACY_FILE_SUCCESSOR = {
+    "HHH": "LHH",
+    "LHH": "LLH",
+    "LLH": "LLL",
+    "HHL": "HLL",
+    "HLL": "LLL",
+    "LLL": "LLL",
+}
+
+
+def _validate_legacy_rollback_resume_progress(
+    journal: dict[str, Any],
+    observed_file_state: str,
+) -> None:
+    if journal.get("state") != "rolling_back":
+        return
+    phase = journal.get("phase")
+    step = journal.get("rollback_step")
+    if phase == "legacy_recreate_starting":
+        if (
+            step != "legacy_recreate_starting"
+            or observed_file_state != "LLL"
+            or not _legacy_recreate_checkpoint_active(journal)
+        ):
+            raise DeployError("LEGACY_ROLLBACK_RESUME_PROGRESS_MISMATCH")
+        return
+    if phase not in {
+        "automatic_legacy_rollback_restoring",
+        "interrupted_legacy_rollback_restoring",
+        "manual_legacy_rollback_restoring",
+        "legacy_rollback_files_restoring",
+    } or step not in _LEGACY_FILE_SUCCESSOR:
+        raise DeployError("LEGACY_ROLLBACK_RESUME_PROGRESS_INVALID")
+    if observed_file_state not in {step, _LEGACY_FILE_SUCCESSOR[str(step)]}:
+        raise DeployError("LEGACY_ROLLBACK_RESUME_PROGRESS_MISMATCH")
+
+
+def _classify_legacy_rollback_live_state(
+    run_dir: Path,
+    receipt: dict[str, Any],
+    documents: dict[str, dict[str, Any]],
+    key: bytes,
+    *,
+    allow_flowise_absent: bool = False,
+) -> dict[str, Any]:
+    _validate_receipt_policy(receipt, "bootstrap-prepare")
+    if set(documents) not in (
+        {POSTGRES_CONTAINER, NGINX_CONTAINER},
+        set(MANAGED_CONTAINERS),
+    ):
+        raise DeployError("LEGACY_ROLLBACK_CONTAINER_SET_UNAUTHORIZED")
+    snapshot = _validate_legacy_restore_sidecars(documents, receipt)
+    flowise = documents.get(FLOWISE_CONTAINER)
+    if not isinstance(flowise, dict) and not allow_flowise_absent:
+        raise DeployError("LEGACY_ROLLBACK_FLOWISE_MISSING")
+    flowise_container_id = _flowise_container_id(documents)
+    expected = _legacy_restore_expected_state(run_dir, receipt, key)
+    if isinstance(flowise, dict):
+        network_identity = validate_runtime_network_identity(
+            documents,
+            receipt["baseline"]["network_identity"],
+        )
+        config = flowise.get("Config") or {}
+        if (
+            config.get("Image") != receipt["legacy"]["image_tag"]
+            or flowise.get("Image") != receipt["legacy"]["image_config_digest"]
+        ):
+            raise DeployError("LEGACY_ROLLBACK_FLOWISE_IMAGE_MISMATCH")
+        config_hash = (config.get("Labels") or {}).get("com.docker.compose.config-hash")
+        legacy_hashes = {
+            receipt["legacy"]["runtime_label_config_hash"],
+            receipt["legacy"]["live_computed_config_hash"],
+        }
+        hardened_hash = receipt["hardened_active"]["compose_config_hash"]
+        if hardened_hash in legacy_hashes:
+            raise DeployError("LEGACY_ROLLBACK_CONFIG_HASH_BINDING_AMBIGUOUS")
+        actual_environment = _container_env(flowise)
+        if config_hash in legacy_hashes:
+            runtime_profile = "legacy"
+            if (
+                actual_environment != expected["legacy_environment"]
+                or runtime_projection_digest(documents) != receipt["legacy"]["runtime_projection_digest"]
+            ):
+                raise DeployError("LEGACY_ROLLBACK_RUNTIME_BINDING_MISMATCH")
+            runtime_config = expected["legacy_config"]
+        elif config_hash == hardened_hash:
+            runtime_profile = "hardened"
+            if (
+                actual_environment != expected["hardened_environment"]
+                or _hardened_runtime_stable_projection(flowise)
+                != _expected_hardened_runtime_stable_projection(expected["hardened_config"])
+            ):
+                raise DeployError("LEGACY_ROLLBACK_RUNTIME_BINDING_MISMATCH")
+            runtime_config = expected["hardened_config"]
+        else:
+            raise DeployError("LEGACY_ROLLBACK_RUNTIME_CONFIG_HASH_MISMATCH")
+        validate_database_runtime_identity(runtime_config, documents)
+        validate_key_continuity(documents, actual_environment, key)
+    else:
+        runtime_profile = "absent"
+        config_hash = None
+        network_identity = None
+    if database_state(include_name_digest=True) != receipt["baseline"]["database"]:
+        raise DeployError("LEGACY_ROLLBACK_DATABASE_BASELINE_DRIFT")
+
+    live = _live_hashes()
+    legacy_files = receipt["legacy"]["files"]
+    hardened_files = receipt["hardened_active"]["files"]
+    tokens: list[str] = []
+    for name in ("seccomp", "compose", "env"):
+        if live[name] == legacy_files[name]:
+            tokens.append("L")
+        elif live[name] == hardened_files[name]:
+            tokens.append("H")
+        else:
+            raise DeployError("LEGACY_ROLLBACK_LIVE_FILE_STATE_UNAUTHORIZED")
+    file_state = "".join(tokens)
+    allowed_states = {"LLL", "HLL", "HHL", "HHH", "LHH", "LLH"}
+    if file_state not in allowed_states:
+        raise DeployError("LEGACY_ROLLBACK_LIVE_FILE_STATE_UNAUTHORIZED")
+    return {
+        "file_state": file_state,
+        "runtime_profile": runtime_profile,
+        "runtime_config_hash": config_hash,
+        "flowise_container_id": flowise_container_id,
+        "snapshot": snapshot,
+        "network_identity": network_identity,
+        "expected": expected,
+    }
+
+
+def _legacy_rollback_complete(
+    classification: dict[str, Any],
+    receipt: dict[str, Any],
+    documents: dict[str, dict[str, Any]],
+    key: bytes,
+    *,
+    raise_on_validation_failure: bool = False,
+) -> dict[str, Any] | None:
+    if classification["file_state"] != "LLL" or classification["runtime_profile"] != "legacy":
+        return None
+    expected = classification["expected"]
+    try:
+        validate_container_health(documents)
+        runtime = validate_legacy_runtime(
+            documents,
+            image_tag=receipt["legacy"]["image_tag"],
+            image_digest=receipt["legacy"]["image_config_digest"],
+            expected_config_hash=classification["runtime_config_hash"],
+            expected_environment=expected["legacy_environment"],
+            expected_runtime_projection_digest=receipt["legacy"]["runtime_projection_digest"],
+        )
+        validate_database_runtime_identity(expected["legacy_config"], documents)
+        validate_runtime_network_identity(
+            documents,
+            receipt["baseline"]["network_identity"],
+        )
+        validate_key_continuity(documents, expected["legacy_environment"], key)
+        runtime_pings()
+    except DeployError:
+        if raise_on_validation_failure:
+            raise
+        return None
+    return {"containers": classification["snapshot"], **runtime}
+
+
+def _checkpoint_legacy_rollback_step(
+    run_dir: Path,
+    journal: dict[str, Any] | None,
+    file_state: str,
+    *,
+    pre_recreate_flowise_container_id: str | None = None,
+) -> None:
+    if journal is None:
+        return
+    recreate_starting = file_state == "legacy_recreate_starting"
+    if recreate_starting:
+        existing = journal.get("flowise_absent_recovery")
+        if not (
+            isinstance(existing, dict)
+            and existing.get("origin") == "legacy_recreate_starting"
+            and _legacy_recreate_window_matches(
+                journal,
+                existing,
+                "legacy_recreate_starting",
+            )
+        ):
+            marker_id = pre_recreate_flowise_container_id or "absent"
+            journal["flowise_absent_recovery"] = _legacy_recreate_window_marker(
+                journal,
+                "legacy_recreate_starting",
+                marker_id,
+            )
+    journal.update(
+        {
+            "state": "rolling_back",
+            "phase": (
+                "legacy_recreate_starting"
+                if recreate_starting
+                else "legacy_rollback_files_restoring"
+            ),
+            "rollback_step": file_state,
+            "updated_at": utc_now(),
+        }
+    )
+    _journal(run_dir, journal)
+
+
+def _install_legacy_files_from_state(
+    run_dir: Path,
+    receipt: dict[str, Any],
+    expected: dict[str, Any],
+    file_state: str,
+    journal: dict[str, Any] | None,
+) -> None:
+    metadata = receipt["live_metadata"]
+    while file_state != "LLL":
+        if file_state in {"HHH", "HLL"}:
+            _remove_live_seccomp()
+            if _live_hashes()["seccomp"] != receipt["legacy"]["files"]["seccomp"]:
+                raise DeployError("LEGACY_ROLLBACK_SECCOMP_RESTORE_MISMATCH")
+            file_state = "LHH" if file_state == "HHH" else "LLL"
+        elif file_state in {"LHH", "HHL"}:
+            uid, gid, mode = metadata["compose"]
+            atomic_write(LIVE_COMPOSE, expected["legacy_compose"], mode, uid, gid)
+            if sha256_file(LIVE_COMPOSE) != receipt["legacy"]["files"]["compose"]:
+                raise DeployError("LEGACY_ROLLBACK_COMPOSE_RESTORE_MISMATCH")
+            file_state = "LLH" if file_state == "LHH" else "HLL"
+        elif file_state == "LLH":
+            uid, gid, mode = metadata["env"]
+            atomic_write(LIVE_ENV, expected["legacy_env"], mode, uid, gid)
+            if sha256_file(LIVE_ENV) != receipt["legacy"]["files"]["env"]:
+                raise DeployError("LEGACY_ROLLBACK_ENV_RESTORE_MISMATCH")
+            file_state = "LLL"
+        else:
+            raise DeployError("LEGACY_ROLLBACK_LIVE_FILE_STATE_UNAUTHORIZED")
+        _checkpoint_legacy_rollback_step(run_dir, journal, file_state)
+
+
+def _restore_legacy_frozen(
+    run_dir: Path,
+    receipt: dict[str, Any],
+    before: dict[str, dict[str, Any]],
+    key: bytes,
+    journal: dict[str, Any] | None = None,
+    *,
+    allow_flowise_absent: bool = False,
+) -> dict[str, Any]:
+    """Restore the exact legacy state; never route through hardened rollback."""
+
+    classification = _classify_legacy_rollback_live_state(
+        run_dir,
+        receipt,
+        before,
+        key,
+        allow_flowise_absent=allow_flowise_absent,
+    )
+    before_snapshot = classification["snapshot"]
+    _ensure_legacy_image(run_dir, receipt)
+    _install_legacy_files_from_state(
+        run_dir,
+        receipt,
+        classification["expected"],
+        classification["file_state"],
+        journal,
+    )
+    if _live_hashes() != receipt["legacy"]["files"]:
+        raise DeployError("LEGACY_ROLLBACK_LIVE_FILE_HASH_MISMATCH")
+    resolved_legacy, computed_hash, compose_environment = _resolved_live(receipt["legacy"]["image_tag"], key)
+    expected = classification["expected"]
+    if (
+        computed_hash != receipt["legacy"]["live_computed_config_hash"]
+        or resolved_legacy != expected["legacy_config"]
+        or compose_environment != service_environment(expected["legacy_config"])
+    ):
+        raise DeployError("LEGACY_ROLLBACK_COMPUTED_HASH_MISMATCH")
+    _checkpoint_legacy_rollback_step(
+        run_dir,
+        journal,
+        "legacy_recreate_starting",
+        pre_recreate_flowise_container_id=classification.get("flowise_container_id"),
+    )
+    compose_recreate()
+    after = inspect_containers()
+    runtime = validate_legacy_runtime(
+        after,
+        image_tag=receipt["legacy"]["image_tag"],
+        image_digest=receipt["legacy"]["image_config_digest"],
+        expected_config_hash=computed_hash,
+        expected_environment=expected["legacy_environment"],
+        expected_runtime_projection_digest=receipt["legacy"]["runtime_projection_digest"],
+    )
+    validate_database_runtime_identity(resolved_legacy, after)
+    validate_runtime_network_identity(
+        after,
+        receipt["baseline"]["network_identity"],
+    )
+    _validate_sidecars(before, after)
+    after_snapshot = container_snapshot(after)
+    for name in (POSTGRES_CONTAINER, NGINX_CONTAINER):
+        if after_snapshot[name] != receipt["baseline"]["containers"][name]:
+            raise DeployError(f"LEGACY_ROLLBACK_SIDECAR_POSTCHECK_DRIFT_{name}")
+    validate_key_continuity(after, expected["legacy_environment"], key)
+    if database_state(include_name_digest=True) != receipt["baseline"]["database"]:
+        raise DeployError("DATABASE_DRIFT_AFTER_LEGACY_ROLLBACK")
+    if _live_hashes() != receipt["legacy"]["files"]:
+        raise DeployError("LEGACY_ROLLBACK_LIVE_POSTCHECK_FAILED")
+    runtime_pings()
+    return {"containers": after_snapshot, **runtime}
+
+
+def _execute_legacy_rollback_transaction(
+    run_dir: Path,
+    receipt: dict[str, Any],
+    journal: dict[str, Any],
+    key: bytes,
+    *,
+    intent_phase: str,
+    failure_phase: str,
+    failure_code: str,
+    failure_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resume an idempotent legacy restore and never repeat a proven-complete recreate."""
+
+    _validate_present_legacy_recreate_marker(journal)
+    absent_origin = _legacy_absent_flowise_authorization(run_dir, receipt, journal)
+    before = inspect_legacy_recovery_containers()
+    recreate_already_observed = _legacy_recreate_already_observed(journal, before)
+
+    def fail_manual(rollback_error: Exception) -> None:
+        journal.update(
+            {
+                "state": "rollback_failed_manual_intervention_required",
+                "phase": failure_phase,
+                "rollback_attempted": True,
+                "rollback_error": str(rollback_error)
+                if isinstance(rollback_error, DeployError)
+                else "UNEXPECTED_INTERNAL_FAILURE",
+                "updated_at": utc_now(),
+                **(failure_context or {}),
+            }
+        )
+        _journal(run_dir, journal)
+
+    try:
+        classification = _classify_legacy_rollback_live_state(
+            run_dir,
+            receipt,
+            before,
+            key,
+            allow_flowise_absent=absent_origin is not None,
+        )
+        _validate_legacy_rollback_resume_progress(journal, classification["file_state"])
+        completed = None
+        if recreate_already_observed:
+            completed = _legacy_rollback_complete(
+                classification,
+                receipt,
+                before,
+                key,
+                raise_on_validation_failure=recreate_already_observed,
+            )
+        if recreate_already_observed and completed is None:
+            raise DeployError("LEGACY_RECREATE_ALREADY_OBSERVED_INCOMPLETE")
+    except Exception as validation_error:
+        if recreate_already_observed:
+            fail_manual(validation_error)
+            raise DeployError(failure_code) from validation_error
+        raise
+    if completed is not None:
+        return completed
+    if classification["runtime_profile"] == "absent" and absent_origin is not None:
+        existing = journal.get("flowise_absent_recovery")
+        if not _legacy_recreate_window_matches(journal, existing, absent_origin):
+            journal["flowise_absent_recovery"] = _legacy_recreate_window_marker(
+                journal,
+                absent_origin,
+                "absent",
+            )
+    journal.update(
+        {
+            "state": "rolling_back",
+            "phase": intent_phase,
+            "rollback_step": classification["file_state"],
+            "rollback_attempted": False,
+            "updated_at": utc_now(),
+        }
+    )
+    _journal(run_dir, journal)
+    try:
+        return _restore_legacy_frozen(
+            run_dir,
+            receipt,
+            before,
+            key,
+            journal,
+            allow_flowise_absent=absent_origin is not None,
+        )
+    except Exception as rollback_error:
+        fail_manual(rollback_error)
+        raise DeployError(failure_code) from rollback_error
+
+
+def bootstrap(
+    bundle_dir: Path,
+    run_id: str,
+    transition_permit_path: Path,
+    transition_permit_sha256: str,
+) -> dict[str, Any]:
+    require_root()
+    lock = acquire_lock()
+    run_dir: Path | None = None
+    journal: dict[str, Any] | None = None
+    baseline: dict[str, Any] | None = None
+    prepare_receipt: dict[str, Any] | None = None
+    live_written = False
+    try:
+        bundle = verify_bundle(bundle_dir)
+        permit = verify_transition_permit(
+            transition_permit_path,
+            transition_permit_sha256,
+            bundle=bundle,
+            run_id=run_id,
+        )
+        existing_run = RUNS_DIR / run_id
+        if existing_run.exists() or existing_run.is_symlink():
+            # A retry may recover only its own permit- and bundle-bound bootstrap.
+            # Unrelated interrupted runs are blockers, never implicit write authority.
+            _recover_interrupted_runs(
+                only_run_id=run_id,
+                expected_bootstrap_permit_digest=permit.digest,
+                expected_target_bundle_digest=bundle.bundle_digest,
+            )
+            raise DeployError("RUN_DIRECTORY_EXISTS")
+        baseline = _bootstrap_preflight(bundle, permit, check_current_journals=True)
+        run_dir = _create_run_dir(run_id)
+        journal = {
+            "schema_version": 1,
+            "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+            "operation": "bootstrap",
+            "state": "in_progress",
+            "phase": "permitted_legacy_baseline_verified",
+            "run_id": run_id,
+            "permit_digest": permit.digest,
+            "target_bundle_digest": bundle.bundle_digest,
+            "target_bundle_release_id": bundle.release_id,
+            "active_legacy_release_id": f"git-{baseline['active_revision']}",
+            "live_write_started": False,
+            "hardened_recreate_started": False,
+            "rollback_attempted": False,
+            "updated_at": utc_now(),
+        }
+        _journal(run_dir, journal)
+
+        hardened_active_env = render_env(baseline["live_env"], baseline["active_tag"])
+        target_bundle_env = render_env(baseline["live_env"], bundle.image_tag)
+        hardened_compose = read_bundle_payload(
+            bundle.files["production_compose"],
+            bundle.file_entries["production_compose"]["bytes"],
+            bundle.file_entries["production_compose"]["digest"],
+        )
+        hardened_seccomp = read_bundle_payload(
+            bundle.files["chromium_seccomp"],
+            bundle.file_entries["chromium_seccomp"]["bytes"],
+            bundle.file_entries["chromium_seccomp"]["digest"],
+        )
+        legacy_files = _write_staged_tree(
+            run_dir / "legacy",
+            baseline["live_env"],
+            baseline["live_compose"],
+            None,
+        )
+        hardened_active_files = _write_staged_tree(
+            run_dir / "hardened_active",
+            hardened_active_env,
+            hardened_compose,
+            hardened_seccomp,
+        )
+        target_bundle_files = _write_staged_tree(
+            run_dir / "target_bundle",
+            target_bundle_env,
+            hardened_compose,
+            hardened_seccomp,
+        )
+        if legacy_files != baseline["live_hashes"]:
+            raise DeployError("BOOTSTRAP_LEGACY_FREEZE_HASH_MISMATCH")
+
+        legacy_archive = run_dir / "legacy/image.tar.gz"
+        legacy_archive_bytes, legacy_archive_digest = save_rollback_archive(
+            baseline["active_tag"],
+            legacy_archive,
+        )
+        _validate_secure_run_role(run_dir, "legacy")
+        verify_legacy_archive_contract(
+            legacy_archive,
+            image_tag=baseline["active_tag"],
+            image_config_digest=baseline["active_image_digest"],
+            revision=baseline["active_revision"],
+            release_id=baseline["active_image"]["release_id"],
+            repository_url=baseline["active_image"]["repository_url"],
+            created_at=baseline["active_image"]["created_at"],
+        )
+        journal.update({"phase": "legacy_and_hardening_configs_frozen", "updated_at": utc_now()})
+        _journal(run_dir, journal)
+
+        hardened_active_root = run_dir / "hardened_active"
+        target_bundle_root = run_dir / "target_bundle"
+        hardened_active_config = compose_config(
+            hardened_active_root / ".env.production",
+            hardened_active_root / "docker-compose.prod.yml",
+            hardened_active_root,
+        )
+        target_bundle_config = compose_config(
+            target_bundle_root / ".env.production",
+            target_bundle_root / "docker-compose.prod.yml",
+            target_bundle_root,
+        )
+        if _compose_without_flowise_image(hardened_active_config) != _compose_without_flowise_image(
+            target_bundle_config
+        ):
+            raise DeployError("BOOTSTRAP_TARGET_BUNDLE_NON_IMAGE_DRIFT")
+        validate_hardened_compose(hardened_active_config, baseline["active_tag"], baseline["key"])
+        validate_hardened_compose(target_bundle_config, bundle.image_tag, baseline["key"])
+        validate_database_runtime_identity(hardened_active_config, baseline["documents"])
+        hardened_active_config_hash = compose_service_hash(
+            hardened_active_root / ".env.production",
+            hardened_active_root / "docker-compose.prod.yml",
+            hardened_active_root,
+        )
+        target_bundle_config_hash = compose_service_hash(
+            target_bundle_root / ".env.production",
+            target_bundle_root / "docker-compose.prod.yml",
+            target_bundle_root,
+        )
+        hardened_active_environment = expected_container_environment(
+            baseline["active_image"]["image_environment"],
+            service_environment(hardened_active_config),
+        )
+        hardened_active_environment_binding = runtime_environment_binding(
+            hardened_active_environment,
+            baseline["key"],
+        )
+
+        revalidated = _bootstrap_preflight(
+            bundle,
+            permit,
+            check_current_journals=True,
+            current_run_id=run_id,
+        )
+        _validate_bootstrap_cas(baseline, revalidated)
+        prepare_receipt = {
+            "schema_version": 1,
+            "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+            "operation": "bootstrap",
+            "state": "prepared_legacy_frozen",
+            "run_id": run_id,
+            "permit": {"digest": permit.digest},
+            "target_bundle": {
+                "bundle_digest": bundle.bundle_digest,
+                "release_id": bundle.release_id,
+                "revision": bundle.revision,
+                "image_tag": bundle.image_tag,
+                "image_config_digest": bundle.image_config_digest,
+                "files": target_bundle_files,
+                "compose_config_hash": target_bundle_config_hash,
+            },
+            "hardened_active": {
+                "release_id": f"git-{baseline['active_revision']}",
+                "revision": baseline["active_revision"],
+                "image_tag": baseline["active_tag"],
+                "image_config_digest": baseline["active_image_digest"],
+                "repository_url": baseline["active_image"]["repository_url"],
+                "created_at": baseline["active_image"]["created_at"],
+                "files": hardened_active_files,
+                "compose_config_hash": hardened_active_config_hash,
+                **hardened_active_environment_binding,
+            },
+            "legacy": {
+                "release_id": f"git-{baseline['active_revision']}",
+                "revision": baseline["active_revision"],
+                "image_tag": baseline["active_tag"],
+                "image_config_digest": baseline["active_image_digest"],
+                "repository_url": baseline["active_image"]["repository_url"],
+                "created_at": baseline["active_image"]["created_at"],
+                "files": legacy_files,
+                "archive": {"bytes": legacy_archive_bytes, "digest": legacy_archive_digest},
+                "runtime_label_config_hash": baseline["legacy_runtime_label_hash"],
+                "live_computed_config_hash": baseline["legacy_config_hash"],
+                "runtime_projection_digest": permit.document["active_legacy"]["runtime_projection_digest"],
+                **baseline["legacy_environment_binding"],
+            },
+            "baseline": {
+                "containers": baseline["snapshot"],
+                "database": baseline["database"],
+                "network_identity": baseline["network_identity"],
+                "legacy_journal_inventory": baseline["legacy_journal_inventory"],
+                "current_journal_inventory": baseline["current_journal_inventory"],
+            },
+            "live_metadata": baseline["live_metadata"],
+            "target_bundle_non_image_match": True,
+            "candidate_archive_loaded": False,
+            "key_continuity_verified": True,
+            "container_recreated": False,
+            "provider_call": False,
+            "created_at": utc_now(),
+        }
+        prepare_digest = _write_receipt(_receipt_path(run_dir, "bootstrap-prepare"), prepare_receipt)
+        journal.update(
+            {
+                "phase": "bootstrap_prepare_receipt_written",
+                "bootstrap_prepare_receipt_sha256": prepare_digest,
+                "updated_at": utc_now(),
+            }
+        )
+        _journal(run_dir, journal)
+
+        journal.update(
+            {
+                "live_write_started": True,
+                "phase": "hardened_config_installing",
+                "updated_at": utc_now(),
+            }
+        )
+        _journal(run_dir, journal)
+        live_written = True
+        install_config_set(
+            hardened_active_env,
+            hardened_compose,
+            hardened_seccomp,
+            baseline["live_metadata"],
+        )
+        if _live_hashes() != hardened_active_files:
+            raise DeployError("BOOTSTRAP_HARDENED_ACTIVE_LIVE_FILE_HASH_MISMATCH")
+        resolved_hardened, expected_hash, compose_environment = _resolved_live(
+            baseline["active_tag"],
+            baseline["key"],
+        )
+        if (
+            expected_hash != hardened_active_config_hash
+            or resolved_hardened != hardened_active_config
+            or compose_environment != service_environment(hardened_active_config)
+        ):
+            raise DeployError("BOOTSTRAP_HARDENED_ACTIVE_CONFIG_HASH_MISMATCH")
+        journal.update(
+            {
+                "hardened_recreate_started": True,
+                "phase": "hardened_recreate_intent",
+                "updated_at": utc_now(),
+            }
+        )
+        _journal(run_dir, journal)
+        compose_recreate()
+        after = inspect_containers()
+        runtime = validate_bootstrap_hardened_runtime(
+            after,
+            image_tag=baseline["active_tag"],
+            image_digest=baseline["active_image_digest"],
+            expected_config_hash=expected_hash,
+            expected_environment=hardened_active_environment,
+            expected_compose=hardened_active_config,
+            expected_network_identity=baseline["network_identity"],
+        )
+        _validate_runtime_environment_binding(
+            prepare_receipt["hardened_active"],
+            hardened_active_environment,
+            baseline["key"],
+            "BOOTSTRAP_HARDENED_ACTIVE",
+        )
+        validate_database_runtime_identity(hardened_active_config, after)
+        after_snapshot = container_snapshot(after)
+        if after_snapshot[FLOWISE_CONTAINER]["id"] == baseline["snapshot"][FLOWISE_CONTAINER]["id"]:
+            raise DeployError("BOOTSTRAP_FLOWISE_NOT_RECREATED")
+        _validate_sidecars(baseline["documents"], after)
+        validate_key_continuity(after, hardened_active_environment, baseline["key"])
+        if database_state(include_name_digest=True) != baseline["database"]:
+            raise DeployError("DATABASE_DRIFT_AFTER_BOOTSTRAP")
+        if _live_hashes() != hardened_active_files:
+            raise DeployError("BOOTSTRAP_HARDENED_ACTIVE_LIVE_POSTCHECK_FAILED")
+        runtime_pings()
+        complete_receipt = {
+            "schema_version": 1,
+            "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+            "operation": "bootstrap",
+            "state": "complete_hardened_baseline",
+            "run_id": run_id,
+            "bootstrap_prepare_receipt_sha256": prepare_digest,
+            "permit_digest": permit.digest,
+            "target_bundle": prepare_receipt["target_bundle"],
+            "hardened_active": prepare_receipt["hardened_active"],
+            "runtime": {"containers": after_snapshot, **runtime},
+            "database": baseline["database"],
+            "key_continuity_verified": True,
+            "database_unchanged": True,
+            "sidecars_unchanged": True,
+            "provider_call": False,
+            "created_at": utc_now(),
+        }
+        complete_digest = _write_receipt(_receipt_path(run_dir, "bootstrap-complete"), complete_receipt)
+        journal.update(
+            {
+                "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+                "state": "complete_hardened_baseline",
+                "phase": "complete",
+                "permit_digest": permit.digest,
+                "target_bundle_digest": prepare_receipt["target_bundle"]["bundle_digest"],
+                "target_bundle_release_id": prepare_receipt["target_bundle"]["release_id"],
+                "active_legacy_release_id": prepare_receipt["legacy"]["release_id"],
+                "bootstrap_prepare_receipt_sha256": prepare_digest,
+                "bootstrap_complete_receipt_sha256": complete_digest,
+                "updated_at": utc_now(),
+            }
+        )
+        _journal(run_dir, journal)
+        return {
+            "status": "complete_hardened_baseline",
+            "run_id": run_id,
+            "bootstrap_prepare_receipt_sha256": prepare_digest,
+            "bootstrap_complete_receipt_sha256": complete_digest,
+            "active_image": baseline["active_tag"],
+            "target_candidate_image": bundle.image_tag,
+        }
+    except Exception as forward_error:
+        if live_written and run_dir is not None and prepare_receipt is not None and baseline is not None:
+            if journal is None:
+                journal = {
+                    "schema_version": 1,
+                    "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+                    "operation": "bootstrap",
+                    "run_id": run_id,
+                }
+            try:
+                rollback_runtime = _execute_legacy_rollback_transaction(
+                    run_dir,
+                    prepare_receipt,
+                    journal,
+                    baseline["key"],
+                    intent_phase="automatic_legacy_rollback_restoring",
+                    failure_phase="automatic_legacy_rollback_failed",
+                    failure_code="BOOTSTRAP_FORWARD_AND_LEGACY_ROLLBACK_FAILED",
+                    failure_context={
+                        "forward_error": str(forward_error)
+                        if isinstance(forward_error, DeployError)
+                        else "UNEXPECTED_INTERNAL_FAILURE"
+                    },
+                )
+                journal.update(
+                    {
+                        "state": "bootstrap_rolled_back_legacy",
+                        "phase": "automatic_legacy_rollback_complete",
+                        "forward_error": str(forward_error)
+                        if isinstance(forward_error, DeployError)
+                        else "UNEXPECTED_INTERNAL_FAILURE",
+                        "rollback_runtime": rollback_runtime,
+                        "updated_at": utc_now(),
+                    }
+                )
+                _journal(run_dir, journal)
+            except DeployError:
+                raise
+        elif journal is not None and run_dir is not None:
+            journal.update(
+                {
+                    "state": "bootstrap_failed_before_live_write",
+                    "phase": "bootstrap_prewrite_failure",
+                    "forward_error": str(forward_error)
+                    if isinstance(forward_error, DeployError)
+                    else "UNEXPECTED_INTERNAL_FAILURE",
+                    "updated_at": utc_now(),
+                }
+            )
+            try:
+                _journal(run_dir, journal)
+            except Exception:
+                pass
+        raise forward_error
+    finally:
+        os.close(lock)
 
 
 def cutover(run_id: str, prepare_receipt_sha256: str) -> dict[str, Any]:
@@ -2556,10 +5145,332 @@ def rollback(run_id: str, prepare_receipt_sha256: str, cutover_receipt_sha256: s
         os.close(lock)
 
 
-def _recover_interrupted_runs() -> None:
-    if not RUNS_DIR.exists():
+def _validate_bootstrap_rollback_journal_binding(
+    journal: dict[str, Any],
+    prepare_receipt: dict[str, Any],
+    bootstrap_prepare_receipt_sha256: str,
+    bootstrap_complete_receipt_sha256: str,
+    *,
+    resume: bool,
+) -> None:
+    _validate_policy(
+        journal.get("policy"),
+        LEGACY_BOOTSTRAP_POLICY,
+        "BOOTSTRAP_ROLLBACK_JOURNAL",
+    )
+    target = prepare_receipt.get("target_bundle") or {}
+    expected = {
+        "schema_version": 1,
+        "run_id": prepare_receipt.get("run_id"),
+        "permit_digest": (prepare_receipt.get("permit") or {}).get("digest"),
+        "target_bundle_digest": target.get("bundle_digest"),
+        "target_bundle_release_id": target.get("release_id"),
+        "active_legacy_release_id": (prepare_receipt.get("legacy") or {}).get("release_id"),
+        "bootstrap_prepare_receipt_sha256": bootstrap_prepare_receipt_sha256,
+        "bootstrap_complete_receipt_sha256": bootstrap_complete_receipt_sha256,
+    }
+    if any(journal.get(name) != value for name, value in expected.items()):
+        raise DeployError("BOOTSTRAP_ROLLBACK_JOURNAL_BINDING_MISMATCH")
+    if resume:
+        if (
+            journal.get("operation") != "bootstrap-rollback"
+            or journal.get("state") != "rolling_back"
+            or journal.get("phase")
+            not in {
+                "manual_legacy_rollback_restoring",
+                "legacy_rollback_files_restoring",
+                "legacy_recreate_starting",
+            }
+        ):
+            raise DeployError("BOOTSTRAP_ROLLBACK_RESUME_STATE_INVALID")
+    elif (
+        journal.get("operation") != "bootstrap"
+        or journal.get("state") != "complete_hardened_baseline"
+        or journal.get("phase") != "complete"
+    ):
+        raise DeployError("BOOTSTRAP_ROLLBACK_BASELINE_JOURNAL_INVALID")
+
+
+def _snapshot_matches_except_flowise_liveness(
+    observed: Any,
+    expected: Any,
+) -> bool:
+    if not isinstance(observed, dict) or not isinstance(expected, dict):
+        return False
+    if set(observed) != set(MANAGED_CONTAINERS) or set(expected) != set(MANAGED_CONTAINERS):
+        return False
+    observed_copy = copy.deepcopy(observed)
+    expected_copy = copy.deepcopy(expected)
+    for snapshot in (observed_copy, expected_copy):
+        flowise = snapshot.get(FLOWISE_CONTAINER)
+        if not isinstance(flowise, dict):
+            return False
+        flowise.pop("state", None)
+        flowise.pop("health", None)
+    return observed_copy == expected_copy
+
+
+def bootstrap_rollback(
+    run_id: str,
+    bootstrap_prepare_receipt_sha256: str,
+    bootstrap_complete_receipt_sha256: str,
+) -> dict[str, Any]:
+    require_root()
+    lock = acquire_lock()
+    try:
+        run_dir, prepare_receipt = _read_receipt(
+            run_id,
+            "bootstrap-prepare",
+            bootstrap_prepare_receipt_sha256,
+        )
+        complete_run_dir, complete_receipt = _read_receipt(
+            run_id,
+            "bootstrap-complete",
+            bootstrap_complete_receipt_sha256,
+        )
+        _validate_receipt_policy(prepare_receipt, "bootstrap-prepare")
+        _validate_receipt_policy(complete_receipt, "bootstrap-complete")
+        if (
+            complete_run_dir != run_dir
+            or prepare_receipt.get("operation") != "bootstrap"
+            or prepare_receipt.get("state") != "prepared_legacy_frozen"
+            or complete_receipt.get("operation") != "bootstrap"
+            or complete_receipt.get("state") != "complete_hardened_baseline"
+            or complete_receipt.get("bootstrap_prepare_receipt_sha256")
+            != bootstrap_prepare_receipt_sha256
+            or complete_receipt.get("permit_digest") != (prepare_receipt.get("permit") or {}).get("digest")
+            or complete_receipt.get("target_bundle") != prepare_receipt.get("target_bundle")
+            or complete_receipt.get("hardened_active") != prepare_receipt.get("hardened_active")
+        ):
+            raise DeployError("BOOTSTRAP_RECEIPT_BINDING_MISMATCH")
+        journal = _read_run_journal(run_dir)
+        resume = journal.get("operation") == "bootstrap-rollback" and journal.get("state") == "rolling_back"
+        if resume:
+            _validate_bootstrap_rollback_journal_binding(
+                journal,
+                prepare_receipt,
+                bootstrap_prepare_receipt_sha256,
+                bootstrap_complete_receipt_sha256,
+                resume=True,
+            )
+        elif journal.get("operation") == "bootstrap-rollback":
+            if journal.get("state") == "rollback_failed_manual_intervention_required":
+                raise DeployError("BOOTSTRAP_ROLLBACK_FAILED_MANUAL_INTERVENTION_REQUIRED")
+            if journal.get("state") == "manual_legacy_rollback_complete":
+                raise DeployError("BOOTSTRAP_ROLLBACK_RECEIPT_ALREADY_EXISTS")
+            raise DeployError("BOOTSTRAP_ROLLBACK_JOURNAL_STATE_INVALID")
+        else:
+            _validate_bootstrap_rollback_journal_binding(
+                journal,
+                prepare_receipt,
+                bootstrap_prepare_receipt_sha256,
+                bootstrap_complete_receipt_sha256,
+                resume=False,
+            )
+
+        # Exclude only this authenticated run; unrelated unresolved transactions
+        # remain blockers and are never recovered as a side effect.
+        current_journal_inventory(exclude_run_id=run_id)
+        key = persistent_key()
+        rollback_path = _receipt_path(run_dir, "bootstrap-rollback")
+        if rollback_path.exists() or rollback_path.is_symlink():
+            _, existing_receipt = _read_receipt(run_id, "bootstrap-rollback")
+            exact_keys(
+                existing_receipt,
+                (
+                    "schema_version",
+                    "policy",
+                    "operation",
+                    "state",
+                    "run_id",
+                    "bootstrap_prepare_receipt_sha256",
+                    "bootstrap_complete_receipt_sha256",
+                    "target_bundle",
+                    "hardened_active",
+                    "legacy",
+                    "runtime",
+                    "database_unchanged",
+                    "sidecars_unchanged",
+                    "key_continuity_verified",
+                    "provider_call",
+                    "created_at",
+                ),
+                "BOOTSTRAP_ROLLBACK_RECEIPT",
+            )
+            if (
+                not resume
+                or existing_receipt.get("schema_version") != 1
+                or existing_receipt.get("operation") != "bootstrap-rollback"
+                or existing_receipt.get("state") != "manual_legacy_rollback_complete"
+                or existing_receipt.get("bootstrap_prepare_receipt_sha256")
+                != bootstrap_prepare_receipt_sha256
+                or existing_receipt.get("bootstrap_complete_receipt_sha256")
+                != bootstrap_complete_receipt_sha256
+                or existing_receipt.get("target_bundle") != prepare_receipt.get("target_bundle")
+                or existing_receipt.get("hardened_active") != prepare_receipt.get("hardened_active")
+                or existing_receipt.get("legacy") != prepare_receipt.get("legacy")
+                or existing_receipt.get("database_unchanged") is not True
+                or existing_receipt.get("sidecars_unchanged") is not True
+                or existing_receipt.get("key_continuity_verified") is not True
+                or existing_receipt.get("provider_call") is not False
+                or not _valid_timestamp(existing_receipt.get("created_at"))
+            ):
+                raise DeployError("BOOTSTRAP_ROLLBACK_RECEIPT_ALREADY_EXISTS")
+            current = inspect_containers()
+            classification = _classify_legacy_rollback_live_state(
+                run_dir,
+                prepare_receipt,
+                current,
+                key,
+            )
+            runtime = _legacy_rollback_complete(classification, prepare_receipt, current, key)
+            if runtime is None or existing_receipt.get("runtime") != runtime:
+                raise DeployError("BOOTSTRAP_ROLLBACK_RECEIPT_LIVE_STATE_MISMATCH")
+            digest = sha256_bytes(canonical_json(existing_receipt))
+            journal.update(
+                {
+                    "state": "manual_legacy_rollback_complete",
+                    "phase": "complete",
+                    "bootstrap_rollback_receipt_sha256": digest,
+                    "rollback_runtime": runtime,
+                    "updated_at": utc_now(),
+                }
+            )
+            _journal(run_dir, journal)
+            return {
+                "status": "manual_legacy_rollback_complete",
+                "run_id": run_id,
+                "bootstrap_rollback_receipt_sha256": digest,
+            }
+
+        if not resume:
+            before = inspect_containers()
+            classification = _classify_legacy_rollback_live_state(
+                run_dir,
+                prepare_receipt,
+                before,
+                key,
+            )
+            runtime_receipt = complete_receipt.get("runtime") or {}
+            if (
+                classification["file_state"] != "HHH"
+                or classification["runtime_profile"] != "hardened"
+                or not _snapshot_matches_except_flowise_liveness(
+                    classification["snapshot"],
+                    runtime_receipt.get("containers"),
+                )
+            ):
+                raise DeployError("BOOTSTRAP_ROLLBACK_HARDENED_BASELINE_DRIFT")
+            journal = {
+                "schema_version": 1,
+                "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+                "operation": "bootstrap-rollback",
+                "state": "in_progress",
+                "phase": "manual_legacy_rollback_validated",
+                "run_id": run_id,
+                "target_bundle_release_id": prepare_receipt["target_bundle"]["release_id"],
+                "permit_digest": prepare_receipt["permit"]["digest"],
+                "target_bundle_digest": prepare_receipt["target_bundle"]["bundle_digest"],
+                "active_legacy_release_id": prepare_receipt["legacy"]["release_id"],
+                "bootstrap_prepare_receipt_sha256": bootstrap_prepare_receipt_sha256,
+                "bootstrap_complete_receipt_sha256": bootstrap_complete_receipt_sha256,
+                "rollback_attempted": False,
+                "updated_at": utc_now(),
+            }
+
+        runtime = _execute_legacy_rollback_transaction(
+            run_dir,
+            prepare_receipt,
+            journal,
+            key,
+            intent_phase="manual_legacy_rollback_restoring",
+            failure_phase="manual_legacy_rollback_failed",
+            failure_code="BOOTSTRAP_ROLLBACK_FAILED_MANUAL_INTERVENTION_REQUIRED",
+        )
+        rollback_receipt = {
+            "schema_version": 1,
+            "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+            "operation": "bootstrap-rollback",
+            "state": "manual_legacy_rollback_complete",
+            "run_id": run_id,
+            "bootstrap_prepare_receipt_sha256": bootstrap_prepare_receipt_sha256,
+            "bootstrap_complete_receipt_sha256": bootstrap_complete_receipt_sha256,
+            "target_bundle": prepare_receipt["target_bundle"],
+            "hardened_active": prepare_receipt["hardened_active"],
+            "legacy": prepare_receipt["legacy"],
+            "runtime": runtime,
+            "database_unchanged": True,
+            "sidecars_unchanged": True,
+            "key_continuity_verified": True,
+            "provider_call": False,
+            "created_at": utc_now(),
+        }
+        digest = _write_receipt(_receipt_path(run_dir, "bootstrap-rollback"), rollback_receipt)
+        journal.update(
+            {
+                "state": "manual_legacy_rollback_complete",
+                "phase": "complete",
+                "bootstrap_rollback_receipt_sha256": digest,
+                "updated_at": utc_now(),
+            }
+        )
+        _journal(run_dir, journal)
+        return {
+            "status": "manual_legacy_rollback_complete",
+            "run_id": run_id,
+            "bootstrap_rollback_receipt_sha256": digest,
+        }
+    finally:
+        os.close(lock)
+
+
+def _recover_interrupted_runs(
+    *,
+    only_run_id: str | None = None,
+    expected_bootstrap_permit_digest: str | None = None,
+    expected_target_bundle_digest: str | None = None,
+) -> None:
+    scoped = only_run_id is not None
+    if scoped:
+        if (
+            not isinstance(only_run_id, str)
+            or not RUN_ID_RE.fullmatch(only_run_id)
+            or not isinstance(expected_bootstrap_permit_digest, str)
+            or not DIGEST_RE.fullmatch(expected_bootstrap_permit_digest)
+            or not isinstance(expected_target_bundle_digest, str)
+            or not DIGEST_RE.fullmatch(expected_target_bundle_digest)
+        ):
+            raise DeployError("SCOPED_BOOTSTRAP_RECOVERY_BINDING_INVALID")
+    elif expected_bootstrap_permit_digest is not None or expected_target_bundle_digest is not None:
+        raise DeployError("SCOPED_BOOTSTRAP_RECOVERY_BINDING_INVALID")
+    try:
+        root_info = RUNS_DIR.lstat()
+    except FileNotFoundError:
         return
-    for run_dir in sorted(RUNS_DIR.iterdir()):
+    except OSError as error:
+        raise DeployError("RECOVERY_ROOT_UNAVAILABLE") from error
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        raise DeployError("RECOVERY_ROOT_UNSAFE")
+    _validate_inventory_directory(RUNS_DIR, "RECOVERY_ROOT")
+    if only_run_id is not None:
+        run_directories = [RUNS_DIR / only_run_id]
+    else:
+        try:
+            run_directories = sorted(RUNS_DIR.iterdir())
+        except OSError as error:
+            raise DeployError("RECOVERY_ROOT_ENUMERATION_FAILED") from error
+    for run_dir in run_directories:
+        try:
+            run_info = run_dir.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise DeployError("RECOVERY_RUN_DIRECTORY_UNAVAILABLE") from error
+        if stat.S_ISLNK(run_info.st_mode):
+            raise DeployError("RECOVERY_RUN_DIRECTORY_UNSAFE")
+        if not stat.S_ISDIR(run_info.st_mode):
+            continue
+        _validate_inventory_directory(run_dir, "RECOVERY_RUN")
         journal_path = run_dir / "journal.json"
         if not journal_path.is_file() or journal_path.is_symlink():
             continue
@@ -2569,17 +5480,88 @@ def _recover_interrupted_runs() -> None:
         )
         state = journal.get("state")
         operation = journal.get("operation")
+        run_id = journal.get("run_id")
+        if (
+            not isinstance(run_id, str)
+            or not RUN_ID_RE.fullmatch(run_id)
+            or run_id != run_dir.name
+            or (only_run_id is not None and run_id != only_run_id)
+        ):
+            raise DeployError("INTERRUPTED_RUN_ID_INVALID")
+        if scoped:
+            if (
+                operation != "bootstrap"
+                or journal.get("permit_digest") != expected_bootstrap_permit_digest
+                or journal.get("target_bundle_digest") != expected_target_bundle_digest
+            ):
+                raise DeployError("SCOPED_BOOTSTRAP_RECOVERY_BINDING_MISMATCH")
         if state in (
             "rollback_failed_manual_intervention_required",
             ROLLBACK_ATTEMPTED_STATE,
-            "rolling_back",
         ) or (state == "in_progress" and operation == "rollback"):
             raise DeployError("UNRESOLVED_ROLLBACK_FAILURE_BLOCKS_RELEASE")
-        if state != "in_progress":
+        if state == "rolling_back" and operation == "bootstrap-rollback":
+            raise DeployError("INTERRUPTED_MANUAL_LEGACY_ROLLBACK_REQUIRES_SAME_COMMAND")
+        if state == "rolling_back" and operation != "bootstrap":
+            raise DeployError("UNRESOLVED_ROLLBACK_FAILURE_BLOCKS_RELEASE")
+        if state not in {"in_progress", "rolling_back"}:
             continue
-        run_id = journal.get("run_id")
-        if not isinstance(run_id, str) or not RUN_ID_RE.fullmatch(run_id):
-            raise DeployError("INTERRUPTED_RUN_ID_INVALID")
+        if operation == "bootstrap":
+            _validate_policy(journal.get("policy"), LEGACY_BOOTSTRAP_POLICY, "BOOTSTRAP_JOURNAL")
+            permit_digest = journal.get("permit_digest")
+            target_bundle_digest = journal.get("target_bundle_digest")
+            if (
+                not isinstance(permit_digest, str)
+                or not DIGEST_RE.fullmatch(permit_digest)
+                or not isinstance(target_bundle_digest, str)
+                or not DIGEST_RE.fullmatch(target_bundle_digest)
+            ):
+                raise DeployError("INTERRUPTED_BOOTSTRAP_JOURNAL_BINDING_INVALID")
+            live_write_started = journal.get("live_write_started")
+            if live_write_started is False:
+                journal.update(
+                    {
+                        "state": "interrupted_bootstrap_before_live_write",
+                        "phase": "legacy_frozen_no_live_write",
+                        "updated_at": utc_now(),
+                    }
+                )
+                _journal(run_dir, journal)
+                raise DeployError("INTERRUPTED_BOOTSTRAP_BEFORE_LIVE_WRITE_RETRY_REQUIRED")
+            if live_write_started is not True:
+                raise DeployError("INTERRUPTED_BOOTSTRAP_WRITE_STATE_INVALID")
+            prepare_digest = journal.get("bootstrap_prepare_receipt_sha256")
+            if not isinstance(prepare_digest, str) or not DIGEST_RE.fullmatch(prepare_digest):
+                raise DeployError("INTERRUPTED_BOOTSTRAP_PREPARE_RECEIPT_BINDING_INVALID")
+            receipt_run_dir, receipt = _read_receipt(run_id, "bootstrap-prepare", prepare_digest)
+            if (
+                receipt_run_dir != run_dir
+                or receipt.get("operation") != "bootstrap"
+                or receipt.get("state") != "prepared_legacy_frozen"
+                or (receipt.get("permit") or {}).get("digest") != permit_digest
+                or (receipt.get("target_bundle") or {}).get("bundle_digest") != target_bundle_digest
+            ):
+                raise DeployError("INTERRUPTED_BOOTSTRAP_PREPARE_RECEIPT_BINDING_INVALID")
+            key = persistent_key()
+            runtime = _execute_legacy_rollback_transaction(
+                run_dir,
+                receipt,
+                journal,
+                key,
+                intent_phase="interrupted_legacy_rollback_restoring",
+                failure_phase="interrupted_legacy_rollback_failed",
+                failure_code="INTERRUPTED_LEGACY_ROLLBACK_FAILED_MANUAL_INTERVENTION_REQUIRED",
+            )
+            journal.update(
+                {
+                    "state": "interrupted_bootstrap_recovered_to_legacy",
+                    "phase": "legacy_rollback_complete_no_forward_resume",
+                    "rollback_runtime": runtime,
+                    "updated_at": utc_now(),
+                }
+            )
+            _journal(run_dir, journal)
+            raise DeployError("INTERRUPTED_BOOTSTRAP_RECOVERED_RETRY_REQUIRED")
         if operation == "prepare":
             journal.update({"state": "interrupted_prepare_aborted", "phase": "rollback_state_preserved", "updated_at": utc_now()})
             _journal(run_dir, journal)
@@ -2632,6 +5614,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser = commands.add_parser("prepare")
     prepare_parser.add_argument("--bundle-dir", required=True, type=Path)
     prepare_parser.add_argument("--run-id", required=True)
+    bootstrap_parser = commands.add_parser("bootstrap")
+    bootstrap_parser.add_argument("--bundle-dir", required=True, type=Path)
+    bootstrap_parser.add_argument("--run-id", required=True)
+    bootstrap_parser.add_argument("--transition-permit", required=True, type=Path)
+    bootstrap_parser.add_argument("--transition-permit-sha256", required=True, type=_digest_argument)
     cutover_parser = commands.add_parser("cutover")
     cutover_parser.add_argument("--run-id", required=True)
     cutover_parser.add_argument("--prepare-receipt-sha256", required=True, type=_digest_argument)
@@ -2639,6 +5626,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     rollback_parser.add_argument("--run-id", required=True)
     rollback_parser.add_argument("--prepare-receipt-sha256", required=True, type=_digest_argument)
     rollback_parser.add_argument("--cutover-receipt-sha256", required=True, type=_digest_argument)
+    bootstrap_rollback_parser = commands.add_parser("bootstrap-rollback")
+    bootstrap_rollback_parser.add_argument("--run-id", required=True)
+    bootstrap_rollback_parser.add_argument(
+        "--bootstrap-prepare-receipt-sha256",
+        required=True,
+        type=_digest_argument,
+    )
+    bootstrap_rollback_parser.add_argument(
+        "--bootstrap-complete-receipt-sha256",
+        required=True,
+        type=_digest_argument,
+    )
     return parser.parse_args(argv)
 
 
@@ -2656,10 +5655,23 @@ def main(argv: list[str] | None = None) -> None:
         }
     elif arguments.command == "prepare":
         result = prepare(arguments.bundle_dir, arguments.run_id)
+    elif arguments.command == "bootstrap":
+        result = bootstrap(
+            arguments.bundle_dir,
+            arguments.run_id,
+            arguments.transition_permit,
+            arguments.transition_permit_sha256,
+        )
     elif arguments.command == "cutover":
         result = cutover(arguments.run_id, arguments.prepare_receipt_sha256)
-    else:
+    elif arguments.command == "rollback":
         result = rollback(arguments.run_id, arguments.prepare_receipt_sha256, arguments.cutover_receipt_sha256)
+    else:
+        result = bootstrap_rollback(
+            arguments.run_id,
+            arguments.bootstrap_prepare_receipt_sha256,
+            arguments.bootstrap_complete_receipt_sha256,
+        )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
 
 
