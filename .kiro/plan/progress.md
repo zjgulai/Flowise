@@ -152,3 +152,5 @@ date: 2026-07-10
 -   独立 security counter-review 已 `APPROVE`，risk `LOW`，Critical/High/Medium `0`；未发现真实 secret，依赖 manifest/lockfile delta `0`。
 -   当前边界：代码/测试候选已批准，但尚未 commit/push/PR/merge，尚未生成包含 recovery 命令的自绑定 artifact，尚未对生产执行 recovery、cutover 或浏览器验收；`production_write=false`（本恢复批次开始以来）。
 -   下一门禁：文档冻结与原子提交 -> exact-commit CI/merge -> main 手工 readiness artifact -> production recovery terminal closure -> 新版本 cutover -> PC-first browser acceptance -> cleanup。
+-   PR `zjgulai/Flowise#10` 的首个 exact commit `cea60f7aa887a354ee6516d6d318f85ed29fefdd` 已触发 Node CI `30391562893` 与 Docker CI `30391562760`；两者均只在同一 Python test 的 macOS-only `/private/tmp` hardcode 失败，Node release contracts `75/75` 已通过，未进入 build/cutover/production 路径。
+-   CI portability 修复仅修改 lock no-create/no-follow 测试：选择现存、非 symlink、root-owned、权限安全且可写的系统 temp parent，并显式保持 `LOCK_PATH` 在独立 `BASE_DIR` 外；macOS full release tests 与无网络、只读 Linux container focused probe 均通过。下一步提交该最小修复并等待新 commit 的两条 CI 从零重跑。

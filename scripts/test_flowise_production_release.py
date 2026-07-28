@@ -7038,11 +7038,40 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
             )
 
     def test_recovery_existing_lock_never_creates_or_follows_a_missing_lock(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+        safe_temporary_parent = None
+        for candidate in (Path(tempfile.gettempdir()), Path("/tmp")):
+            try:
+                resolved = candidate.resolve(strict=True)
+                info = resolved.lstat()
+            except OSError:
+                continue
+            mode = stat.S_IMODE(info.st_mode)
+            if (
+                stat.S_ISDIR(info.st_mode)
+                and not stat.S_ISLNK(info.st_mode)
+                and info.st_uid == 0
+                and (not mode & 0o022 or mode & stat.S_ISVTX)
+                and os.access(resolved, os.W_OK)
+            ):
+                safe_temporary_parent = resolved
+                break
+        self.assertIsNotNone(safe_temporary_parent, "no safe writable system temporary parent")
+
+        with tempfile.TemporaryDirectory(
+            dir=safe_temporary_parent,
+            prefix="flowise-lock-portability-",
+        ) as directory:
             lock_dir = Path(directory)
+            base_dir = lock_dir / "production-root"
+            base_dir.mkdir()
             lock_path = lock_dir / "flowise-production-release.lock"
+            self.assertFalse(lock_path.is_relative_to(base_dir))
             creator = mock.Mock(side_effect=AssertionError("recovery must not create lock state"))
-            with mock.patch.object(RELEASE, "LOCK_DIR", lock_dir), mock.patch.object(
+            with mock.patch.object(RELEASE, "BASE_DIR", base_dir), mock.patch.object(
+                RELEASE,
+                "LOCK_DIR",
+                lock_dir,
+            ), mock.patch.object(
                 RELEASE,
                 "LOCK_PATH",
                 lock_path,
