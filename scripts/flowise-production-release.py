@@ -160,6 +160,11 @@ EXPECTED_TMPFS = (
     "/usr/src/flowise/packages/server/logs:rw,nosuid,nodev,size=32m,uid=1000,gid=1000,mode=0700",
 )
 EXPECTED_TMPFS_BY_PATH = {item.split(":", 1)[0]: item.split(":", 1)[1] for item in EXPECTED_TMPFS}
+# Docker inspect has emitted these exact tokens for the same writable named-
+# volume contract in the reviewed fixture and production engine.  Do not parse
+# or normalize arbitrary comma-separated modes here: RW and HostConfig.Mounts
+# are bound independently below, and every other inspect Mode remains fail-closed.
+REVIEWED_NAMED_VOLUME_INSPECT_MODES = frozenset({"rw", "z"})
 EXPECTED_RUNTIME_LOG_CONFIG = {
     "Type": "json-file",
     "Config": {"labels": "service_name,environment", "max-file": "3", "max-size": "10m"},
@@ -3595,15 +3600,25 @@ def validate_runtime(
         mounts = flowise.get("Mounts") or []
         volume_mounts = [mount for mount in mounts if mount.get("Type") == "volume"]
         other_mounts = [mount for mount in mounts if mount.get("Type") != "volume"]
+        expected_host_mounts = [
+            {
+                "Source": expectations["volume_name"],
+                "Target": "/usr/src/flowise/.flowise",
+                "Type": "volume",
+                "VolumeOptions": {},
+            }
+        ]
         if (
-            len(volume_mounts) != 1
+            host.get("Mounts") != expected_host_mounts
+            or len(volume_mounts) != 1
             or volume_mounts[0].get("Name") != expectations["volume_name"]
             or volume_mounts[0].get("Source")
             != f"/var/lib/docker/volumes/{expectations['volume_name']}/_data"
             or volume_mounts[0].get("Destination") != "/usr/src/flowise/.flowise"
             or volume_mounts[0].get("RW") is not True
             or volume_mounts[0].get("Driver") != "local"
-            or volume_mounts[0].get("Mode") != "rw"
+            or not isinstance(volume_mounts[0].get("Mode"), str)
+            or volume_mounts[0].get("Mode") not in REVIEWED_NAMED_VOLUME_INSPECT_MODES
             or (volume_mounts[0].get("Propagation") or "") != ""
             or any(
                 mount.get("Type") != "tmpfs" or mount.get("Destination") not in EXPECTED_TMPFS_BY_PATH

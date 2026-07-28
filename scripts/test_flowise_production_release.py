@@ -5517,6 +5517,53 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                 expected_network_identity=identity,
             )
 
+    def test_hardened_runtime_accepts_only_reviewed_named_volume_modes_and_exact_host_options(self):
+        config, _ = resolved_compose()
+        config["services"]["flowise"]["image"] = LEGACY_TAG
+        arguments = {
+            "image_tag": LEGACY_TAG,
+            "image_digest": LEGACY_DIGEST,
+            "expected_config_hash": "4" * 64,
+            "expected_environment": copy.deepcopy(HARDENED_ENVIRONMENT),
+            "expected_compose": config,
+            "expected_network_identity": network_identity(),
+        }
+
+        for mode in ("rw", "z"):
+            runtime = hardened_documents(LEGACY_TAG, LEGACY_DIGEST)
+            runtime[RELEASE.FLOWISE_CONTAINER]["Mounts"][0]["Mode"] = mode
+            with self.subTest(engine_named_volume_mode=mode):
+                result = RELEASE.validate_bootstrap_hardened_runtime(runtime, **arguments)
+            self.assertIs(result["runtime_hardening_verified"], True)
+
+        for mode in (None, "", "ro", "Z", "rw,z", "z,ro", "shared", ["z"]):
+            runtime = hardened_documents(LEGACY_TAG, LEGACY_DIGEST)
+            runtime[RELEASE.FLOWISE_CONTAINER]["Mounts"][0]["Mode"] = mode
+            with self.subTest(rejected_engine_named_volume_mode=mode), self.assertRaisesRegex(
+                RELEASE.DeployError,
+                "FLOWISE_RUNTIME_MOUNT_ALLOWLIST_MISMATCH",
+            ):
+                RELEASE.validate_bootstrap_hardened_runtime(runtime, **arguments)
+
+        for label, volume_options in (
+            ("no-copy", {"NoCopy": True}),
+            ("subpath-escape", {"Subpath": "../../etc"}),
+            (
+                "driver-config",
+                {"DriverConfig": {"Name": "local", "Options": {"device": "/etc"}}},
+            ),
+        ):
+            runtime = hardened_documents(LEGACY_TAG, LEGACY_DIGEST)
+            runtime[RELEASE.FLOWISE_CONTAINER]["Mounts"][0]["Mode"] = "z"
+            runtime[RELEASE.FLOWISE_CONTAINER]["HostConfig"]["Mounts"][0][
+                "VolumeOptions"
+            ] = volume_options
+            with self.subTest(host_volume_options_drift=label), self.assertRaisesRegex(
+                RELEASE.DeployError,
+                "FLOWISE_RUNTIME_MOUNT_ALLOWLIST_MISMATCH",
+            ):
+                RELEASE.validate_bootstrap_hardened_runtime(runtime, **arguments)
+
     def test_hardened_runtime_accepts_distinct_requested_and_observed_hash_only_with_exact_contract(self):
         seccomp_document = {"defaultAction": "SCMP_ACT_ERRNO"}
         seccomp_inline = json.dumps(seccomp_document, sort_keys=True, separators=(",", ":"))

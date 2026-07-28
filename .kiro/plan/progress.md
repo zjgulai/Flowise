@@ -165,3 +165,17 @@ date: 2026-07-10
 -   第四笔 commit `2badd4a243037dd4643cfbf5d574b3f99239f489` 的 Docker CI `30398824478` 全绿；Node CI `30398824398` 仅在 Chatflow 首次 reopen 的硬页面加载超时，其余任务和 specs 全绿。没有盲目重试或放宽 `pageLoadTimeout`，而是依据成功 POST、可回读/删除记录与失败位置确定 UI 保存稳定化和硬导航之间存在 hosted Chrome 时序竞态。
 -   第五笔候选在 create 后等待 `Chatflow saved`，reopen 通过返回流程列表、搜索名称并点击进入，copy 通过返回列表并点击“新增流程”进入空 canvas；全 spec 仅保留首次启动时一个 `cy.visit('/canvas')`。两次诊断过程分别暴露隐藏侧栏文本命中和删除后已位于 `/` 时无返回按钮，均已修复且不计入通过证据。
 -   第五笔最终浏览器内容在两个独立 fresh runner 上的聚焦 Chrome 各为 `1/1`，四套件全量 Chrome 为 `5/5`（Chatflow `1/1`、PC core `2/2`）；每轮数据库、密钥、截图与进程均由 runner 完成清理。release Node `75/75` + Python `137/137`、security `337/337`、E2E runner `18/18`、完整 build `6/6`、focused static/diff-check 全绿；独立复审 `APPROVE`，唯一 LOW 要求静态合同锁定唯一一次 `cy.visit` 必须为初始 `/canvas`，已补强。补强后的同一精确代码内容再次通过上述全部门禁，复审确认 Critical/High/Medium/LOW 均为 `0`；不能以本地证据替代新 commit CI。
+
+# 2026-07-29 Production Recovery Mount-Mode Amendment Checkpoint
+
+-   第五笔修复已提交为 `7c650142f5cda0833834582e940a4ea18dbec459`；exact-head Node CI `30400942705` 与 Docker CI `30400942552` 均 success，PR `#10` 合并为 `b9070d7d6dea20696e1dc40df47510f0b7039d3c`。
+-   `main` readiness run `30402079400` 是该 merge SHA 唯一人工触发：build 与 release_readiness 均 success；本地独立验证 config digest `sha256:35252757371dfd6e42bb40a64533f2279c39c12f7a44198efe85901139e03df2`、bundle digest `sha256:fd1171968eadb9b4ca713ecb946710dad8dadb38cc157b794f9155699bad23e5`。
+-   精确制品已通过 no-clobber staging 安装到 `/opt/flowise/candidates/git-b9070d7d6dea20696e1dc40df47510f0b7039d3c`；仅新增候选文件，未切换 runtime/config/database。
+-   生产 fresh L3 保持旧 Flowise container `953d213d666de29fde0b99f4a908ca46e7d642f8bd3126235e8284f82d5e7e39` running/healthy、restart `0`，host/proxy/public ping 均为 `pong`，edge smoke `14/14`。
+-   `snapshot-bootstrap-recovery` 以 zero-write 路径失败并返回 `FLOWISE_RUNTIME_MOUNT_ALLOWLIST_MISMATCH`；完成 receipt 仍不存在，事故 journal 保持 `bootstrap|in_progress|hardened_recreate_intent` 与原 digest，Flowise 容器身份/健康/restart 均未变化。
+-   根因是 Docker Engine 对 Compose 无显式 volume suffix 的相同可写 named-volume 合同，在生产 `.Mounts[].Mode` 报告 `z`；Flowise 与 PostgreSQL 均呈现该 Engine 行为，而 `HostConfig.Mounts` 仍为唯一 named volume、`VolumeOptions={}`。旧 validator 只接受 `rw`，属于 inspect 表示可移植性缺陷，不是 runtime drift。
+-   新分支 `codex/flowise-volume-mode-recovery-20260728` 基于 clean `origin/main`；候选修复仅修改 wrapper 与单测。它对受审查 mode token 做精确 membership，不解析任意组合，并独立强制 `RW=true`、唯一 Type/Name/Source/Destination/Driver/Propagation、exact `HostConfig.Mounts` 与空 `VolumeOptions`。
+-   安全复核将本次恢复权限进一步收紧为仅接受本项目 fixture 已验证的 `rw` 与生产实证 `z`；空字符串未纳入。新回归覆盖 `ro`、空字符串、`Z`、组合字符串、非字符串、NoCopy、Subpath escape、DriverConfig 注入拒绝。
+-   当前精确内容通过 Node 24 release `75/75`、Python `138/138`、security `337/337`、Pyright `0`、py_compile、lint（0 error/8 个既有 warning）、full build `6/6`、diff-check；`pnpm audit --prod --audit-level high` exit `0`，仅报告 low/moderate、无 high/critical。
+-   真实 Docker legacy bootstrap boundary 在收紧后的精确内容上 `8/8`，测试后 `flowise-bootstrap-it-` 前缀 container/volume/network/image 残留均为 `0`；独立安全复审 `APPROVE`、confidence high、blocker `0`。尚未 commit/push，未执行 amendment CI/readiness，也未再次触碰生产。
+-   提交前冻结 SHA-256：wrapper `692cfca5a81b4fff06914cc72a3d7672aa260717f5b88e181b09a683b807026c`，wrapper tests `e13610273335f5a437f251614e6c8d0bd026ea277ff42a03f7383c1f25cc8702`。
