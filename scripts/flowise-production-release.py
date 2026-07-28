@@ -307,6 +307,29 @@ LEGACY_FIXED_CONTROL_BASENAMES = {
     "compose-cutover-status.json",
     "candidate-manifest-attempt.json",
 }
+LEGACY_NON_JOURNAL_DIRECTORY_SIBLINGS = frozenset(
+    {
+        "auth-credential-smoke",
+        "backup-permission-hardening",
+        "browser-acceptance",
+        "browser-chatflow-acceptance",
+        "browser-session-acceptance",
+        "browser-session-multidevice-acceptance",
+        "cleanup-l0f-20260719",
+        "isolated-restore",
+        "recovery-backup",
+    }
+)
+LEGACY_NON_JOURNAL_FILE_SIBLINGS = {
+    ".flowise-backup-permission-hardening.lock": {
+        "identity": (0, 0),
+        "size": 0,
+    },
+    "flowise-node24-20260710-authorized-v2.tar.gz": {
+        "identity": (1000, 1000),
+        "size": 1_132_842_786,
+    },
+}
 LEGACY_CONTROL_KEYS = {
     "candidate-manifest-attempt.json": {
         "boundaries",
@@ -1528,6 +1551,39 @@ def _validate_legacy_run_associations(runs: dict[str, list[tuple[str, str | None
             raise DeployError("LEGACY_JOURNAL_RUN_ASSOCIATION_INVALID")
 
 
+def _validate_legacy_non_journal_sibling(path: Path) -> None:
+    """Classify known release siblings without treating their contents as journals."""
+
+    if path.name in LEGACY_NON_JOURNAL_DIRECTORY_SIBLINGS:
+        _validate_inventory_directory(path, "LEGACY_JOURNAL_SIBLING")
+        deployments = path / "deployments"
+        try:
+            deployments.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise DeployError("LEGACY_JOURNAL_SIBLING_DEPLOYMENTS_UNAVAILABLE") from error
+        raise DeployError("LEGACY_JOURNAL_SIBLING_DEPLOYMENTS_COLLISION")
+
+    policy = LEGACY_NON_JOURNAL_FILE_SIBLINGS.get(path.name)
+    if policy is None:
+        raise DeployError("LEGACY_JOURNAL_RELEASE_ROOT_UNKNOWN")
+    try:
+        info = path.lstat()
+    except OSError as error:
+        raise DeployError("LEGACY_JOURNAL_SIBLING_FILE_UNAVAILABLE") from error
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_nlink != 1
+        or (info.st_uid, info.st_gid) != policy["identity"]
+        or stat.S_IMODE(info.st_mode) != 0o600
+    ):
+        raise DeployError("LEGACY_JOURNAL_SIBLING_FILE_UNSAFE")
+    if info.st_size != policy["size"]:
+        raise DeployError("LEGACY_JOURNAL_SIBLING_FILE_SIZE_INVALID")
+
+
 def legacy_journal_inventory() -> dict[str, Any]:
     """Read, but never recover or mutate, release-scoped legacy journals."""
 
@@ -1549,7 +1605,8 @@ def legacy_journal_inventory() -> dict[str, Any]:
         raise DeployError("LEGACY_JOURNAL_ROOT_ENUMERATION_FAILED") from error
     for release_root in children:
         if not re.fullmatch(r"git-[0-9a-f]{40}", release_root.name):
-            raise DeployError("LEGACY_JOURNAL_RELEASE_ROOT_UNKNOWN")
+            _validate_legacy_non_journal_sibling(release_root)
+            continue
         _validate_inventory_directory(release_root, "LEGACY_JOURNAL")
         deployments = release_root / "deployments"
         try:
