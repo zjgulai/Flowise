@@ -288,12 +288,20 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   [x] 推送分支并创建 PR `zjgulai/Flowise#10`；第四笔 exact head 的 Docker CI 已全绿，Node CI 的唯一失败已形成第五笔最小 test-only 候选。
 -   [x] 对第五笔候选完成本地 release/security/build/static 和独立复审；复审 `APPROVE`，唯一 LOW 已用精确初始 `/canvas` 访问合同关闭。
 -   [x] 对 LOW 修复后的第五笔精确代码内容重跑 release/security/build/static，全部通过；独立复审确认所有 severity 均为 `0`。
--   [ ] 原子提交第五笔候选并等待 required CI，全绿后合并到 `main`。
--   [ ] 从合并后的 `main` 只触发一次人工 Docker readiness workflow；下载并独立验证包含 recovery 命令的自绑定 `linux/amd64` release artifact。
+-   [x] 第五笔候选已以 `7c650142f5cda0833834582e940a4ea18dbec459` 原子提交；exact-head Node CI `30400942705` 与 Docker CI `30400942552` 全绿，PR `#10` 已合并为 `b9070d7d6dea20696e1dc40df47510f0b7039d3c`。
+-   [x] 合并后的 `main` 仅触发一次人工 Docker readiness run `30402079400`；build/readiness 全绿，下载制品已独立验证 source/config/bundle identity 并安装为生产候选，现网 runtime/config/database 未切换。
+-   [!] `b9070d7d` 候选的 zero-write recovery snapshot 精确失败为 `FLOWISE_RUNTIME_MOUNT_ALLOWLIST_MISMATCH`；失败前后事故 journal/receipt 与 Flowise 容器身份均未变化。生产 Engine 对无显式 suffix 的命名卷报告 `Mode=z`，而旧校验器只接受 `rw`。
+
+## Gate R2A：命名卷 inspect 表示兼容性修复
+
+-   [x] 将 mount 校验拆成受审查的 Engine 表示 token 与独立安全合同：`RW=true`、唯一 volume、Type/Name/Source/Destination/Driver/Propagation、`HostConfig.Mounts` 及 `VolumeOptions={}` 继续精确绑定；拒绝任意解析/组合模式。
+-   [x] 增加正反回归：受审查的 writable named-volume 表示通过；`ro`、`Z`、组合字符串、非字符串、NoCopy/Subpath/DriverConfig 漂移全部 fail closed。
+-   [x] 本地 Node release `75/75`、Python `138/138`、security `337/337`、Pyright `0`、lint（0 error）、build `6/6`、真实 Docker `8/8` 与 fixture residue `0`；独立安全复审 `APPROVE`、blocker `0`。
+-   [ ] 创建 amendment PR，等待新 exact-head Node/Docker CI 与代码审查全绿后合并；新 merge SHA 只触发一次 readiness 并生成新的自绑定制品。
 
 ## Gate R3：生产恢复与新版本部署
 
--   [ ] 上传并安装自绑定 recovery candidate；重新执行 L3 只读门禁。
+-   [~] `b9070d7d` 自绑定 candidate 已安装并验证，但因上述 validator portability 缺陷被 supersede；待安装 amendment 自绑定 candidate 后重新执行 L3 只读门禁。
 -   [ ] 先执行 zero-write `snapshot-bootstrap-recovery`，再以精确 snapshot digest 执行 `complete-bootstrap-recovery`；验证 receipt/journal owner、mode、nlink、digest 与 terminal state。
 -   [ ] 重新准备新版本、执行受门禁保护的 Flowise-only cutover；失败立即走已验证回滚路径，PostgreSQL/nginx 身份保持不变。
 -   [ ] 完成公网 edge、容器、日志、数据库/key continuity 与 PC 优先浏览器交互验收；不调用真实 provider，不创建或污染业务数据。
