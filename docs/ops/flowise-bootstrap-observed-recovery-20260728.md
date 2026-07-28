@@ -7,9 +7,9 @@ Scope: one recovery-only completion for production bootstrap run
 `20260728T171644Z-4914e862`; commands and field names are English, operational
 requirements are normative.
 
-Frozen local wrapper revision: `434e51c`. This short revision identifies the
-locally verified implementation only; it is not a self-bound CI artifact and
-is not sufficient production authority.
+Frozen local wrapper SHA-256 prefix: `32578dd`. This short content-digest prefix
+identifies the locally verified implementation only; it is not a Git revision,
+a self-bound CI artifact or sufficient production authority.
 
 ## Decision
 
@@ -37,30 +37,30 @@ environment HMAC、镜像与 live files、sidecars、network、database、persis
 
 以下是 2026-07-28 中断后的已观察生产证据，不是可重用授权，也不包含凭据：
 
-| Evidence                         | Observed value                                                                                      |
-| -------------------------------- | --------------------------------------------------------------------------------------------------- |
-| interrupted run                  | `20260728T171644Z-4914e862`                                                                         |
-| journal                          | `operation=bootstrap`, `state=in_progress`, `phase=hardened_recreate_intent`                        |
-| write markers                    | `live_write_started=true`, `hardened_recreate_started=true`, `rollback_attempted=false`             |
-| source bundle release            | `git-56196c3cb4a3123f657614274a2227071920ba01`                                                      |
-| source bundle digest             | `sha256:61f511a2887afd75da2a2e2ab0bc94399c9c4af944a98920f4bb76c00a98c924`                           |
-| transition permit digest         | `sha256:a8afbf9ca32ef4cc9ead605a81f8624db1cf5538e0a23cccb2e46a3b76f0ada3`                           |
-| bootstrap prepare receipt digest | `sha256:51402626a07b4b573e17b058e27a6e0df02dd7b34016df465f571ace949e6f2c`                           |
-| frozen local wrapper revision    | `434e51c` (local evidence only; not a deployable artifact identity)                                 |
-| active Flowise image             | `flowise-chinese:git-c947339b7033c930be37591918f59c7725800bbe`                                      |
-| active image config digest       | `sha256:a8f38dca92292711a781432dc7700218273eececa331446d0678251cf6fe2067`                           |
-| current Flowise container ID     | `953d213d666de29fde0b99f4a908ca46e7d642f8bd3126235e8284f82d5e7e39`                                  |
-| PostgreSQL container ID          | `326fc99b16037b719a664b7ecbf9f6ee57f5b4d3cebf1395c65066319f514492`                                  |
-| Nginx container ID               | `0a468dd7d2dd55b05c3804fb67eea62801c83bf431d8f8587ed431bbb4a1f0eb`                                  |
-| requested Compose service hash   | `8642827174f0ca74dd1a6fc5a8334f116eafe97f9386c1610d5719555e9d3200`                                  |
-| observed Compose label           | `d6f328312028f66b37193fa244ad57119afb6fc1df9360b67eb3856c9764fb86`                                  |
-| Compose implementation           | `Docker Compose version v2.27.1`                                                                    |
-| seccomp canonical digest         | `sha256:8bc9daff33eb5909c662dad46e9600c6cdfcf4327e84e30b94395176738d27cf`                           |
-| full runtime projection digest   | `sha256:41b684e72f394cb90b84c863a2732ea1b489ca646d1f37f1004becd575ccd874`                           |
-| live file state                  | `HHH`, byte-for-byte equal to `bootstrap-prepare-receipt.json.hardened_active.files`                |
-| migrations                       | `59`; ordered-name digest `sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6` |
-| runtime state                    | Flowise, PostgreSQL and Nginx `running` and `healthy`; Flowise restart count `0`                    |
-| connectivity                     | private, reverse-proxy and public ping paths passed                                                 |
+| Evidence                            | Observed value                                                                                      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| interrupted run                     | `20260728T171644Z-4914e862`                                                                         |
+| journal                             | `operation=bootstrap`, `state=in_progress`, `phase=hardened_recreate_intent`                        |
+| write markers                       | `live_write_started=true`, `hardened_recreate_started=true`, `rollback_attempted=false`             |
+| source bundle release               | `git-56196c3cb4a3123f657614274a2227071920ba01`                                                      |
+| source bundle digest                | `sha256:61f511a2887afd75da2a2e2ab0bc94399c9c4af944a98920f4bb76c00a98c924`                           |
+| transition permit digest            | `sha256:a8afbf9ca32ef4cc9ead605a81f8624db1cf5538e0a23cccb2e46a3b76f0ada3`                           |
+| bootstrap prepare receipt digest    | `sha256:51402626a07b4b573e17b058e27a6e0df02dd7b34016df465f571ace949e6f2c`                           |
+| frozen local wrapper SHA-256 prefix | `32578dd` (local evidence only; not a deployable artifact identity)                                 |
+| active Flowise image                | `flowise-chinese:git-c947339b7033c930be37591918f59c7725800bbe`                                      |
+| active image config digest          | `sha256:a8f38dca92292711a781432dc7700218273eececa331446d0678251cf6fe2067`                           |
+| current Flowise container ID        | `953d213d666de29fde0b99f4a908ca46e7d642f8bd3126235e8284f82d5e7e39`                                  |
+| PostgreSQL container ID             | `326fc99b16037b719a664b7ecbf9f6ee57f5b4d3cebf1395c65066319f514492`                                  |
+| Nginx container ID                  | `0a468dd7d2dd55b05c3804fb67eea62801c83bf431d8f8587ed431bbb4a1f0eb`                                  |
+| requested Compose service hash      | `8642827174f0ca74dd1a6fc5a8334f116eafe97f9386c1610d5719555e9d3200`                                  |
+| observed Compose label              | `d6f328312028f66b37193fa244ad57119afb6fc1df9360b67eb3856c9764fb86`                                  |
+| Compose implementation              | `Docker Compose version v2.27.1`                                                                    |
+| seccomp canonical digest            | `sha256:8bc9daff33eb5909c662dad46e9600c6cdfcf4327e84e30b94395176738d27cf`                           |
+| full runtime projection digest      | `sha256:41b684e72f394cb90b84c863a2732ea1b489ca646d1f37f1004becd575ccd874`                           |
+| live file state                     | `HHH`, byte-for-byte equal to `bootstrap-prepare-receipt.json.hardened_active.files`                |
+| migrations                          | `59`; ordered-name digest `sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6` |
+| runtime state                       | Flowise, PostgreSQL and Nginx `running` and `healthy`; Flowise restart count `0`                    |
+| connectivity                        | private, reverse-proxy and public ping paths passed                                                 |
 
 The production observation also showed the Docker Engine representation of
 `SecurityOpt` differs from the Compose source representation:
@@ -778,10 +778,10 @@ Required verification sequence:
 7. production read-only preflight before either recovery command;
 8. fresh production L3 after terminalization and before `prepare`.
 
-Frozen local verification evidence for wrapper revision `434e51c`:
+Frozen local verification evidence for wrapper SHA-256 prefix `32578dd`:
 
 -   Node release tests: `75/75` passed;
--   Python release/integration tests: `133/133` passed;
+-   Python release/integration tests: `137/137` passed;
 -   static security verifier: `337/337` passed;
 -   Pyright: `0 errors, 0 warnings`.
 

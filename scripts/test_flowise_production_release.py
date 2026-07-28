@@ -5944,6 +5944,82 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                 **arguments,
             )
 
+    def test_live_file_accepts_only_the_production_owner_allowlist_and_exact_mode(self):
+        payload = b'{"defaultAction":"SCMP_ACT_ERRNO"}\n'
+        maximum = 2 * 1024 * 1024
+
+        for owner in ((0, 0), (1000, 1000)):
+            path = types.SimpleNamespace(
+                name="chromium.json",
+                lstat=mock.Mock(
+                    return_value=types.SimpleNamespace(
+                        st_uid=owner[0],
+                        st_gid=owner[1],
+                        st_mode=stat.S_IFREG | 0o644,
+                    )
+                ),
+            )
+            reader = mock.Mock(return_value=payload)
+            with self.subTest(owner=owner), mock.patch.object(RELEASE, "read_regular", reader):
+                data, metadata = RELEASE.live_file(path, 0o644, maximum=maximum)
+            self.assertEqual(data, payload)
+            self.assertEqual(metadata, (owner[0], owner[1], 0o644))
+            reader.assert_called_once_with(
+                path,
+                maximum=maximum,
+                expected_uid=owner[0],
+                expected_gid=owner[1],
+                expected_mode=0o644,
+            )
+
+        for label, owner, mode in (
+            ("unlisted-owner", (501, 20), 0o644),
+            ("mixed-owner", (0, 1000), 0o644),
+            ("owner-mode-drift", (1000, 1000), 0o600),
+            ("world-writable-mode", (0, 0), 0o666),
+        ):
+            path = types.SimpleNamespace(
+                name="chromium.json",
+                lstat=mock.Mock(
+                    return_value=types.SimpleNamespace(
+                        st_uid=owner[0],
+                        st_gid=owner[1],
+                        st_mode=stat.S_IFREG | mode,
+                    )
+                ),
+            )
+            reader = mock.Mock(
+                side_effect=AssertionError("unsafe metadata must fail before content read")
+            )
+            with self.subTest(label=label), mock.patch.object(
+                RELEASE,
+                "read_regular",
+                reader,
+            ), self.assertRaisesRegex(RELEASE.DeployError, "LIVE_FILE_METADATA_MISMATCH"):
+                RELEASE.live_file(path, 0o644, maximum=maximum)
+            reader.assert_not_called()
+
+    def test_live_seccomp_digest_reader_uses_exact_mode_and_two_mib_bound(self):
+        profile = canonical(TEST_SECCOMP_DOCUMENT)
+        reader = mock.Mock(return_value=(profile, (1000, 1000, 0o644)))
+        with mock.patch.object(
+            RELEASE,
+            "_validate_live_seccomp_parents",
+        ) as validate_parents, mock.patch.object(
+            RELEASE,
+            "live_file",
+            reader,
+        ):
+            observed = ORIGINAL_LIVE_SECCOMP_CANONICAL_DIGEST()
+
+        self.assertEqual(observed, TEST_SECCOMP_DIGEST)
+        validate_parents.assert_called_once_with(allow_missing=False)
+        reader.assert_called_once_with(
+            RELEASE.LIVE_SECCOMP,
+            0o644,
+            maximum=2 * 1024 * 1024,
+        )
+
     def test_hardened_runtime_normalizes_actual_inline_seccomp_and_rejects_every_ambiguous_form(self):
         sentinel = "inline-seccomp-secret-must-never-leak"
         profile = canonical(
@@ -5970,9 +6046,14 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
             seccomp = base_dir / "docker/seccomp/chromium.json"
             seccomp.parent.mkdir(parents=True)
             seccomp.write_bytes(profile)
+            live_reader = mock.Mock(return_value=(profile, (1000, 1000, 0o644)))
             self.live_seccomp_digest.side_effect = ORIGINAL_LIVE_SECCOMP_CANONICAL_DIGEST
             with mock.patch.object(RELEASE, "BASE_DIR", base_dir), mock.patch.object(
                 RELEASE, "LIVE_SECCOMP", seccomp
+            ), mock.patch.object(
+                RELEASE,
+                "live_file",
+                live_reader,
             ):
                 result = RELEASE.validate_bootstrap_hardened_runtime(
                     base,
@@ -6032,6 +6113,18 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                             expected_network_identity=network_identity(),
                         )
                     self.assertNotIn(sentinel, str(raised.exception))
+            self.assertTrue(live_reader.call_args_list)
+            self.assertTrue(
+                all(
+                    call
+                    == mock.call(
+                        seccomp,
+                        0o644,
+                        maximum=2 * 1024 * 1024,
+                    )
+                    for call in live_reader.call_args_list
+                )
+            )
 
     def test_recovery_full_runtime_projection_binds_every_stable_surface_without_environment_values(self):
         base = hardened_documents(LEGACY_TAG, LEGACY_DIGEST)[RELEASE.FLOWISE_CONTAINER]

@@ -276,13 +276,13 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   [x] 完整绑定 Docker Config 17-key 与 HostConfig 66-key；仅对 SecurityOpt 做语义归一，`Healthcheck.StartInterval` 仅接受原生整数 `0`。
 -   [x] 所有 opaque Compose hash 路径强制 exact image identity、image Config.Env 与 Compose environment overlay，并拒绝任意字段删除、替换或新增。
 -   [x] 恢复观察以同一次 no-follow `live_file` bytes 贯穿 raw hash、canonical seccomp 与 runtime 校验，消除 pathname reopen TOCTOU。
--   [x] Node release tests `75/75`、Python unit/integration `133/133`、security `337/337`、Pyright `0`、py_compile、diff-check 全绿。
+-   [x] Node release tests `75/75`、Python unit/integration `137/137`、security `337/337`、Pyright `0`、py_compile、diff-check 全绿。
 -   [x] 隔离真实 Docker boundary `8/8` 通过，随后独立确认 fixture container/volume/network/image 零残留。
 -   [x] 独立安全复审 `APPROVE`，风险 `LOW`，Critical/High/Medium 均为 `0`。
 
 ## Gate R2：提交、CI 与自绑定恢复产物
 
--   [ ] 冻结文档与计划状态，原子提交当前 recovery wrapper、测试和 spec。
+-   [x] 冻结文档与计划状态，原子提交 recovery wrapper、测试和 spec；CI portability 与审查修复继续使用独立原子 commit。
 -   [ ] 推送分支、创建 PR，等待 required CI 对精确 commit 全绿并合并到 `main`。
 -   [ ] 从合并后的 `main` 只触发一次人工 Docker readiness workflow；下载并独立验证包含 recovery 命令的自绑定 `linux/amd64` release artifact。
 

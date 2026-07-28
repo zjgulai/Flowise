@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import types
 import unittest
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,9 @@ from unittest import mock
 
 
 KEY = b"integration-fixture-key-32-bytes"
+OPEN_SUPPORTS_DIR_FD = os.open in os.supports_dir_fd
+STAT_SUPPORTS_DIR_FD = os.stat in os.supports_dir_fd
+STAT_SUPPORTS_NOFOLLOW = os.stat in os.supports_follow_symlinks
 
 
 def digest(data: bytes) -> str:
@@ -98,6 +102,176 @@ def atomic_write(path: Path, data: bytes, mode: int, _uid: int = 0, _gid: int = 
         temporary.unlink(missing_ok=True)
 
 
+def unprivileged_fixture_live_file(
+    live_root: Path,
+    live_root_fd: int,
+    path: Path,
+    mode: int,
+    *,
+    maximum: int | None = None,
+) -> tuple[bytes, tuple[int, int, int]]:
+    """Read only this harness's live files under the invoking test identity.
+
+    Production deliberately accepts only root or UID/GID 1000.  The isolated
+    macOS/Linux fixture is created by an unprivileged developer or CI user, so
+    this test-only adapter preserves every other boundary without weakening
+    the production wrapper: lexical containment, a pinned root directory FD,
+    component-by-component no-follow traversal, exact owner/mode, a bounded
+    read, and stable descriptor/directory-entry identity.
+    """
+
+    root = Path(live_root)
+    candidate = Path(path)
+    if not root.is_absolute() or not candidate.is_absolute():
+        raise RuntimeError("fixture live paths must be absolute")
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError as error:
+        raise RuntimeError("fixture live path escaped live root") from error
+    if not relative.parts or any(part in ("", ".", "..") for part in relative.parts):
+        raise RuntimeError("fixture live path is not canonical")
+    if maximum is not None and (
+        not isinstance(maximum, int) or isinstance(maximum, bool) or maximum < 0
+    ):
+        raise RuntimeError("fixture live maximum is invalid")
+
+    if (
+        not isinstance(live_root_fd, int)
+        or isinstance(live_root_fd, bool)
+        or live_root_fd < 0
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "O_DIRECTORY")
+        or not OPEN_SUPPORTS_DIR_FD
+        or not STAT_SUPPORTS_DIR_FD
+        or not STAT_SUPPORTS_NOFOLLOW
+    ):
+        raise RuntimeError("fixture live dirfd boundary unavailable")
+
+    uid, gid = os.getuid(), os.getgid()
+    try:
+        root_info = os.fstat(live_root_fd)
+    except OSError as error:
+        raise RuntimeError("fixture live root unavailable") from error
+    if (
+        not stat.S_ISDIR(root_info.st_mode)
+        or root_info.st_uid != uid
+        or root_info.st_gid != gid
+    ):
+        raise RuntimeError("fixture live root unsafe")
+
+    directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        parent_fd = os.dup(live_root_fd)
+    except OSError as error:
+        raise RuntimeError("fixture live root duplicate failed") from error
+    descriptor: int | None = None
+    stable_fields = (
+        "st_dev",
+        "st_ino",
+        "st_mode",
+        "st_nlink",
+        "st_uid",
+        "st_gid",
+        "st_size",
+        "st_mtime_ns",
+    )
+    try:
+        for component in relative.parts[:-1]:
+            try:
+                child_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            except OSError as error:
+                raise RuntimeError("fixture live parent unavailable") from error
+            os.close(parent_fd)
+            parent_fd = child_fd
+            parent_info = os.fstat(parent_fd)
+            if (
+                not stat.S_ISDIR(parent_info.st_mode)
+                or parent_info.st_uid != uid
+                or parent_info.st_gid != gid
+            ):
+                raise RuntimeError("fixture live parent unsafe")
+
+        filename = relative.parts[-1]
+        try:
+            path_before = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError as error:
+            raise RuntimeError("fixture live file unavailable") from error
+        if (
+            not stat.S_ISREG(path_before.st_mode)
+            or stat.S_ISLNK(path_before.st_mode)
+            or path_before.st_nlink != 1
+            or path_before.st_uid != uid
+            or path_before.st_gid != gid
+            or stat.S_IMODE(path_before.st_mode) != mode
+        ):
+            raise RuntimeError("fixture live file metadata mismatch")
+        try:
+            descriptor = os.open(filename, file_flags, dir_fd=parent_fd)
+        except OSError as error:
+            raise RuntimeError("fixture live file open failed") from error
+        before = os.fstat(descriptor)
+        if any(getattr(path_before, field) != getattr(before, field) for field in stable_fields):
+            raise RuntimeError("fixture live file identity changed before read")
+        if maximum is not None and before.st_size > maximum:
+            raise RuntimeError("fixture live file too large")
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                raise RuntimeError("fixture live file short read")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise RuntimeError("fixture live file grew while read")
+        after = os.fstat(descriptor)
+        try:
+            path_after = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError as error:
+            raise RuntimeError("fixture live file disappeared after read") from error
+        if any(
+            getattr(before, field) != getattr(after, field)
+            or getattr(before, field) != getattr(path_after, field)
+            for field in stable_fields
+        ):
+            raise RuntimeError("fixture live file changed while read")
+        return b"".join(chunks), (uid, gid, mode)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent_fd)
+
+
+def open_unprivileged_fixture_live_root(live_root: Path) -> int:
+    """Pin the trusted fixture root before any wrapper observation begins."""
+
+    root = Path(live_root)
+    if (
+        not root.is_absolute()
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "O_DIRECTORY")
+    ):
+        raise RuntimeError("fixture live root boundary unavailable")
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(root, flags)
+    except OSError as error:
+        raise RuntimeError("fixture live root open failed") from error
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_gid != os.getgid()
+        ):
+            raise RuntimeError("fixture live root unsafe")
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
 def args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True, type=Path)
@@ -131,8 +305,14 @@ class BoundaryHarness:
         self.stack = contextlib.ExitStack()
         self.commands: list[list[str]] = []
         self.restore_count = 0
-        self._write_fixtures()
-        self._patch_wrapper()
+        try:
+            self._write_fixtures()
+            self.live_fd = open_unprivileged_fixture_live_root(self.live)
+            self.stack.callback(os.close, self.live_fd)
+            self._patch_wrapper()
+        except Exception:
+            self.stack.close()
+            raise
 
     def _sidecars(self) -> str:
         return textwrap.dedent(
@@ -263,6 +443,20 @@ class BoundaryHarness:
         def recreate(env: Path | None = None, compose: Path | None = None) -> None:
             original_recreate(env or self.env, compose or self.compose)
 
+        def fixture_live_file(
+            path: Path,
+            mode: int,
+            *,
+            maximum: int | None = None,
+        ) -> tuple[bytes, tuple[int, int, int]]:
+            return unprivileged_fixture_live_file(
+                self.live,
+                self.live_fd,
+                path,
+                mode,
+                maximum=maximum,
+            )
+
         for name, value in {
             "BASE_DIR": self.live,
             "LIVE_ENV": self.env,
@@ -277,6 +471,9 @@ class BoundaryHarness:
             "compose_recreate": recreate,
             "run_command": observed,
             "atomic_write": atomic_write,
+            # Boundary-harness only: production live_file keeps its root/1000
+            # owner allowlist unchanged.
+            "live_file": fixture_live_file,
             "_ensure_live_seccomp_parent": lambda _uid, _gid: self.seccomp.parent.mkdir(
                 mode=0o700, parents=True, exist_ok=True
             ),
@@ -434,6 +631,128 @@ class BoundaryHarness:
 
     def close(self) -> None:
         self.stack.close()
+
+
+class UnprivilegedFixtureLiveFileTests(unittest.TestCase):
+    def test_read_is_scoped_exact_metadata_bounded_and_nofollow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            root = Path(directory) / "live"
+            root.mkdir(mode=0o700)
+            root_fd = open_unprivileged_fixture_live_root(root)
+            stack.callback(os.close, root_fd)
+            path = root / "docker-compose.prod.yml"
+            payload = b"services: {}\n"
+            path.write_bytes(payload)
+            os.chmod(path, 0o644)
+            opened_flags: list[int] = []
+            original_open = os.open
+
+            def tracked_open(candidate: Any, flags: int, *arguments: Any, **kwargs: Any) -> int:
+                opened_flags.append(flags)
+                return original_open(candidate, flags, *arguments, **kwargs)
+
+            with mock.patch.object(os, "open", side_effect=tracked_open):
+                data, metadata = unprivileged_fixture_live_file(
+                    root,
+                    root_fd,
+                    path,
+                    0o644,
+                    maximum=len(payload),
+                )
+
+            self.assertEqual(data, payload)
+            self.assertEqual(metadata, (os.getuid(), os.getgid(), 0o644))
+            self.assertEqual(len(opened_flags), 1)
+            self.assertTrue(opened_flags[0] & os.O_NOFOLLOW)
+
+    def test_read_rejects_escape_symlink_mode_size_and_descriptor_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            workspace = Path(directory)
+            root = workspace / "live"
+            root.mkdir(mode=0o700)
+            root_fd = open_unprivileged_fixture_live_root(root)
+            stack.callback(os.close, root_fd)
+            outside = workspace / "outside"
+            outside.write_bytes(b"outside")
+            os.chmod(outside, 0o644)
+
+            with self.assertRaisesRegex(RuntimeError, "escaped live root"):
+                unprivileged_fixture_live_file(root, root_fd, outside, 0o644)
+
+            symlink = root / "symlink"
+            symlink.symlink_to(outside)
+            with self.assertRaisesRegex(RuntimeError, "metadata mismatch"):
+                unprivileged_fixture_live_file(root, root_fd, symlink, 0o644)
+
+            outside_directory = workspace / "outside-directory"
+            outside_directory.mkdir(mode=0o700)
+            (outside_directory / "payload").write_bytes(b"outside")
+            parent_symlink = root / "parent-symlink"
+            parent_symlink.symlink_to(outside_directory, target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "parent unavailable"):
+                unprivileged_fixture_live_file(
+                    root,
+                    root_fd,
+                    parent_symlink / "payload",
+                    0o644,
+                )
+
+            path = root / "bounded"
+            path.write_bytes(b"1234")
+            os.chmod(path, 0o600)
+            with self.assertRaisesRegex(RuntimeError, "metadata mismatch"):
+                unprivileged_fixture_live_file(root, root_fd, path, 0o644)
+            os.chmod(path, 0o644)
+            with self.assertRaisesRegex(RuntimeError, "too large"):
+                unprivileged_fixture_live_file(root, root_fd, path, 0o644, maximum=3)
+
+            original_fstat = os.fstat
+            calls = 0
+
+            def drifting_fstat(descriptor: int) -> Any:
+                nonlocal calls
+                calls += 1
+                info = original_fstat(descriptor)
+                if calls != 3:
+                    return info
+                fields = {
+                    name: getattr(info, name)
+                    for name in (
+                        "st_dev",
+                        "st_ino",
+                        "st_mode",
+                        "st_nlink",
+                        "st_uid",
+                        "st_gid",
+                        "st_size",
+                        "st_mtime_ns",
+                    )
+                }
+                fields["st_mtime_ns"] += 1
+                return types.SimpleNamespace(**fields)
+
+            with mock.patch.object(
+                os,
+                "fstat",
+                side_effect=drifting_fstat,
+            ), self.assertRaisesRegex(RuntimeError, "changed while read"):
+                unprivileged_fixture_live_file(root, root_fd, path, 0o644, maximum=4)
+
+            pinned_root = workspace / "pinned-live"
+            root.rename(pinned_root)
+            replacement = workspace / "replacement-live"
+            replacement.mkdir(mode=0o700)
+            (replacement / "bounded").write_bytes(b"attacker-controlled")
+            os.chmod(replacement / "bounded", 0o644)
+            root.symlink_to(replacement, target_is_directory=True)
+            data, _metadata = unprivileged_fixture_live_file(
+                root,
+                root_fd,
+                root / "bounded",
+                0o644,
+                maximum=4,
+            )
+            self.assertEqual(data, b"1234")
 
 
 class ComposePluginDiscoveryTests(unittest.TestCase):

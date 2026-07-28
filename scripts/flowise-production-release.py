@@ -2488,11 +2488,22 @@ def _secure_directory(path: Path) -> None:
         os.chmod(path, 0o700)
 
 
-def live_file(path: Path, mode: int) -> tuple[bytes, tuple[int, int, int]]:
+def live_file(
+    path: Path,
+    mode: int,
+    *,
+    maximum: int | None = None,
+) -> tuple[bytes, tuple[int, int, int]]:
     info = path.lstat()
     if (info.st_uid, info.st_gid) not in ((0, 0), (1000, 1000)) or stat.S_IMODE(info.st_mode) != mode:
         raise DeployError(f"LIVE_FILE_METADATA_MISMATCH_{path.name}")
-    data = read_regular(path, expected_uid=info.st_uid, expected_gid=info.st_gid, expected_mode=mode)
+    data = read_regular(
+        path,
+        maximum=maximum,
+        expected_uid=info.st_uid,
+        expected_gid=info.st_gid,
+        expected_mode=mode,
+    )
     return data, (info.st_uid, info.st_gid, mode)
 
 
@@ -3118,24 +3129,15 @@ def _live_seccomp_canonical_digest() -> str:
 
     _validate_live_seccomp_parents(allow_missing=False)
     try:
-        info = LIVE_SECCOMP.lstat()
+        data, _metadata = live_file(
+            LIVE_SECCOMP,
+            0o644,
+            maximum=2 * 1024 * 1024,
+        )
     except OSError as error:
         raise DeployError("LIVE_SECCOMP_UNAVAILABLE") from error
-    if (
-        not stat.S_ISREG(info.st_mode)
-        or stat.S_ISLNK(info.st_mode)
-        or info.st_nlink != 1
-        or info.st_size <= 0
-        or info.st_size > 2 * 1024 * 1024
-    ):
+    if not data:
         raise DeployError("LIVE_SECCOMP_UNSAFE")
-    data = read_regular(
-        LIVE_SECCOMP,
-        maximum=2 * 1024 * 1024,
-        expected_uid=info.st_uid,
-        expected_gid=info.st_gid,
-        expected_mode=stat.S_IMODE(info.st_mode),
-    )
     return _seccomp_canonical_digest_bytes(data, "LIVE_SECCOMP")
 
 
@@ -5158,7 +5160,7 @@ def _restore_rollback(
     pre_recreate_id = container_snapshot(pre_recreate)[FLOWISE_CONTAINER]["id"]
     if not isinstance(pre_recreate_id, str) or not DOCKER_ID_RE.fullmatch(pre_recreate_id):
         raise DeployError("ROLLBACK_REPLACED_CONTAINER_ID_INVALID")
-    rollback_root, env, compose, seccomp = _load_staged(receipt, "rollback", run_dir)
+    _rollback_root, env, compose, seccomp = _load_staged(receipt, "rollback", run_dir)
     install_config_set(env, compose, seccomp, receipt["live_metadata"])
     if _live_hashes() != receipt["rollback"]["files"]:
         raise DeployError("ROLLBACK_LIVE_FILE_HASH_MISMATCH")
