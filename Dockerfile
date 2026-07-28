@@ -39,7 +39,12 @@ RUN case "$SOURCE_DATE_EPOCH" in \
     comm -13 /tmp/apk-before.lock /tmp/apk-after.lock > /tmp/apk-actual.lock && \
     cmp -s /tmp/apk-build.lock /tmp/apk-actual.lock && \
     SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" fc-cache -fv && \
-    rm -f /tmp/apk-before.lock /tmp/apk-after.lock /tmp/apk-actual.lock /tmp/apk-build.lock
+    rm -f \
+        /tmp/apk-before.lock \
+        /tmp/apk-after.lock \
+        /tmp/apk-actual.lock \
+        /tmp/apk-build.lock \
+        /var/log/apk.log
 
 # 安装 pnpm
 RUN npm install -g pnpm@10.26.0
@@ -75,10 +80,14 @@ FROM deps AS builder
 # 复制完整源代码
 COPY . .
 
-# 构建项目（排除 agentflow 和 observe 以匹配原构建行为），并清理仅构建期需要的配置和动态 Turbo 输出
+# 构建项目（排除 agentflow 和 observe 以匹配原构建行为），并清理仅构建期需要的配置、pnpm 状态和动态 Turbo 输出
 RUN pnpm build:docker && \
-    rm -f .npmrc && \
+    rm -f \
+        .npmrc \
+        node_modules/.modules.yaml \
+        node_modules/.pnpm-workspace-state-v1.json && \
     rm -rf \
+        .turbo \
         node_modules/.cache/turbo \
         packages/api-documentation/.turbo \
         packages/components/.turbo \
@@ -126,7 +135,12 @@ RUN case "$SOURCE_DATE_EPOCH" in \
     comm -13 /tmp/apk-before.lock /tmp/apk-after.lock > /tmp/apk-actual.lock && \
     cmp -s /tmp/apk-runtime.lock /tmp/apk-actual.lock && \
     SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" fc-cache -fv && \
-    rm -f /tmp/apk-before.lock /tmp/apk-after.lock /tmp/apk-actual.lock /tmp/apk-runtime.lock
+    rm -f \
+        /tmp/apk-before.lock \
+        /tmp/apk-after.lock \
+        /tmp/apk-actual.lock \
+        /tmp/apk-runtime.lock \
+        /var/log/apk.log
 
 # 本地浏览器加载器统一使用镜像内已安装的 Chromium
 ENV PUPPETEER_SKIP_DOWNLOAD=true

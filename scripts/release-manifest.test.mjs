@@ -53,8 +53,10 @@ const SETUP_BUILDX_ACTION = 'docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7ba
 const BUILDX_VERSION = 'v0.34.1'
 const BUILDKIT_IMAGE = 'moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f'
 const PINNED_BUILDX_STEP_NAME = 'Set up the pinned Docker Buildx and BuildKit toolchain'
+const PRIMARY_CONTRACT_STEP_NAME = 'Verify source and release contracts'
 const PRIMARY_BUILD_STEP_NAME = 'Build root Dockerfile without pushing'
 const READINESS_REBUILD_STEP_NAME = 'Independently rebuild and bind the candidate config identity'
+const DOCKERHUB_CONTRACT_STEP_NAME = 'Verify source, dependencies and release contracts'
 const DOCKERHUB_BUILD_STEP_NAME = 'Build the canonical current-source candidate without pushing'
 
 const writeTarOctal = (header, offset, length, value) => {
@@ -405,8 +407,24 @@ const validatePinnedBuildxStep = (workflow, jobId, stepName = PINNED_BUILDX_STEP
     return step
 }
 
+const validateCanonicalContextReset = (workflow, jobId, stepName, label) => {
+    const step = requireNamedWorkflowStep(workflow, jobId, stepName, label)
+    const lines = activeShellLines(step.run, label)
+    const cleanStatusLine = 'test -z "$(git status --porcelain --untracked-files=all)"'
+    const cleanStatusIndexes = lines.flatMap((line, indexValue) => (line === cleanStatusLine ? [indexValue] : []))
+    assert.equal(cleanStatusIndexes.length, 2, `${label} must prove a clean tree before and after ignored-file removal`)
+    const resetIndex = requireSingleActiveLine(lines, 'git clean -dffqx', `${label} ignored-file reset`)
+    const dryRunIndex = requireSingleActiveLine(lines, 'test -z "$(git clean -ndffx)"', `${label} empty cleanup dry-run`)
+    assert.equal(cleanStatusIndexes[0] + 1, resetIndex, `${label} reset must immediately follow the pre-reset clean-tree proof`)
+    assert.equal(resetIndex + 1, cleanStatusIndexes[1], `${label} must immediately re-prove the clean tree after reset`)
+    assert.equal(cleanStatusIndexes[1] + 1, dryRunIndex, `${label} dry-run proof must immediately follow the post-reset proof`)
+    assert.equal(dryRunIndex, lines.length - 1, `${label} canonical context proof must remain at the executed step tail`)
+    return step
+}
+
 const validatePrimaryBuildStep = (workflowSource) => {
     const workflow = parseWorkflowDocument(workflowSource, 'build-only workflow')
+    validateCanonicalContextReset(workflow, 'build', PRIMARY_CONTRACT_STEP_NAME, 'primary canonical build context')
     validatePinnedBuildxStep(workflow, 'build')
     const metadata = requireNamedWorkflowStep(workflow, 'build', 'Resolve immutable build metadata', 'primary build metadata')
     requireSingleActiveLine(
@@ -436,17 +454,27 @@ const validatePrimaryBuildStep = (workflowSource) => {
 
 const validateReadinessRebuildStep = (workflowSource) => {
     const workflow = parseWorkflowDocument(workflowSource, 'build-only workflow')
+    assert.equal(workflow.jobs?.release_readiness?.env?.REBUILD_TAG, 'flowise-chinese:git-${{ github.sha }}')
     validatePinnedBuildxStep(workflow, 'release_readiness')
     const step = requireNamedWorkflowStep(workflow, 'release_readiness', READINESS_REBUILD_STEP_NAME, 'readiness rebuild')
     assert.equal(step.uses, undefined)
     assert.equal(step.env?.INDEPENDENT_ARCHIVE_PATH, '${{ runner.temp }}/flowise-release-readiness-independent.tar.gz')
     const lines = activeShellLines(step.run, 'readiness rebuild')
+    const exactShaIndex = requireSingleActiveLine(lines, 'test "$GITHUB_SHA" = "$(git rev-parse HEAD)"', 'readiness exact SHA proof')
+    const cleanStatusIndex = requireSingleActiveLine(
+        lines,
+        'test -z "$(git status --porcelain --untracked-files=all)"',
+        'readiness clean-tree proof'
+    )
+    const dryRunIndex = requireSingleActiveLine(lines, 'test -z "$(git clean -ndffx)"', 'readiness empty cleanup dry-run')
     requireSingleActiveLine(lines, 'source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"', 'readiness SOURCE_DATE_EPOCH producer')
     const buildIndex = requireSingleActiveLine(
         lines,
         'SOURCE_DATE_EPOCH="$source_date_epoch" docker buildx build \\',
         'readiness build invocation'
     )
+    const fileIndex = requireSingleActiveLine(lines, '--file Dockerfile \\', 'readiness canonical Dockerfile')
+    const platformIndex = requireSingleActiveLine(lines, '--platform linux/amd64 \\', 'readiness canonical platform')
     const outputIndex = requireSingleActiveLine(
         lines,
         '--output "type=docker,name=$REBUILD_TAG,rewrite-timestamp=true" \\',
@@ -469,11 +497,36 @@ const validateReadinessRebuildStep = (workflowSource) => {
         'test "$independent_config_digest" = "$expected_config_digest"',
         'readiness raw config digest equality'
     )
-    assert.ok(buildIndex < outputIndex)
+    const mismatchIndex = requireSingleActiveLine(
+        lines,
+        'if [ "$independent_config_digest" != "$expected_config_digest" ]; then',
+        'readiness digest mismatch guard'
+    )
+    const mismatchSummaryIndex = requireSingleActiveLine(
+        lines,
+        "printf 'release_readiness_config_mismatch expected=%s actual=%s\\n' \\",
+        'readiness safe digest mismatch summary'
+    )
+    const mismatchArgumentsIndex = requireSingleActiveLine(
+        lines,
+        '"$expected_config_digest" "$independent_config_digest"',
+        'readiness mismatch digest arguments'
+    )
+    const mismatchEndIndex = requireSingleActiveLine(lines, 'fi', 'readiness digest mismatch guard terminator')
+    assert.equal(exactShaIndex + 1, cleanStatusIndex)
+    assert.equal(cleanStatusIndex + 1, dryRunIndex)
+    assert.ok(dryRunIndex < buildIndex)
+    assert.ok(buildIndex < fileIndex)
+    assert.ok(fileIndex < platformIndex)
+    assert.ok(platformIndex < outputIndex)
     assert.ok(outputIndex < epochIndex)
     assert.ok(epochIndex < independentDigestIndex)
     assert.ok(independentDigestIndex < expectedDigestIndex)
-    assert.ok(expectedDigestIndex < equalityIndex)
+    assert.ok(expectedDigestIndex < mismatchIndex)
+    assert.equal(mismatchIndex + 1, mismatchSummaryIndex)
+    assert.equal(mismatchSummaryIndex + 1, mismatchArgumentsIndex)
+    assert.equal(mismatchArgumentsIndex + 1, mismatchEndIndex)
+    assert.equal(mismatchEndIndex + 1, equalityIndex)
     assert.equal(lines[equalityIndex + 1], 'cleanup_independent_rebuild')
     assert.equal(lines[equalityIndex + 2], 'trap - EXIT')
     assert.equal(equalityIndex + 2, lines.length - 1, 'readiness digest equality must remain on the executed top-level tail')
@@ -486,6 +539,7 @@ const validateReadinessRebuildStep = (workflowSource) => {
 
 const validateDockerHubBuildStep = (workflowSource) => {
     const workflow = parseWorkflowDocument(workflowSource, 'Docker Hub workflow')
+    validateCanonicalContextReset(workflow, 'publish', DOCKERHUB_CONTRACT_STEP_NAME, 'Docker Hub canonical build context')
     validatePinnedBuildxStep(workflow, 'publish', 'Set up Docker Buildx')
     const checkout = requireNamedWorkflowStep(workflow, 'publish', 'Checkout the exact source revision', 'Docker Hub checkout')
     assert.equal(checkout.with?.['persist-credentials'], false)
@@ -515,11 +569,54 @@ const validateDockerHubBuildStep = (workflowSource) => {
     return step
 }
 
+const validateRootDockerfileReproducibility = (dockerfile) => {
+    const cleanup = dockerfile.match(/RUN pnpm build:docker[\s\S]*?(?=\n\n# ==========================================)/)?.[0]
+    assert.ok(cleanup, 'Dockerfile must clean build-only output before the runtime copy')
+    assert.equal(dockerfile.match(/^\s*\/var\/log\/apk\.log$/gm)?.length, 2, 'both APK install layers must remove the timestamped APK log')
+    assert.match(
+        cleanup,
+        /rm -f \\\n\s+\.npmrc \\\n\s+node_modules\/\.modules\.yaml \\\n\s+node_modules\/\.pnpm-workspace-state-v1\.json && \\\n\s+rm -rf \\\n\s+\.turbo \\\n\s+node_modules\/\.cache\/turbo \\\n\s+packages\/api-documentation\/\.turbo \\\n\s+packages\/components\/\.turbo \\\n\s+packages\/server\/\.turbo \\\n\s+packages\/ui\/\.turbo/
+    )
+    assert.doesNotMatch(cleanup, /node_modules\/\.cache\/\*|packages\/\*\/\.turbo|rm -rf\s+node_modules/)
+    return cleanup
+}
+
 const replaceWorkflowTextOnce = (workflowSource, expected, replacement, label) => {
     const firstIndex = workflowSource.indexOf(expected)
     assert.notEqual(firstIndex, -1, `${label} mutation target is missing`)
     assert.equal(workflowSource.indexOf(expected, firstIndex + expected.length), -1, `${label} mutation target is ambiguous`)
     return `${workflowSource.slice(0, firstIndex)}${replacement}${workflowSource.slice(firstIndex + expected.length)}`
+}
+
+const replaceNamedWorkflowStepText = (
+    workflowSource,
+    stepName,
+    expected,
+    replacement,
+    label,
+    { occurrence = 0, expectedCount = 1 } = {}
+) => {
+    const escapedStepName = stepName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const marker = new RegExp(`^(\\s*)- name: ${escapedStepName}\\s*$`, 'm').exec(workflowSource)
+    assert.ok(marker, `${label} named step is missing`)
+    const stepStart = marker.index
+    const nextStep = new RegExp(`^${marker[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}- `, 'gm')
+    nextStep.lastIndex = stepStart + marker[0].length
+    const nextMarker = nextStep.exec(workflowSource)
+    const stepEnd = nextMarker?.index ?? workflowSource.length
+    const stepSource = workflowSource.slice(stepStart, stepEnd)
+    const indexes = []
+    let searchFrom = 0
+    let indexValue = stepSource.indexOf(expected, searchFrom)
+    while (indexValue !== -1) {
+        indexes.push(indexValue)
+        searchFrom = indexValue + expected.length
+        indexValue = stepSource.indexOf(expected, searchFrom)
+    }
+    assert.equal(indexes.length, expectedCount, `${label} mutation target count is not exact in the named step`)
+    assert.ok(occurrence >= 0 && occurrence < indexes.length, `${label} mutation occurrence is out of range`)
+    const target = stepStart + indexes[occurrence]
+    return `${workflowSource.slice(0, target)}${replacement}${workflowSource.slice(target + expected.length)}`
 }
 
 test('action pin validation covers uses beneath named workflow steps', () => {
@@ -1651,9 +1748,8 @@ test('root Dockerfile removes dynamic Turbo output and supplies a validated epoc
     const dockerfile = readFileSync(ROOT_DOCKERFILE_PATH, 'utf8')
     const buildLock = readFileSync(APK_BUILD_LOCK_PATH, 'utf8').trim().split('\n')
     const runtimeLock = readFileSync(APK_RUNTIME_LOCK_PATH, 'utf8').trim().split('\n')
-    const cleanup = dockerfile.match(/RUN pnpm build:docker[\s\S]*?(?=\n\n# ==========================================)/)?.[0]
+    const cleanup = validateRootDockerfileReproducibility(dockerfile)
 
-    assert.ok(cleanup, 'Dockerfile must clean build-only output before the runtime copy')
     for (const [label, entries] of [
         ['build', buildLock],
         ['runtime', runtimeLock]
@@ -1676,11 +1772,26 @@ test('root Dockerfile removes dynamic Turbo output and supplies a validated epoc
     assert.equal(dockerfile.match(/^ARG SOURCE_DATE_EPOCH$/gm)?.length, 2)
     assert.equal(dockerfile.match(/SOURCE_DATE_EPOCH must be a non-negative integer/g)?.length, 2)
     assert.equal(dockerfile.match(/SOURCE_DATE_EPOCH="\$SOURCE_DATE_EPOCH" fc-cache -fv/g)?.length, 2)
-    assert.match(
-        cleanup,
-        /rm -rf \\\n\s+node_modules\/\.cache\/turbo \\\n\s+packages\/api-documentation\/\.turbo \\\n\s+packages\/components\/\.turbo \\\n\s+packages\/server\/\.turbo \\\n\s+packages\/ui\/\.turbo/
-    )
     assert.doesNotMatch(cleanup, /node_modules\/\.cache\/\*|packages\/\*\/\.turbo/)
+})
+
+test('root Dockerfile reproducibility cleanup rejects timestamped APK, pnpm state and root Turbo regressions', () => {
+    const dockerfile = readFileSync(ROOT_DOCKERFILE_PATH, 'utf8')
+    const mutations = [
+        dockerfile.replace('/var/log/apk.log', '/var/log/apk-timestamp.log'),
+        replaceWorkflowTextOnce(dockerfile, '        node_modules/.modules.yaml \\\n', '', 'Dockerfile pnpm modules metadata cleanup'),
+        replaceWorkflowTextOnce(
+            dockerfile,
+            '        node_modules/.pnpm-workspace-state-v1.json && \\\n',
+            '',
+            'Dockerfile pnpm workspace state cleanup'
+        ),
+        replaceWorkflowTextOnce(dockerfile, '        .turbo \\\n', '', 'Dockerfile root Turbo cleanup')
+    ]
+
+    for (const mutated of mutations) {
+        assert.throws(() => validateRootDockerfileReproducibility(mutated))
+    }
 })
 
 test('build-only Docker CI produces and reconsumes a canonical offline release artifact without registry side effects', () => {
@@ -1857,6 +1968,36 @@ test('workflow reproducibility contracts reject commented or removed active fiel
     const dockerHubWorkflow = readFileSync(DOCKERHUB_WORKFLOW_PATH, 'utf8')
     const contracts = [
         {
+            label: 'primary pre-reset clean-tree proof',
+            validate: validatePrimaryBuildStep,
+            source: buildWorkflow,
+            stepName: PRIMARY_CONTRACT_STEP_NAME,
+            activeText: 'test -z "$(git status --porcelain --untracked-files=all)"',
+            mutationOptions: { occurrence: 0, expectedCount: 2 }
+        },
+        {
+            label: 'primary ignored-file context reset',
+            validate: validatePrimaryBuildStep,
+            source: buildWorkflow,
+            stepName: PRIMARY_CONTRACT_STEP_NAME,
+            activeText: 'git clean -dffqx'
+        },
+        {
+            label: 'primary post-reset clean-tree proof',
+            validate: validatePrimaryBuildStep,
+            source: buildWorkflow,
+            stepName: PRIMARY_CONTRACT_STEP_NAME,
+            activeText: 'test -z "$(git status --porcelain --untracked-files=all)"',
+            mutationOptions: { occurrence: 1, expectedCount: 2 }
+        },
+        {
+            label: 'primary empty cleanup dry-run proof',
+            validate: validatePrimaryBuildStep,
+            source: buildWorkflow,
+            stepName: PRIMARY_CONTRACT_STEP_NAME,
+            activeText: 'test -z "$(git clean -ndffx)"'
+        },
+        {
             label: 'primary SOURCE_DATE_EPOCH producer',
             validate: validatePrimaryBuildStep,
             source: buildWorkflow,
@@ -1881,6 +2022,33 @@ test('workflow reproducibility contracts reject commented or removed active fiel
             activeText: 'SOURCE_DATE_EPOCH=${{ steps.metadata.outputs.source_date_epoch }}'
         },
         {
+            label: 'readiness canonical rebuild tag',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            activeText: 'REBUILD_TAG: flowise-chinese:git-${{ github.sha }}'
+        },
+        {
+            label: 'readiness exact SHA proof',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            stepName: READINESS_REBUILD_STEP_NAME,
+            activeText: 'test "$GITHUB_SHA" = "$(git rev-parse HEAD)"'
+        },
+        {
+            label: 'readiness clean-tree proof',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            stepName: READINESS_REBUILD_STEP_NAME,
+            activeText: 'test -z "$(git status --porcelain --untracked-files=all)"'
+        },
+        {
+            label: 'readiness empty cleanup dry-run proof',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            stepName: READINESS_REBUILD_STEP_NAME,
+            activeText: 'test -z "$(git clean -ndffx)"'
+        },
+        {
             label: 'readiness SOURCE_DATE_EPOCH producer',
             validate: validateReadinessRebuildStep,
             source: buildWorkflow,
@@ -1891,6 +2059,12 @@ test('workflow reproducibility contracts reject commented or removed active fiel
             validate: validateReadinessRebuildStep,
             source: buildWorkflow,
             activeText: 'INDEPENDENT_ARCHIVE_PATH: ${{ runner.temp }}/flowise-release-readiness-independent.tar.gz'
+        },
+        {
+            label: 'readiness canonical Dockerfile',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            activeText: '--file Dockerfile \\'
         },
         {
             label: 'readiness Docker exporter',
@@ -1905,10 +2079,46 @@ test('workflow reproducibility contracts reject commented or removed active fiel
             activeText: '--build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \\'
         },
         {
+            label: 'readiness safe digest mismatch summary',
+            validate: validateReadinessRebuildStep,
+            source: buildWorkflow,
+            activeText: "printf 'release_readiness_config_mismatch expected=%s actual=%s\\n' \\"
+        },
+        {
             label: 'readiness raw digest equality',
             validate: validateReadinessRebuildStep,
             source: buildWorkflow,
             activeText: 'test "$independent_config_digest" = "$expected_config_digest"'
+        },
+        {
+            label: 'Docker Hub pre-reset clean-tree proof',
+            validate: validateDockerHubBuildStep,
+            source: dockerHubWorkflow,
+            stepName: DOCKERHUB_CONTRACT_STEP_NAME,
+            activeText: 'test -z "$(git status --porcelain --untracked-files=all)"',
+            mutationOptions: { occurrence: 0, expectedCount: 2 }
+        },
+        {
+            label: 'Docker Hub ignored-file context reset',
+            validate: validateDockerHubBuildStep,
+            source: dockerHubWorkflow,
+            stepName: DOCKERHUB_CONTRACT_STEP_NAME,
+            activeText: 'git clean -dffqx'
+        },
+        {
+            label: 'Docker Hub post-reset clean-tree proof',
+            validate: validateDockerHubBuildStep,
+            source: dockerHubWorkflow,
+            stepName: DOCKERHUB_CONTRACT_STEP_NAME,
+            activeText: 'test -z "$(git status --porcelain --untracked-files=all)"',
+            mutationOptions: { occurrence: 1, expectedCount: 2 }
+        },
+        {
+            label: 'Docker Hub empty cleanup dry-run proof',
+            validate: validateDockerHubBuildStep,
+            source: dockerHubWorkflow,
+            stepName: DOCKERHUB_CONTRACT_STEP_NAME,
+            activeText: 'test -z "$(git clean -ndffx)"'
         },
         {
             label: 'Docker Hub SOURCE_DATE_EPOCH producer',
@@ -1940,7 +2150,16 @@ test('workflow reproducibility contracts reject commented or removed active fiel
         for (const mutation of ['commented', 'removed']) {
             const label = `${contract.label} ${mutation}`
             const replacement = mutation === 'commented' ? `# ${contract.activeText}` : ''
-            const mutated = replaceWorkflowTextOnce(contract.source, contract.activeText, replacement, label)
+            const mutated = contract.stepName
+                ? replaceNamedWorkflowStepText(
+                      contract.source,
+                      contract.stepName,
+                      contract.activeText,
+                      replacement,
+                      label,
+                      contract.mutationOptions
+                  )
+                : replaceWorkflowTextOnce(contract.source, contract.activeText, replacement, label)
             assert.throws(() => contract.validate(mutated), `${label} must invalidate the named-step contract`)
         }
     }
