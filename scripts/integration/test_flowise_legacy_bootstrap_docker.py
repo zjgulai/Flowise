@@ -10,6 +10,7 @@ services on an internal network.
 from __future__ import annotations
 
 import argparse
+import copy
 import contextlib
 import hashlib
 import importlib.util
@@ -311,8 +312,12 @@ class BoundaryHarness:
         require(config["User"] == "1000:1000" and host["ReadonlyRootfs"] is True, "user/rootfs hardening missing")
         require(host["Init"] is True and host["CapDrop"] == ["ALL"] and host["PidsLimit"] == 512, "init/cap/pids hardening missing")
         require(host["Memory"] == 134_217_728 and host["NanoCpus"] == 500_000_000, "resource limits missing")
-        require(any(value.startswith("no-new-privileges") for value in security), "no-new-privileges missing")
-        require(len([value for value in security if value.startswith("seccomp=")]) == 1, "seccomp profile missing")
+        require(any(value.startswith("seccomp={") for value in security), "inline seccomp profile missing")
+        normalized = self.wrapper._normalize_runtime_security_options(
+            security,
+            self.wrapper._live_seccomp_canonical_digest(),
+        )
+        require(normalized["no_new_privileges"] is True, "no-new-privileges semantic mismatch")
         require("/tmp" in (host.get("Tmpfs") or {}), "tmpfs missing")
 
     def _assert_legacy(self, documents: dict[str, dict[str, Any]], image_id: str) -> None:
@@ -375,7 +380,19 @@ class BoundaryHarness:
         w.compose_recreate()
         hardened = w.inspect_containers()
         self._assert_hardened(hardened, image_id)
-        require(w.container_snapshot(hardened)[self.flowise]["compose_config_hash"] == hard_hash, "hardened Compose hash mismatch")
+        observed_hash = w.container_snapshot(hardened)[self.flowise]["compose_config_hash"]
+        require(w.CONFIG_HASH_RE.fullmatch(observed_hash) is not None, "observed Compose label malformed")
+        compose_version = w.run_command(["docker", "compose", "version", "--short"]).decode().strip().lstrip("v")
+        if compose_version == "2.27.1":
+            require(observed_hash != hard_hash, "Compose 2.27.1 opaque-label inequality not reproduced")
+        seccomp_digest = w._live_seccomp_canonical_digest()
+        full_projection = w.recovery_runtime_projection_digest(hardened[self.flowise], seccomp_digest)
+        drifted = copy.deepcopy(hardened[self.flowise])
+        drifted["HostConfig"]["Dns"] = ["8.8.8.8"]
+        require(
+            w.recovery_runtime_projection_digest(drifted, seccomp_digest) != full_projection,
+            "full runtime projection missed HostConfig drift",
+        )
         w._validate_sidecars(initial, hardened)
         hard_ids = self._ids(hardened)
         require(initial_ids[0] != hard_ids[0] and initial_ids[1:] == hard_ids[1:], "non-Flowise recreate detected")
@@ -386,7 +403,7 @@ class BoundaryHarness:
         ), "candidate image was loaded or started")
         require(self.archive_state == (self.archive.stat().st_size, file_digest(self.archive)), "candidate archive changed")
         print("ok 2 - candidate archive is neither loaded nor started")
-        print("ok 3 - hardened user, rootfs, caps, pids, resources, tmpfs, and security opts materialize")
+        print("ok 3 - hardened runtime uses semantic inline seccomp and a full drift-sensitive projection")
 
         manual_before = self.restore_count
         manual = self._restore(hardened, image_id)

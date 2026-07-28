@@ -262,3 +262,34 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   [x] 更新生产部署计划、runbook、`.kiro/plan/findings.md` 与 `.kiro/plan/progress.md`，逐项标记 L2/L3/L4。
 -   [!] Batch 4 无 provider 认证 E2E 等待专用测试账号、隔离 workspace 与安全凭证交付路径。
 -   [x] 保持 Batch 5 真实 provider call 为禁用状态，直到新的明确授权。
+
+# 2026-07-28/29 遗留 Bootstrap 恢复与新版本生产闭环
+
+## Gate R0：事故冻结与恢复设计
+
+-   [x] 保持现网旧容器只读稳定：Flowise `running/healthy`、restart `0`，内外网 `/ping` 均为 `pong`；未重放失败的 bootstrap、未执行通用 rollback。
+-   [x] 为 run `20260728T171644Z-4914e862` 编写仅适用于该事故的 observed-state recovery amendment；固定 permit、prepare receipt、当前/基线容器、请求/观察 hash、镜像、seccomp、完整 runtime 与数据库迁移 authority。
+-   [x] 实现 exact run topology、existing-only lock、双观察 CAS、不可覆盖 receipt、journal preimage CAS、落盘回读和静态终态 authority。
+
+## Gate R1：本地实现与对抗性验证
+
+-   [x] 完整绑定 Docker Config 17-key 与 HostConfig 66-key；仅对 SecurityOpt 做语义归一，`Healthcheck.StartInterval` 仅接受原生整数 `0`。
+-   [x] 所有 opaque Compose hash 路径强制 exact image identity、image Config.Env 与 Compose environment overlay，并拒绝任意字段删除、替换或新增。
+-   [x] 恢复观察以同一次 no-follow `live_file` bytes 贯穿 raw hash、canonical seccomp 与 runtime 校验，消除 pathname reopen TOCTOU。
+-   [x] Node release tests `75/75`、Python unit/integration `133/133`、security `337/337`、Pyright `0`、py_compile、diff-check 全绿。
+-   [x] 隔离真实 Docker boundary `8/8` 通过，随后独立确认 fixture container/volume/network/image 零残留。
+-   [x] 独立安全复审 `APPROVE`，风险 `LOW`，Critical/High/Medium 均为 `0`。
+
+## Gate R2：提交、CI 与自绑定恢复产物
+
+-   [ ] 冻结文档与计划状态，原子提交当前 recovery wrapper、测试和 spec。
+-   [ ] 推送分支、创建 PR，等待 required CI 对精确 commit 全绿并合并到 `main`。
+-   [ ] 从合并后的 `main` 只触发一次人工 Docker readiness workflow；下载并独立验证包含 recovery 命令的自绑定 `linux/amd64` release artifact。
+
+## Gate R3：生产恢复与新版本部署
+
+-   [ ] 上传并安装自绑定 recovery candidate；重新执行 L3 只读门禁。
+-   [ ] 先执行 zero-write `snapshot-bootstrap-recovery`，再以精确 snapshot digest 执行 `complete-bootstrap-recovery`；验证 receipt/journal owner、mode、nlink、digest 与 terminal state。
+-   [ ] 重新准备新版本、执行受门禁保护的 Flowise-only cutover；失败立即走已验证回滚路径，PostgreSQL/nginx 身份保持不变。
+-   [ ] 完成公网 edge、容器、日志、数据库/key continuity 与 PC 优先浏览器交互验收；不调用真实 provider，不创建或污染业务数据。
+-   [ ] 稳定观察后清理本批次临时 artifact/candidate/fixture，并保留必要审计 receipt 与回滚材料。

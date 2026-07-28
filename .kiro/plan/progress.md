@@ -139,3 +139,16 @@ date: 2026-07-10
 -   Clean clone 使用 Node `v24.18.0`、pnpm `10.26.0`，frozen install 后 lock hash 不变；release `19/19`、static `114/114`、components `24/24` suites / `1018/1018` tests、server `35/35` / `1004/1004`、UI `2/2` / `65/65`、`build:docker` `4/4`，source/Compose/TypeScript/lint/format/diff gates 通过。
 -   生产只读 follow-up 仅确认当前 `encryption.key` 位于 `/home/node/.flowise` 容器层而非 `/usr/src/flowise/.flowise` 持久卷，未读取值。未来 recreate 必须先经单独授权复用旧 key；`production unchanged`、`secrets_read=false`。
 -   Task 8 未重试真实 Docker build；registry `EOF` 证据边界保持：`docker_build_verified=false`、`builder_image_verified=false`、`final_image_loaded=false`、`runtime_smoke_verified=false`、`actual_archive_manifest_verified=false`。
+
+# 2026-07-28/29 Bootstrap Recovery Checkpoint
+
+-   从精确断点恢复到独立干净 worktree `/Users/pray/project/FlowAgentic-flowise-legacy-bootstrap`，branch `codex/flowise-bootstrap-recovery-20260728`，base `56196c3cb4a3123f657614274a2227071920ba01`；原 dirty repo 未改动。
+-   当前生产仍为旧 Flowise 容器 `953d213d666de29fde0b99f4a908ca46e7d642f8bd3126235e8284f82d5e7e39`、旧 image `flowise-chinese:git-c947339b7033c930be37591918f59c7725800bbe`，只读复核为 running/healthy、restart `0`，private/public ping 均为 `pong`。
+-   失败的 run `20260728T171644Z-4914e862` 保持 `hardened_recreate_intent`；禁止重放旧 bootstrap、禁止通用 bootstrap rollback、禁止手工 Compose/文件绕过。
+-   新增 incident-only `snapshot-bootstrap-recovery` / `complete-bootstrap-recovery`：exact topology、existing lock、双观察、完整 runtime/data/key/network/sidecar authority、不可覆盖 receipt、journal preimage CAS、回读和 terminal idempotency 均已实现。
+-   对抗修复闭环：Config 17-key/HostConfig 66-key exact surface、type-exact StartInterval、image Env + Compose overlay、单次 live-file bytes/seccomp 观察；已知 HostConfig 和类型混淆攻击全部拒绝。
+-   冻结 wrapper SHA256 `434e51c151dc33a39966689ff8f3e63c91c6820bc7a52801781a6b4bae30f2a8`；unit test SHA256 `ef2e68a958fbbc3be41365715c5692dbba689af2255820a61e23206c0366c549`；integration test SHA256 `a8e41edbd273faedc4b335d25a60b78e8c176b2dc8d9af17b20265df48a75b79`。
+-   本地 L2：Node 24.18.0 release tests `75/75`、Python `133/133`、security `337/337`、Pyright `0`、py_compile/diff-check 通过；真实隔离 Docker boundary `8/8`，fixture residue `0`。
+-   独立 security counter-review 已 `APPROVE`，risk `LOW`，Critical/High/Medium `0`；未发现真实 secret，依赖 manifest/lockfile delta `0`。
+-   当前边界：代码/测试候选已批准，但尚未 commit/push/PR/merge，尚未生成包含 recovery 命令的自绑定 artifact，尚未对生产执行 recovery、cutover 或浏览器验收；`production_write=false`（本恢复批次开始以来）。
+-   下一门禁：文档冻结与原子提交 -> exact-commit CI/merge -> main 手工 readiness artifact -> production recovery terminal closure -> 新版本 cutover -> PC-first browser acceptance -> cleanup。

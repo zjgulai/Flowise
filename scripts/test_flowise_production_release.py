@@ -37,12 +37,20 @@ ROLLBACK_DIGEST = "sha256:" + "2" * 64
 LEGACY_SOURCE = "https://github.com/zjgulai/Flowise.git"
 LEGACY_CREATED_AT = "2026-07-23T06:09:35Z"
 RUN_ID = "20260727T120000Z-deadbeef"
+RECOVERY_RUN_ID = "20260728T171644Z-4914e862"
+RECOVERY_FLOWISE_ID = "953d213d666de29fde0b99f4a908ca46e7d642f8bd3126235e8284f82d5e7e39"
 FLOWISE_ID = "3" * 64
 POSTGRES_ID = "4" * 64
 NGINX_ID = "5" * 64
 FLOWISE_NETWORK_ID = "6" * 64
 PROXY_NETWORK_ID = "7" * 64
 TEST_KEY = b"k" * 32
+REQUESTED_HARDENED_CONFIG_HASH = "8642827174f0ca74dd1a6fc5a8334f116eafe97f9386c1610d5719555e9d3200"
+OBSERVED_HARDENED_CONFIG_HASH = "d6f328312028f66b37193fa244ad57119afb6fc1df9360b67eb3856c9764fb86"
+TEST_SECCOMP_DOCUMENT = {"defaultAction": "SCMP_ACT_ERRNO"}
+TEST_SECCOMP_INLINE = json.dumps(TEST_SECCOMP_DOCUMENT, sort_keys=True, separators=(",", ":"))
+TEST_SECCOMP_DIGEST = RELEASE.sha256_bytes(RELEASE.canonical_json(TEST_SECCOMP_DOCUMENT))
+ORIGINAL_LIVE_SECCOMP_CANONICAL_DIGEST = RELEASE._live_seccomp_canonical_digest
 LEGACY_ENVIRONMENT = {"FLOWISE_SECRETKEY_OVERWRITE": TEST_KEY.decode()}
 HARDENED_ENVIRONMENT = {
     "FLOWISE_SECRETKEY_OVERWRITE": TEST_KEY.decode(),
@@ -75,6 +83,20 @@ def canonical(value):
 
 def digest(value):
     return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def recovery_topology_stub(receipt_present):
+    """Model only the receipt-state branch while topology itself is tested separately."""
+
+    def validate(_run_dir, *, complete_receipt):
+        present = bool(receipt_present() if callable(receipt_present) else receipt_present)
+        if complete_receipt == "absent" and present:
+            raise RELEASE.DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_COMPLETE_RECEIPT_UNEXPECTED")
+        if complete_receipt == "present" and not present:
+            raise RELEASE.DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_COMPLETE_RECEIPT_MISSING")
+        return present
+
+    return validate
 
 
 def write_config_archive(
@@ -149,6 +171,19 @@ def network_identity():
             "name": RELEASE.EXPECTED_TOP_LEVEL_NETWORKS["reverse_proxy_network"]["name"],
             "network_id": PROXY_NETWORK_ID,
         },
+    }
+
+
+def runtime_image_authority(image_tag, image_digest, image_environment=None):
+    revision = image_tag.removeprefix("flowise-chinese:git-")
+    return {
+        "image_tag": image_tag,
+        "image_config_digest": image_digest,
+        "revision": revision,
+        "release_id": f"git-{revision}",
+        "repository_url": LEGACY_SOURCE,
+        "created_at": LEGACY_CREATED_AT,
+        "image_environment": copy.deepcopy(image_environment or {}),
     }
 
 
@@ -531,6 +566,208 @@ def bootstrap_prepare_receipt():
     }
 
 
+def bootstrap_recovery_fixture(*, sentinel="bootstrap-recovery-sentinel-secret"):
+    source_revision = RELEASE.BOOTSTRAP_RECOVERY_SOURCE_RELEASE_ID.removeprefix("git-")
+    source_bundle = types.SimpleNamespace(
+        bundle_digest=RELEASE.BOOTSTRAP_RECOVERY_SOURCE_BUNDLE_DIGEST,
+        release_id=RELEASE.BOOTSTRAP_RECOVERY_SOURCE_RELEASE_ID,
+        revision=source_revision,
+        image_tag=f"flowise-chinese:git-{source_revision}",
+        image_config_digest=CANDIDATE_DIGEST,
+        files={},
+        file_entries={
+            "production_compose": {"digest": digest(b"target-compose")},
+            "chromium_seccomp": {"digest": digest(b"target-seccomp")},
+        },
+    )
+    recovery_revision = "c" * 40
+    recovery_bundle = types.SimpleNamespace(
+        bundle_digest=digest(b"recovery-bundle"),
+        release_id=f"git-{recovery_revision}",
+        revision=recovery_revision,
+        image_tag=f"flowise-chinese:git-{recovery_revision}",
+        image_config_digest="sha256:" + "c" * 64,
+        files={},
+        file_entries={},
+    )
+    hardened_config, _ = resolved_compose()
+    hardened_config["services"]["flowise"]["image"] = LEGACY_TAG
+    image_environment = {"NODE_ENV": "production", "RECOVERY_SENTINEL": sentinel}
+    expected_environment = RELEASE.expected_container_environment(
+        image_environment,
+        RELEASE.service_environment(hardened_config),
+    )
+    observed = hardened_documents(LEGACY_TAG, RELEASE.BOOTSTRAP_RECOVERY_LEGACY_IMAGE_CONFIG_DIGEST)
+    observed[RELEASE.FLOWISE_CONTAINER]["Id"] = RECOVERY_FLOWISE_ID
+    observed[RELEASE.FLOWISE_CONTAINER]["Config"]["Hostname"] = RECOVERY_FLOWISE_ID[:12]
+    observed[RELEASE.FLOWISE_CONTAINER]["Config"]["Labels"][
+        "com.docker.compose.replace"
+    ] = FLOWISE_ID
+    observed[RELEASE.POSTGRES_CONTAINER]["Id"] = POSTGRES_ID
+    observed[RELEASE.NGINX_CONTAINER]["Id"] = NGINX_ID
+    observed[RELEASE.FLOWISE_CONTAINER]["Config"]["Labels"][
+        "com.docker.compose.config-hash"
+    ] = OBSERVED_HARDENED_CONFIG_HASH
+    observed[RELEASE.FLOWISE_CONTAINER]["Config"]["Env"] = [
+        f"{name}={value}" for name, value in sorted(expected_environment.items())
+    ]
+    observed_snapshot = RELEASE.container_snapshot(observed)
+
+    live_bytes = {
+        RELEASE.LIVE_ENV: b"hardened-active-env",
+        RELEASE.LIVE_COMPOSE: b"candidate-compose",
+        RELEASE.LIVE_SECCOMP: canonical(TEST_SECCOMP_DOCUMENT),
+    }
+    prepared = bootstrap_prepare_receipt()
+    prepared["run_id"] = RECOVERY_RUN_ID
+    prepared["permit"] = {"digest": RELEASE.BOOTSTRAP_RECOVERY_PERMIT_DIGEST}
+    prepared["target_bundle"].update(
+        {
+            **RELEASE._bundle_identity(source_bundle),
+            "compose_config_hash": "9" * 64,
+        }
+    )
+    prepared["hardened_active"].update(
+        {
+            "image_config_digest": RELEASE.BOOTSTRAP_RECOVERY_LEGACY_IMAGE_CONFIG_DIGEST,
+            "compose_config_hash": REQUESTED_HARDENED_CONFIG_HASH,
+            **RELEASE.runtime_environment_binding(expected_environment, TEST_KEY),
+        }
+    )
+    prepared["hardened_active"]["files"] = {
+        "env": digest(live_bytes[RELEASE.LIVE_ENV]),
+        "compose": digest(live_bytes[RELEASE.LIVE_COMPOSE]),
+        "seccomp": {
+            "present": True,
+            "digest": digest(live_bytes[RELEASE.LIVE_SECCOMP]),
+        },
+    }
+    prepared["target_bundle"]["files"]["compose"] = prepared["hardened_active"]["files"][
+        "compose"
+    ]
+    prepared["target_bundle"]["files"]["seccomp"] = copy.deepcopy(
+        prepared["hardened_active"]["files"]["seccomp"]
+    )
+    prepared["legacy"]["image_config_digest"] = RELEASE.BOOTSTRAP_RECOVERY_LEGACY_IMAGE_CONFIG_DIGEST
+    prepared["baseline"]["containers"] = copy.deepcopy(observed_snapshot)
+    prepared["baseline"]["containers"][RELEASE.FLOWISE_CONTAINER]["id"] = FLOWISE_ID
+    prepared["baseline"]["legacy_journal_inventory"] = {
+        "root_paths": [str(RELEASE.LEGACY_RELEASES_DIR / f"git-{LEGACY_REVISION}" / "deployments")],
+        "root_count": 1,
+        "run_count": 18,
+        "control_count": 41,
+        "canonical_inventory_sha256": digest(b"legacy-inventory"),
+        "unresolved_rollback_count": 0,
+    }
+    prepared["baseline"]["current_journal_inventory"] = {
+        "root": str(RELEASE.RUNS_DIR),
+        "present": False,
+        "control_json_count": 0,
+        "control_json_sha256": digest(RELEASE.canonical_json([])),
+        "unresolved_rollback_count": 0,
+    }
+    prepared.update(
+        {
+            "target_bundle_non_image_match": True,
+            "candidate_archive_loaded": False,
+            "key_continuity_verified": True,
+            "container_recreated": False,
+            "provider_call": False,
+            "created_at": "2026-07-28T17:16:44Z",
+        }
+    )
+
+    permit_document = transition_permit_document(source_bundle)
+    permit_document["run_id"] = RECOVERY_RUN_ID
+    permit_document["target_bundle"] = RELEASE._bundle_identity(source_bundle)
+    for name in (
+        "image_tag",
+        "revision",
+        "release_id",
+        "repository_url",
+        "created_at",
+        "image_config_digest",
+        "runtime_label_config_hash",
+        "live_computed_config_hash",
+        "runtime_projection_digest",
+        "runtime_environment_keys",
+        "runtime_environment_hmac_sha256",
+    ):
+        permit_document["active_legacy"][name] = prepared["legacy"][name]
+    permit_document["containers"] = {
+        name: prepared["baseline"]["containers"][name]["id"]
+        for name in RELEASE.MANAGED_CONTAINERS
+    }
+    permit_document["network_identity"] = copy.deepcopy(prepared["baseline"]["network_identity"])
+    permit_document["database"] = {
+        "migration_count": prepared["baseline"]["database"]["migration_count"],
+        "migration_name_sha256": prepared["baseline"]["database"]["migration_name_sha256"],
+    }
+    permit_document["legacy_journal_inventory"] = copy.deepcopy(
+        prepared["baseline"]["legacy_journal_inventory"]
+    )
+    permit = RELEASE.TransitionPermit(
+        (RELEASE.TRANSITION_PERMITS_DIR / f"{RECOVERY_RUN_ID}.json").absolute(),
+        permit_document,
+        prepared["permit"]["digest"],
+    )
+    prepare_digest = RELEASE.BOOTSTRAP_RECOVERY_PREPARE_DIGEST
+    journal = {
+        "schema_version": 1,
+        "policy": dict(RELEASE.LEGACY_BOOTSTRAP_POLICY),
+        "operation": "bootstrap",
+        "state": "in_progress",
+        "phase": "hardened_recreate_intent",
+        "run_id": RECOVERY_RUN_ID,
+        "permit_digest": permit.digest,
+        "target_bundle_digest": source_bundle.bundle_digest,
+        "target_bundle_release_id": source_bundle.release_id,
+        "active_legacy_release_id": prepared["legacy"]["release_id"],
+        "bootstrap_prepare_receipt_sha256": prepare_digest,
+        "live_write_started": True,
+        "hardened_recreate_started": True,
+        "rollback_attempted": False,
+        "updated_at": "2026-07-28T17:20:00Z",
+    }
+    journal_data = canonical(journal)
+    context = {
+        "recovery_bundle": recovery_bundle,
+        "source_bundle": source_bundle,
+        "permit": permit,
+        "run_dir": RELEASE.RUNS_DIR / RECOVERY_RUN_ID,
+        "prepare_receipt": prepared,
+        "prepare_digest": prepare_digest,
+        "journal": journal,
+        "journal_data": journal_data,
+        "journal_pre_sha256": digest(journal_data),
+        "complete_path": None,
+        "complete_receipt_present": False,
+        "key": TEST_KEY,
+        "expected": {
+            "legacy_env": f"FLOWISE_IMAGE={LEGACY_TAG}\n".encode(),
+            "hardened_config": hardened_config,
+            "hardened_environment": expected_environment,
+        },
+    }
+    return {
+        "context": context,
+        "documents": observed,
+        "full_runtime_projection_digest": RELEASE.recovery_runtime_projection_digest(
+            observed[RELEASE.FLOWISE_CONTAINER],
+            TEST_SECCOMP_DIGEST,
+        ),
+        "image_environment": image_environment,
+        "expected_environment": expected_environment,
+        "source_bundle": source_bundle,
+        "recovery_bundle": recovery_bundle,
+        "permit": permit,
+        "prepare": prepared,
+        "journal": journal,
+        "live_bytes": live_bytes,
+        "sentinel": sentinel,
+    }
+
+
 def legacy_control_document(kind, state=None, phase=None, *, run_id=RUN_ID) -> dict[str, Any]:
     if kind == "prepare-status.json":
         keys = RELEASE.LEGACY_PREPARE_KEYS_BY_STATE_PHASE[(state, phase)]
@@ -666,39 +903,45 @@ def resolved_compose():
 def hardened_documents(image=CANDIDATE_TAG, image_id=CANDIDATE_DIGEST):
     result = documents(image, image_id)
     flowise = result[RELEASE.FLOWISE_CONTAINER]
+    image_authority = runtime_image_authority(image, image_id)
+    replaced_container_id = "2" * 64
     candidate, _ = resolved_compose()
     candidate["services"]["flowise"]["image"] = image
-    flowise["Config"]["Env"] = [
+    environment = [
         f"{key}={value}" for key, value in sorted(candidate["services"]["flowise"]["environment"].items())
     ]
-    flowise["Config"]["User"] = "1000:1000"
-    flowise["Config"]["Healthcheck"] = {**RELEASE.EXPECTED_RUNTIME_HEALTHCHECK, "StartInterval": 0}
-    flowise["HostConfig"] = {
-        "ReadonlyRootfs": True,
-        "Init": True,
-        "Privileged": False,
-        "CapAdd": None,
-        "CapDrop": ["ALL"],
-        "PidsLimit": 512,
-        "Memory": 4_294_967_296,
-        "MemoryReservation": 2_147_483_648,
-        "NanoCpus": 2_000_000_000,
-        "PidMode": "",
-        "IpcMode": "private",
-        "UsernsMode": "",
-        "UTSMode": "",
-        "CgroupnsMode": "private",
-        "NetworkMode": "flowise_flowise_network",
-        "SecurityOpt": ["no-new-privileges", f"seccomp={RELEASE.LIVE_SECCOMP}"],
-        "Devices": [],
-        "DeviceRequests": [],
-        "Binds": [],
-        "PortBindings": {"3000/tcp": [{"HostIp": "172.20.0.1", "HostPort": "3000"}]},
-        "PublishAllPorts": False,
-        "RestartPolicy": {"Name": "always", "MaximumRetryCount": 0},
-        "LogConfig": copy.deepcopy(RELEASE.EXPECTED_RUNTIME_LOG_CONFIG),
-        "Tmpfs": dict(RELEASE.EXPECTED_TMPFS_BY_PATH),
+    flowise["Path"] = "docker-entrypoint.sh"
+    flowise["Args"] = ["node", "packages/server/bin/run", "start"]
+    config_surface = copy.deepcopy(RELEASE.EXPECTED_RUNTIME_CONFIG_SURFACE)
+    config_surface["Hostname"] = str(flowise["Id"])[:12]
+    config_surface["Image"] = image
+    config_surface["Healthcheck"]["StartInterval"] = 0
+    config_surface["Env"] = environment
+    config_surface["Labels"] = {
+        "com.docker.compose.config-hash": "4" * 64,
+        "com.docker.compose.container-number": "1",
+        "com.docker.compose.depends_on": "",
+        "com.docker.compose.image": image_id,
+        "com.docker.compose.oneoff": "False",
+        "com.docker.compose.project": "flowise",
+        "com.docker.compose.project.config_files": str(RELEASE.BASE_DIR / "docker-compose.prod.yml"),
+        "com.docker.compose.project.environment_file": str(RELEASE.BASE_DIR / ".env.production"),
+        "com.docker.compose.project.working_dir": str(RELEASE.BASE_DIR),
+        "com.docker.compose.replace": replaced_container_id,
+        "com.docker.compose.service": "flowise",
+        "com.docker.compose.version": "2.27.1",
+        "org.opencontainers.image.created": image_authority["created_at"],
+        "org.opencontainers.image.revision": image_authority["revision"],
+        "org.opencontainers.image.source": image_authority["repository_url"],
+        "org.opencontainers.image.version": image_authority["release_id"],
     }
+    flowise["Config"] = config_surface
+    host_config = copy.deepcopy(RELEASE.EXPECTED_RUNTIME_HOST_CONFIG_SURFACE)
+    host_config["SecurityOpt"] = [
+        "no-new-privileges:true",
+        f"seccomp={TEST_SECCOMP_INLINE}",
+    ]
+    flowise["HostConfig"] = host_config
     flowise["Mounts"] = [
         {
             "Type": "volume",
@@ -730,6 +973,24 @@ def hardened_documents(image=CANDIDATE_TAG, image_id=CANDIDATE_DIGEST):
     return result
 
 
+def attacker_value(value):
+    """Return a JSON-compatible value guaranteed to differ from the fixture."""
+
+    if value is None:
+        return "__attacker__"
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, int):
+        return value + 1
+    if isinstance(value, str):
+        return value + "__attacker__" if value else "__attacker__"
+    if isinstance(value, list):
+        return copy.deepcopy(value) + ["__attacker__"]
+    if isinstance(value, dict):
+        return {**copy.deepcopy(value), "__attacker__": True}
+    raise AssertionError(f"unsupported fixture value: {type(value)!r}")
+
+
 class PatchedLock:
     def __init__(self, case, events=None):
         self.case = case
@@ -742,6 +1003,11 @@ class PatchedLock:
         if self.events is not None:
             self.events.append("lock-acquired")
         self.acquire = mock.patch.object(RELEASE, "acquire_lock", return_value=self.fd)
+        self.acquire_existing = mock.patch.object(
+            RELEASE,
+            "acquire_existing_lock",
+            return_value=self.fd,
+        )
         self.root = mock.patch.object(RELEASE, "require_root")
 
         def tracked_close(descriptor):
@@ -751,6 +1017,7 @@ class PatchedLock:
 
         self.close = mock.patch.object(RELEASE.os, "close", side_effect=tracked_close)
         self.acquire_mock = self.acquire.start()
+        self.acquire_existing_mock = self.acquire_existing.start()
         self.root_mock = self.root.start()
         self.close.start()
         return self
@@ -758,10 +1025,23 @@ class PatchedLock:
     def __exit__(self, *args):
         self.close.stop()
         self.root.stop()
+        self.acquire_existing.stop()
         self.acquire.stop()
 
 
 class ProductionReleaseTests(unittest.TestCase):
+    def setUp(self):
+        # Hardened-runtime unit fixtures model Docker's observed inline seccomp
+        # form without depending on a host /opt/flowise tree.  The dedicated
+        # normalization test below switches this mock to the real reader.
+        self.live_seccomp_digest_patcher = mock.patch.object(
+            RELEASE,
+            "_live_seccomp_canonical_digest",
+            return_value=TEST_SECCOMP_DIGEST,
+        )
+        self.live_seccomp_digest = self.live_seccomp_digest_patcher.start()
+        self.addCleanup(self.live_seccomp_digest_patcher.stop)
+
     def test_bootstrap_requires_explicit_digest_bound_transition_permit(self):
         with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
             RELEASE.parse_args(["bootstrap", "--bundle-dir", "/bundle", "--run-id", RUN_ID])
@@ -2287,6 +2567,14 @@ class ProductionReleaseTests(unittest.TestCase):
             ), self.assertRaisesRegex(RELEASE.DeployError, "BUNDLE_WRAPPER_EXECUTION_MISMATCH"):
                 RELEASE.verify_bundle(fixture.root)
 
+            with mock.patch.object(RELEASE, "SCRIPT_PATH", different_wrapper), mock.patch.object(
+                RELEASE,
+                "read_regular",
+                side_effect=lambda path, **_kwargs: Path(path).read_bytes(),
+            ), mock.patch.object(RELEASE, "verify_regular_identity", side_effect=relaxed_identity):
+                historical = RELEASE.verify_source_bundle(fixture.root)
+            self.assertEqual(historical.bundle_digest, digest((fixture.root / "deployment-bundle.json").read_bytes()))
+
     def test_bundle_payload_rebound_without_manifest_update_fails_before_docker(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = BundleFixture(directory)
@@ -3752,7 +4040,19 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
             mock.patch.object(RELEASE, "_cutover_preflight", return_value=(run_dir, prepared, documents(ROLLBACK_TAG, ROLLBACK_DIGEST, "old"), b"k" * 32)),
             mock.patch.object(RELEASE, "_receipt_path", side_effect=lambda root, name: Path(root) / f"{name}-receipt.json"),
             mock.patch.object(RELEASE, "_load_staged", side_effect=staged),
-            mock.patch.object(RELEASE, "_ensure_rollback_image"),
+            mock.patch.object(
+                RELEASE,
+                "_ensure_rollback_image",
+                return_value=runtime_image_authority(ROLLBACK_TAG, ROLLBACK_DIGEST),
+            ),
+            mock.patch.object(
+                RELEASE,
+                "inspect_image",
+                side_effect=lambda tag, *_args, **_kwargs: runtime_image_authority(
+                    tag,
+                    CANDIDATE_DIGEST if tag == CANDIDATE_TAG else ROLLBACK_DIGEST,
+                ),
+            ),
             mock.patch.object(RELEASE, "atomic_write", side_effect=write),
             mock.patch.object(RELEASE, "sha256_file", side_effect=file_hash),
             mock.patch.object(RELEASE, "_ensure_live_seccomp_parent"),
@@ -4382,10 +4682,7 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                 mock.patch.object(
                     RELEASE,
                     "inspect_image",
-                    return_value={
-                        "image_config_digest": LEGACY_DIGEST,
-                        "repository_url": "https://github.com/example/flowise",
-                    },
+                    return_value=runtime_image_authority(LEGACY_TAG, LEGACY_DIGEST),
                 ),
                 mock.patch.object(RELEASE, "live_file", side_effect=live_values),
                 mock.patch.object(RELEASE, "_validate_live_seccomp_parents"),
@@ -4465,7 +4762,12 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
             rollback_docs = documents(ROLLBACK_TAG, ROLLBACK_DIGEST)
             with _MultiPatch(
                 (
-                    mock.patch.object(RELEASE, "_ensure_rollback_image", side_effect=lambda *_args: events.append("archive-ready")),
+                    mock.patch.object(
+                        RELEASE,
+                        "_ensure_rollback_image",
+                        side_effect=lambda *_args: events.append("archive-ready")
+                        or runtime_image_authority(ROLLBACK_TAG, ROLLBACK_DIGEST),
+                    ),
                     mock.patch.object(
                         RELEASE,
                         "_load_staged",
@@ -4486,7 +4788,11 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                     mock.patch.object(RELEASE, "validate_key_continuity"),
                     mock.patch.object(RELEASE, "database_state", return_value=prepared["baseline"]["database"]),
                     mock.patch.object(RELEASE, "runtime_pings"),
-                    mock.patch.object(RELEASE, "container_snapshot", return_value={}),
+                    mock.patch.object(
+                        RELEASE,
+                        "container_snapshot",
+                        return_value={RELEASE.FLOWISE_CONTAINER: {"id": FLOWISE_ID}},
+                    ),
                 )
             ):
                 RELEASE._restore_rollback(run_dir, prepared, rollback_docs, b"k" * 32)
@@ -4529,7 +4835,11 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                 sidecars = mock.Mock()
                 with _MultiPatch(
                     (
-                        mock.patch.object(RELEASE, "_ensure_rollback_image"),
+                        mock.patch.object(
+                            RELEASE,
+                            "_ensure_rollback_image",
+                            return_value=runtime_image_authority(ROLLBACK_TAG, ROLLBACK_DIGEST),
+                        ),
                         mock.patch.object(
                             RELEASE,
                             "_load_staged",
@@ -4559,7 +4869,7 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                     )
                 ), self.assertRaisesRegex(RELEASE.DeployError, "DATABASE_RUNTIME"):
                     RELEASE._restore_rollback(run_dir, prepared, after, b"k" * 32)
-                sidecars.assert_not_called()
+                sidecars.assert_called_once_with(after, after)
 
     def test_unrecoverable_rollback_image_fails_before_live_write(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -5206,6 +5516,2427 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                 expected_compose=config,
                 expected_network_identity=identity,
             )
+
+    def test_hardened_runtime_accepts_distinct_requested_and_observed_hash_only_with_exact_contract(self):
+        seccomp_document = {"defaultAction": "SCMP_ACT_ERRNO"}
+        seccomp_inline = json.dumps(seccomp_document, sort_keys=True, separators=(",", ":"))
+        seccomp_digest = RELEASE.sha256_bytes(RELEASE.canonical_json(seccomp_document))
+        config, _ = resolved_compose()
+        config["services"]["flowise"]["image"] = LEGACY_TAG
+        runtime = hardened_documents(LEGACY_TAG, LEGACY_DIGEST)
+        runtime[RELEASE.FLOWISE_CONTAINER]["Config"]["Labels"][
+            "com.docker.compose.config-hash"
+        ] = OBSERVED_HARDENED_CONFIG_HASH
+        runtime[RELEASE.FLOWISE_CONTAINER]["HostConfig"]["SecurityOpt"] = [
+            "no-new-privileges:true",
+            f"seccomp={seccomp_inline}",
+        ]
+        expected_image = runtime_image_authority(LEGACY_TAG, LEGACY_DIGEST)
+        replaced_container_id = "2" * 64
+
+        with mock.patch.object(RELEASE, "_live_seccomp_canonical_digest", return_value=seccomp_digest):
+            with self.assertRaisesRegex(RELEASE.DeployError, "FLOWISE_RUNTIME_CONFIG_HASH_MISMATCH"):
+                RELEASE.validate_bootstrap_hardened_runtime(
+                    runtime,
+                    image_tag=LEGACY_TAG,
+                    image_digest=LEGACY_DIGEST,
+                    expected_config_hash=REQUESTED_HARDENED_CONFIG_HASH,
+                    expected_environment=copy.deepcopy(HARDENED_ENVIRONMENT),
+                    expected_compose=config,
+                    expected_network_identity=network_identity(),
+                )
+            result = RELEASE.validate_bootstrap_hardened_runtime(
+                runtime,
+                image_tag=LEGACY_TAG,
+                image_digest=LEGACY_DIGEST,
+                expected_config_hash=REQUESTED_HARDENED_CONFIG_HASH,
+                expected_environment=copy.deepcopy(HARDENED_ENVIRONMENT),
+                expected_compose=config,
+                expected_network_identity=network_identity(),
+                expected_image=expected_image,
+                expected_replaced_container_id=replaced_container_id,
+                allow_opaque_config_hash=True,
+            )
+        self.assertNotEqual(REQUESTED_HARDENED_CONFIG_HASH, OBSERVED_HARDENED_CONFIG_HASH)
+        self.assertEqual(result["requested_compose_config_hash"], REQUESTED_HARDENED_CONFIG_HASH)
+        self.assertEqual(result["observed_runtime_config_hash"], OBSERVED_HARDENED_CONFIG_HASH)
+        self.assertIs(result["opaque_config_hash_semantic_contract_verified"], True)
+
+        with mock.patch.object(
+            RELEASE,
+            "_live_seccomp_canonical_digest",
+            return_value=seccomp_digest,
+        ), self.assertRaisesRegex(RELEASE.DeployError, "OPAQUE_HASH_AUTHORITY_MISSING"):
+            RELEASE.validate_bootstrap_hardened_runtime(
+                runtime,
+                image_tag=LEGACY_TAG,
+                image_digest=LEGACY_DIGEST,
+                expected_config_hash=REQUESTED_HARDENED_CONFIG_HASH,
+                expected_environment=copy.deepcopy(HARDENED_ENVIRONMENT),
+                expected_compose=config,
+                expected_network_identity=network_identity(),
+                allow_opaque_config_hash=True,
+            )
+
+        semantic_variants = (
+            (
+                "path",
+                lambda value: value.update({"Path": "/attacker"}),
+                "PROCESS_CONTRACT_MISMATCH",
+            ),
+            (
+                "args",
+                lambda value: value["Args"].append("--unsafe"),
+                "PROCESS_CONTRACT_MISMATCH",
+            ),
+            (
+                "cmd",
+                lambda value: value["Config"]["Cmd"].append("--unsafe"),
+                "CONFIG_CONTRACT_MISMATCH",
+            ),
+            (
+                "entrypoint",
+                lambda value: value["Config"].update({"Entrypoint": ["/attacker"]}),
+                "CONFIG_CONTRACT_MISMATCH",
+            ),
+            (
+                "working-dir",
+                lambda value: value["Config"].update({"WorkingDir": "/tmp"}),
+                "CONFIG_CONTRACT_MISMATCH",
+            ),
+            (
+                "hostname",
+                lambda value: value["Config"].update({"Hostname": "attacker"}),
+                "HOSTNAME_BINDING_MISMATCH",
+            ),
+            (
+                "extra-label",
+                lambda value: value["Config"]["Labels"].update({"attacker": "true"}),
+                "LABEL_CONTRACT_MISMATCH",
+            ),
+            (
+                "missing-label",
+                lambda value: value["Config"]["Labels"].pop("com.docker.compose.service"),
+                "LABEL_CONTRACT_MISMATCH",
+            ),
+        )
+        host_drift_values = {
+            "Dns": ["8.8.8.8"],
+            "DnsOptions": ["use-vc"],
+            "DnsSearch": ["attacker.invalid"],
+            "ExtraHosts": ["attacker:1.2.3.4"],
+            "Sysctls": {"kernel.shm_rmid_forced": "1"},
+            "Ulimits": [{"Name": "nofile", "Soft": 1, "Hard": 1}],
+            "GroupAdd": ["0"],
+            "Links": ["attacker:attacker"],
+            "VolumesFrom": ["attacker:rw"],
+            "AutoRemove": True,
+            "OomKillDisable": True,
+            "ShmSize": 1,
+            "Runtime": "attacker",
+            "ConsoleSize": [1, 1],
+            "Isolation": "hyperv",
+        }
+        semantic_variants += tuple(
+            (
+                f"host-{name}",
+                lambda value, field=name, drift=drift: value["HostConfig"].update(
+                    {field: copy.deepcopy(drift)}
+                ),
+                "HOSTCONFIG_CONTRACT_MISMATCH",
+            )
+            for name, drift in host_drift_values.items()
+        )
+        for label, mutate, expected_error in semantic_variants:
+            drifted = copy.deepcopy(runtime)
+            mutate(drifted[RELEASE.FLOWISE_CONTAINER])
+            with self.subTest(semantic_surface=label), mock.patch.object(
+                RELEASE,
+                "_live_seccomp_canonical_digest",
+                return_value=seccomp_digest,
+            ), self.assertRaisesRegex(RELEASE.DeployError, expected_error):
+                RELEASE.validate_bootstrap_hardened_runtime(
+                    drifted,
+                    image_tag=LEGACY_TAG,
+                    image_digest=LEGACY_DIGEST,
+                    expected_config_hash=REQUESTED_HARDENED_CONFIG_HASH,
+                    expected_environment=copy.deepcopy(HARDENED_ENVIRONMENT),
+                    expected_compose=config,
+                    expected_network_identity=network_identity(),
+                    expected_image=expected_image,
+                    expected_replaced_container_id=replaced_container_id,
+                    allow_opaque_config_hash=True,
+                )
+
+        for label, image_authority, replaced_id, expected_error in (
+            (
+                "image-authority",
+                {**expected_image, "image_config_digest": CANDIDATE_DIGEST},
+                replaced_container_id,
+                "EXPECTED_IMAGE_AUTHORITY_INVALID",
+            ),
+            (
+                "replace-authority",
+                expected_image,
+                "a" * 64,
+                "REPLACE_LABEL_MISMATCH",
+            ),
+        ):
+            with self.subTest(authority=label), mock.patch.object(
+                RELEASE,
+                "_live_seccomp_canonical_digest",
+                return_value=seccomp_digest,
+            ), self.assertRaisesRegex(RELEASE.DeployError, expected_error):
+                RELEASE.validate_bootstrap_hardened_runtime(
+                    runtime,
+                    image_tag=LEGACY_TAG,
+                    image_digest=LEGACY_DIGEST,
+                    expected_config_hash=REQUESTED_HARDENED_CONFIG_HASH,
+                    expected_environment=copy.deepcopy(HARDENED_ENVIRONMENT),
+                    expected_compose=config,
+                    expected_network_identity=network_identity(),
+                    expected_image=image_authority,
+                    expected_replaced_container_id=replaced_id,
+                    allow_opaque_config_hash=True,
+                )
+
+        for label, mutate in (
+            (
+                "malformed-observed-label",
+                lambda value: value[RELEASE.FLOWISE_CONTAINER]["Config"]["Labels"].update(
+                    {"com.docker.compose.config-hash": "not-a-64hex-hash"}
+                ),
+            ),
+            (
+                "image-drift",
+                lambda value: value[RELEASE.FLOWISE_CONTAINER]["Config"].update(
+                    {"Image": CANDIDATE_TAG}
+                ),
+            ),
+            (
+                "environment-drift",
+                lambda value: value[RELEASE.FLOWISE_CONTAINER]["Config"]["Env"].append(
+                    "UNEXPECTED_RUNTIME_FLAG=true"
+                ),
+            ),
+            (
+                "database-environment-drift",
+                lambda value: value[RELEASE.FLOWISE_CONTAINER]["Config"]["Env"].__setitem__(
+                    next(
+                        index
+                        for index, entry in enumerate(
+                            value[RELEASE.FLOWISE_CONTAINER]["Config"]["Env"]
+                        )
+                        if entry.startswith("DATABASE_HOST=")
+                    ),
+                    "DATABASE_HOST=attacker",
+                ),
+            ),
+            (
+                "hardening-drift",
+                lambda value: value[RELEASE.FLOWISE_CONTAINER]["HostConfig"].update(
+                    {"ReadonlyRootfs": False}
+                ),
+            ),
+            (
+                "projection-drift",
+                lambda value: value[RELEASE.FLOWISE_CONTAINER]["Mounts"][0].update(
+                    {"Propagation": "rprivate"}
+                ),
+            ),
+        ):
+            drifted = copy.deepcopy(runtime)
+            mutate(drifted)
+            with self.subTest(label=label), mock.patch.object(
+                RELEASE,
+                "_live_seccomp_canonical_digest",
+                return_value=seccomp_digest,
+            ), self.assertRaises(RELEASE.DeployError):
+                RELEASE.validate_bootstrap_hardened_runtime(
+                    drifted,
+                    image_tag=LEGACY_TAG,
+                    image_digest=LEGACY_DIGEST,
+                    expected_config_hash=REQUESTED_HARDENED_CONFIG_HASH,
+                    expected_environment=copy.deepcopy(HARDENED_ENVIRONMENT),
+                    expected_compose=config,
+                    expected_network_identity=network_identity(),
+                    expected_image=expected_image,
+                    expected_replaced_container_id=replaced_container_id,
+                    allow_opaque_config_hash=True,
+                )
+
+    def test_opaque_hash_semantic_contract_covers_every_config_and_hostconfig_key(self):
+        expected_image = runtime_image_authority(LEGACY_TAG, LEGACY_DIGEST)
+        replaced_container_id = "2" * 64
+        documents_value = hardened_documents(LEGACY_TAG, LEGACY_DIGEST)
+        flowise = documents_value[RELEASE.FLOWISE_CONTAINER]
+        flowise["Config"]["Labels"][
+            "com.docker.compose.config-hash"
+        ] = OBSERVED_HARDENED_CONFIG_HASH
+
+        def validate(value):
+            RELEASE._validate_hardened_runtime_semantic_surface(
+                value,
+                image_tag=LEGACY_TAG,
+                image_digest=LEGACY_DIGEST,
+                observed_config_hash=OBSERVED_HARDENED_CONFIG_HASH,
+                expected_image=expected_image,
+                expected_replaced_container_id=replaced_container_id,
+                expected_seccomp_digest=TEST_SECCOMP_DIGEST,
+            )
+
+        expected_config_keys = set(RELEASE.EXPECTED_RUNTIME_CONFIG_SURFACE)
+        expected_host_keys = set(RELEASE.EXPECTED_RUNTIME_HOST_CONFIG_SURFACE)
+        self.assertEqual(len(expected_config_keys), 17)
+        self.assertEqual(len(expected_host_keys), 66)
+        self.assertNotIn("Env", expected_config_keys)
+        self.assertNotIn("Labels", expected_config_keys)
+        self.assertEqual(set(flowise["Config"]) - {"Env", "Labels"}, expected_config_keys)
+        self.assertEqual(set(flowise["HostConfig"]), expected_host_keys)
+        self.assertTrue(
+            {"MaskedPaths", "ReadonlyPaths", "CgroupParent", "MemorySwap"}
+            <= expected_host_keys
+        )
+        self.assertNotIn("Sysctls", expected_host_keys)
+        self.assertEqual(len(flowise["Config"]["Labels"]), 16)
+        validate(flowise)
+
+        # Environment is independently exact-bound by validate_runtime; the
+        # semantic Config comparison must omit values that can contain secrets.
+        environment_variant = copy.deepcopy(flowise)
+        environment_variant["Config"]["Env"].append("SEMANTIC_ONLY_ATTACKER=true")
+        validate(environment_variant)
+
+        # Docker may omit its zero default.  Any non-zero value remains drift.
+        no_start_interval = copy.deepcopy(flowise)
+        no_start_interval["Config"]["Healthcheck"].pop("StartInterval")
+        validate(no_start_interval)
+        nonzero_start_interval = copy.deepcopy(flowise)
+        nonzero_start_interval["Config"]["Healthcheck"]["StartInterval"] = 1
+        with self.assertRaisesRegex(RELEASE.DeployError, "CONFIG_CONTRACT_MISMATCH"):
+            validate(nonzero_start_interval)
+
+        # Hostname is Docker's current ID prefix, not a frozen identifier.
+        rebound_identity = copy.deepcopy(flowise)
+        rebound_identity["Id"] = "9" * 64
+        rebound_identity["Config"]["Hostname"] = "9" * 12
+        validate(rebound_identity)
+        unbound_identity = copy.deepcopy(rebound_identity)
+        unbound_identity["Config"]["Hostname"] = "8" * 12
+        with self.assertRaisesRegex(RELEASE.DeployError, "HOSTNAME_BINDING_MISMATCH"):
+            validate(unbound_identity)
+
+        # Order and Docker's accepted no-new-privileges spellings do not alter
+        # meaning; unknown/duplicate/disabled options remain fail-closed.
+        semantic_security_options = (
+            [f"seccomp={TEST_SECCOMP_INLINE}", "no-new-privileges"],
+            ["no-new-privileges=true", f"seccomp={json.dumps(TEST_SECCOMP_DOCUMENT, indent=2)}"],
+        )
+        for options in semantic_security_options:
+            equivalent = copy.deepcopy(flowise)
+            equivalent["HostConfig"]["SecurityOpt"] = options
+            with self.subTest(security_opt=options[0]):
+                validate(equivalent)
+
+        for key in sorted(expected_config_keys):
+            missing = copy.deepcopy(flowise)
+            missing["Config"].pop(key)
+            expected_error = (
+                "HOSTNAME_BINDING_MISMATCH" if key == "Hostname" else "CONFIG_CONTRACT_MISMATCH"
+            )
+            with self.subTest(config_key=key, attack="delete"), self.assertRaisesRegex(
+                RELEASE.DeployError,
+                expected_error,
+            ):
+                validate(missing)
+
+            replaced = copy.deepcopy(flowise)
+            replaced["Config"][key] = attacker_value(replaced["Config"][key])
+            with self.subTest(config_key=key, attack="replace"), self.assertRaisesRegex(
+                RELEASE.DeployError,
+                expected_error,
+            ):
+                validate(replaced)
+
+        unexpected_config = copy.deepcopy(flowise)
+        unexpected_config["Config"]["__attacker__"] = True
+        with self.assertRaisesRegex(RELEASE.DeployError, "CONFIG_CONTRACT_MISMATCH"):
+            validate(unexpected_config)
+
+        for key in sorted(expected_host_keys):
+            missing = copy.deepcopy(flowise)
+            missing["HostConfig"].pop(key)
+            missing_error = (
+                "SECURITY_OPT_INVALID" if key == "SecurityOpt" else "HOSTCONFIG_CONTRACT_MISMATCH"
+            )
+            with self.subTest(host_config_key=key, attack="delete"), self.assertRaisesRegex(
+                RELEASE.DeployError,
+                missing_error,
+            ):
+                validate(missing)
+
+            replaced = copy.deepcopy(flowise)
+            replaced["HostConfig"][key] = attacker_value(replaced["HostConfig"][key])
+            replaced_error = (
+                "SECURITY_OPT_UNKNOWN" if key == "SecurityOpt" else "HOSTCONFIG_CONTRACT_MISMATCH"
+            )
+            with self.subTest(host_config_key=key, attack="replace"), self.assertRaisesRegex(
+                RELEASE.DeployError,
+                replaced_error,
+            ):
+                validate(replaced)
+
+        for extra_key, extra_value in (("Sysctls", None), ("__attacker__", True)):
+            unexpected_host = copy.deepcopy(flowise)
+            unexpected_host["HostConfig"][extra_key] = extra_value
+            with self.subTest(host_config_extra=extra_key), self.assertRaisesRegex(
+                RELEASE.DeployError,
+                "HOSTCONFIG_CONTRACT_MISMATCH",
+            ):
+                validate(unexpected_host)
+
+    def test_opaque_hash_full_runtime_validation_requires_and_enforces_exact_environment(self):
+        config, _ = resolved_compose()
+        config["services"]["flowise"]["image"] = LEGACY_TAG
+        documents_value = hardened_documents(LEGACY_TAG, LEGACY_DIGEST)
+        documents_value[RELEASE.FLOWISE_CONTAINER]["Config"]["Labels"][
+            "com.docker.compose.config-hash"
+        ] = OBSERVED_HARDENED_CONFIG_HASH
+        expected_image = runtime_image_authority(LEGACY_TAG, LEGACY_DIGEST)
+        expected_runtime_stable = RELEASE._expected_hardened_runtime_stable_projection(
+            config,
+            TEST_SECCOMP_DIGEST,
+        )
+        arguments = {
+            "image_tag": LEGACY_TAG,
+            "image_digest": LEGACY_DIGEST,
+            "expected_config_hash": REQUESTED_HARDENED_CONFIG_HASH,
+            "expected_environment": copy.deepcopy(HARDENED_ENVIRONMENT),
+            "require_candidate_hardening": True,
+            "expected_compose": config,
+            "expected_runtime_stable": expected_runtime_stable,
+            "allow_opaque_config_hash": True,
+            "expected_image": expected_image,
+            "expected_replaced_container_id": "2" * 64,
+        }
+
+        accepted = RELEASE.validate_runtime(
+            documents_value,
+            require_exact_environment=True,
+            **arguments,
+        )
+        self.assertIs(accepted["opaque_config_hash_semantic_contract_verified"], True)
+
+        injected = copy.deepcopy(documents_value)
+        injected[RELEASE.FLOWISE_CONTAINER]["Config"]["Env"].append(
+            "UNEXPECTED_NON_DATABASE_FLAG=true"
+        )
+        with self.assertRaisesRegex(RELEASE.DeployError, "ENVIRONMENT_MISMATCH"):
+            RELEASE.validate_runtime(
+                injected,
+                require_exact_environment=True,
+                **arguments,
+            )
+        with self.assertRaisesRegex(RELEASE.DeployError, "OPAQUE_HASH_AUTHORITY_MISSING"):
+            RELEASE.validate_runtime(
+                injected,
+                require_exact_environment=False,
+                **arguments,
+            )
+
+    def test_hardened_runtime_normalizes_actual_inline_seccomp_and_rejects_every_ambiguous_form(self):
+        sentinel = "inline-seccomp-secret-must-never-leak"
+        profile = canonical(
+            {
+                "architectures": ["SCMP_ARCH_X86_64"],
+                "defaultAction": "SCMP_ACT_ERRNO",
+                "syscalls": [{"action": "SCMP_ACT_ALLOW", "names": ["read", "write"]}],
+            }
+        )
+        inline = json.dumps(json.loads(profile), sort_keys=True, separators=(",", ":"))
+        config, _ = resolved_compose()
+        config["services"]["flowise"]["image"] = LEGACY_TAG
+        base = hardened_documents(LEGACY_TAG, LEGACY_DIGEST)
+        base[RELEASE.FLOWISE_CONTAINER]["Config"]["Labels"][
+            "com.docker.compose.config-hash"
+        ] = REQUESTED_HARDENED_CONFIG_HASH
+        base[RELEASE.FLOWISE_CONTAINER]["HostConfig"]["SecurityOpt"] = [
+            "no-new-privileges:true",
+            f"seccomp={inline}",
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            base_dir = Path(directory)
+            seccomp = base_dir / "docker/seccomp/chromium.json"
+            seccomp.parent.mkdir(parents=True)
+            seccomp.write_bytes(profile)
+            self.live_seccomp_digest.side_effect = ORIGINAL_LIVE_SECCOMP_CANONICAL_DIGEST
+            with mock.patch.object(RELEASE, "BASE_DIR", base_dir), mock.patch.object(
+                RELEASE, "LIVE_SECCOMP", seccomp
+            ):
+                result = RELEASE.validate_bootstrap_hardened_runtime(
+                    base,
+                    image_tag=LEGACY_TAG,
+                    image_digest=LEGACY_DIGEST,
+                    expected_config_hash=REQUESTED_HARDENED_CONFIG_HASH,
+                    expected_environment=copy.deepcopy(HARDENED_ENVIRONMENT),
+                    expected_compose=config,
+                    expected_network_identity=network_identity(),
+                )
+                self.assertTrue(result["runtime_hardening_verified"])
+
+                variants = {
+                    "missing-nnp": [f"seccomp={inline}"],
+                    "nnp-false": ["no-new-privileges:false", f"seccomp={inline}"],
+                    "duplicate-nnp": [
+                        "no-new-privileges:true",
+                        "no-new-privileges:true",
+                        f"seccomp={inline}",
+                    ],
+                    "duplicate-seccomp": [
+                        "no-new-privileges:true",
+                        f"seccomp={inline}",
+                        f"seccomp={inline}",
+                    ],
+                    "unknown-option": [
+                        "no-new-privileges:true",
+                        f"seccomp={inline}",
+                        "apparmor=unconfined",
+                    ],
+                    "malformed-inline-json": ["no-new-privileges:true", "seccomp={not-json"],
+                    "duplicate-inline-json-key": [
+                        "no-new-privileges:true",
+                        'seccomp={"defaultAction":"SCMP_ACT_ERRNO","defaultAction":"SCMP_ACT_ALLOW"}',
+                    ],
+                    "content-digest-drift": [
+                        "no-new-privileges:true",
+                        "seccomp="
+                        + json.dumps(
+                            {"defaultAction": "SCMP_ACT_ALLOW", "sentinel": sentinel},
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    ],
+                }
+                for label, security in variants.items():
+                    drifted = copy.deepcopy(base)
+                    drifted[RELEASE.FLOWISE_CONTAINER]["HostConfig"]["SecurityOpt"] = security
+                    with self.subTest(label=label), self.assertRaises(RELEASE.DeployError) as raised:
+                        RELEASE.validate_bootstrap_hardened_runtime(
+                            drifted,
+                            image_tag=LEGACY_TAG,
+                            image_digest=LEGACY_DIGEST,
+                            expected_config_hash=REQUESTED_HARDENED_CONFIG_HASH,
+                            expected_environment=copy.deepcopy(HARDENED_ENVIRONMENT),
+                            expected_compose=config,
+                            expected_network_identity=network_identity(),
+                        )
+                    self.assertNotIn(sentinel, str(raised.exception))
+
+    def test_recovery_full_runtime_projection_binds_every_stable_surface_without_environment_values(self):
+        base = hardened_documents(LEGACY_TAG, LEGACY_DIGEST)[RELEASE.FLOWISE_CONTAINER]
+        base["Path"] = "/usr/local/bin/docker-entrypoint.sh"
+        base["Args"] = ["node", "packages/server/bin/run", "start"]
+        base["HostConfig"].update(
+            {
+                "Dns": ["127.0.0.11"],
+                "ExtraHosts": ["host.docker.internal:host-gateway"],
+                "Sysctls": {"net.ipv4.ip_unprivileged_port_start": "0"},
+                "Ulimits": [{"Name": "nofile", "Soft": 1024, "Hard": 2048}],
+            }
+        )
+        initial = RELEASE.recovery_runtime_projection_digest(base, TEST_SECCOMP_DIGEST)
+
+        semantic_equivalent = copy.deepcopy(base)
+        semantic_equivalent["HostConfig"]["SecurityOpt"] = [
+            "seccomp=" + json.dumps(TEST_SECCOMP_DOCUMENT, indent=2),
+            "no-new-privileges=true",
+        ]
+        self.assertEqual(
+            RELEASE.recovery_runtime_projection_digest(semantic_equivalent, TEST_SECCOMP_DIGEST),
+            initial,
+        )
+
+        secret_changed = copy.deepcopy(base)
+        secret_changed["Config"]["Env"] = ["FLOWISE_SECRETKEY_OVERWRITE=sentinel-secret-value"]
+        self.assertEqual(
+            RELEASE.recovery_runtime_projection_digest(secret_changed, TEST_SECCOMP_DIGEST),
+            initial,
+        )
+
+        for label, mutate in (
+            ("path", lambda value: value.update({"Path": "/attacker"})),
+            ("args", lambda value: value["Args"].append("--unsafe")),
+            ("labels", lambda value: value["Config"]["Labels"].update({"attacker": "true"})),
+            ("dns", lambda value: value["HostConfig"]["Dns"].append("8.8.8.8")),
+            ("extra-hosts", lambda value: value["HostConfig"]["ExtraHosts"].append("attacker:1.2.3.4")),
+            ("sysctls", lambda value: value["HostConfig"]["Sysctls"].update({"kernel.shm_rmid_forced": "1"})),
+            ("ulimits", lambda value: value["HostConfig"]["Ulimits"][0].update({"Hard": 9999})),
+            ("mounts", lambda value: value["Mounts"][0].update({"RW": False})),
+            (
+                "network-endpoint",
+                lambda value: value["NetworkSettings"]["Networks"]["flowise_flowise_network"].update(
+                    {"IPAddress": "172.28.0.99"}
+                ),
+            ),
+        ):
+            drifted = copy.deepcopy(base)
+            mutate(drifted)
+            with self.subTest(label=label):
+                self.assertNotEqual(
+                    RELEASE.recovery_runtime_projection_digest(drifted, TEST_SECCOMP_DIGEST),
+                    initial,
+                )
+
+    def _bootstrap_recovery_observation_patches(
+        self,
+        fixture,
+        *,
+        documents=None,
+        live_bytes=None,
+        live_metadata=None,
+        key=TEST_KEY,
+        database=None,
+        legacy_inventory=None,
+        current_inventory=None,
+        ping_error=None,
+        journal=None,
+        seccomp_authority=TEST_SECCOMP_DIGEST,
+        full_runtime_authority=None,
+        postgres_authority=POSTGRES_ID,
+        nginx_authority=NGINX_ID,
+        migration_count_authority=None,
+        migration_name_authority=None,
+        live_hash_reader=None,
+        seccomp_path_reader=None,
+    ):
+        context = fixture["context"]
+        prepared = fixture["prepare"]
+        observed = copy.deepcopy(documents if documents is not None else fixture["documents"])
+        selected_journal = copy.deepcopy(journal if journal is not None else fixture["journal"])
+        selected_journal_data = canonical(selected_journal)
+        selected_metadata = live_metadata if live_metadata is not None else prepared["live_metadata"]
+        selected_live_bytes = copy.deepcopy(
+            live_bytes if live_bytes is not None else fixture["live_bytes"]
+        )
+        selected_full_runtime_authority = (
+            fixture["full_runtime_projection_digest"]
+            if full_runtime_authority is None
+            else full_runtime_authority
+        )
+        selected_migration_count_authority = (
+            prepared["baseline"]["database"]["migration_count"]
+            if migration_count_authority is None
+            else migration_count_authority
+        )
+        selected_migration_name_authority = (
+            prepared["baseline"]["database"]["migration_name_sha256"]
+            if migration_name_authority is None
+            else migration_name_authority
+        )
+        prohibited_live_hash_reader = live_hash_reader or mock.Mock(
+            side_effect=AssertionError("bootstrap recovery must not reopen live paths for hashing")
+        )
+        prohibited_seccomp_path_reader = seccomp_path_reader or mock.Mock(
+            side_effect=AssertionError("bootstrap recovery must not reopen the live seccomp path")
+        )
+        metadata_by_path = {
+            RELEASE.LIVE_ENV: tuple(selected_metadata["env"]),
+            RELEASE.LIVE_COMPOSE: tuple(selected_metadata["compose"]),
+            RELEASE.LIVE_SECCOMP: tuple(selected_metadata["seccomp"]),
+        }
+        return (
+            mock.patch.object(
+                RELEASE,
+                "_validate_bootstrap_recovery_run_topology",
+                return_value=False,
+            ),
+            mock.patch.object(
+                RELEASE,
+                "_read_canonical_run_journal",
+                return_value=(selected_journal, selected_journal_data, digest(selected_journal_data)),
+            ),
+            mock.patch.object(
+                RELEASE,
+                "BOOTSTRAP_RECOVERY_SECCOMP_CANONICAL_DIGEST",
+                seccomp_authority,
+            ),
+            mock.patch.object(
+                RELEASE,
+                "BOOTSTRAP_RECOVERY_FULL_RUNTIME_PROJECTION_DIGEST",
+                selected_full_runtime_authority,
+            ),
+            mock.patch.object(RELEASE, "BOOTSTRAP_RECOVERY_POSTGRES_CONTAINER_ID", postgres_authority),
+            mock.patch.object(RELEASE, "BOOTSTRAP_RECOVERY_NGINX_CONTAINER_ID", nginx_authority),
+            mock.patch.object(
+                RELEASE,
+                "BOOTSTRAP_RECOVERY_MIGRATION_COUNT",
+                selected_migration_count_authority,
+            ),
+            mock.patch.object(
+                RELEASE,
+                "BOOTSTRAP_RECOVERY_MIGRATION_NAME_DIGEST",
+                selected_migration_name_authority,
+            ),
+            mock.patch.object(RELEASE, "_require_control_absent"),
+            mock.patch.object(
+                RELEASE,
+                "live_file",
+                side_effect=lambda path, _mode: (
+                    selected_live_bytes[Path(path)],
+                    metadata_by_path[Path(path)],
+                ),
+            ),
+            mock.patch.object(
+                RELEASE,
+                "_live_hashes",
+                prohibited_live_hash_reader,
+            ),
+            mock.patch.object(
+                RELEASE,
+                "_live_seccomp_canonical_digest",
+                prohibited_seccomp_path_reader,
+            ),
+            mock.patch.object(RELEASE, "inspect_containers", return_value=observed),
+            mock.patch.object(
+                RELEASE,
+                "inspect_image",
+                return_value={
+                    "image_tag": LEGACY_TAG,
+                    "image_config_digest": prepared["legacy"]["image_config_digest"],
+                    "revision": LEGACY_REVISION,
+                    "release_id": f"git-{LEGACY_REVISION}",
+                    "repository_url": LEGACY_SOURCE,
+                    "created_at": LEGACY_CREATED_AT,
+                    "image_environment": copy.deepcopy(fixture["image_environment"]),
+                },
+            ),
+            mock.patch.object(RELEASE, "persistent_key", return_value=key),
+            mock.patch.object(
+                RELEASE,
+                "_resolved_live",
+                return_value=(
+                    context["expected"]["hardened_config"],
+                    REQUESTED_HARDENED_CONFIG_HASH,
+                    RELEASE.service_environment(context["expected"]["hardened_config"]),
+                ),
+            ),
+            mock.patch.object(
+                RELEASE,
+                "database_state",
+                return_value=copy.deepcopy(database if database is not None else prepared["baseline"]["database"]),
+            ),
+            mock.patch.object(
+                RELEASE,
+                "legacy_journal_inventory",
+                return_value=copy.deepcopy(
+                    legacy_inventory
+                    if legacy_inventory is not None
+                    else prepared["baseline"]["legacy_journal_inventory"]
+                ),
+            ),
+            mock.patch.object(
+                RELEASE,
+                "current_journal_inventory",
+                return_value=copy.deepcopy(
+                    current_inventory
+                    if current_inventory is not None
+                    else prepared["baseline"]["current_journal_inventory"]
+                ),
+            ),
+            mock.patch.object(RELEASE, "runtime_pings", side_effect=ping_error),
+        )
+
+    def _capture_bootstrap_recovery_fixture(self, fixture):
+        with _MultiPatch(self._bootstrap_recovery_observation_patches(fixture)):
+            return RELEASE._capture_stable_bootstrap_recovery(
+                fixture["context"],
+                expected_current_flowise_container_id=RECOVERY_FLOWISE_ID,
+                expected_observed_runtime_config_hash=OBSERVED_HARDENED_CONFIG_HASH,
+                require_interrupted_journal=True,
+            )
+
+    def test_bootstrap_recovery_hashes_each_single_open_read_and_never_reopens_live_paths(self):
+        fixture = bootstrap_recovery_fixture()
+        metadata = fixture["prepare"]["live_metadata"]
+        metadata_by_path = {
+            RELEASE.LIVE_ENV: tuple(metadata["env"]),
+            RELEASE.LIVE_COMPOSE: tuple(metadata["compose"]),
+            RELEASE.LIVE_SECCOMP: tuple(metadata["seccomp"]),
+        }
+        reader = mock.Mock(
+            side_effect=lambda path, _mode: (
+                fixture["live_bytes"][Path(path)],
+                metadata_by_path[Path(path)],
+            )
+        )
+        live_hash_reopen = mock.Mock(
+            side_effect=AssertionError("reopening live paths would restore the pathname TOCTOU")
+        )
+        seccomp_path_reopen = mock.Mock(
+            side_effect=AssertionError("reopening seccomp would restore the pathname TOCTOU")
+        )
+        patches = list(
+            self._bootstrap_recovery_observation_patches(
+                fixture,
+                live_hash_reader=live_hash_reopen,
+                seccomp_path_reader=seccomp_path_reopen,
+            )
+        )
+        patches.append(mock.patch.object(RELEASE, "live_file", reader))
+        with _MultiPatch(tuple(patches)):
+            observation = RELEASE._bootstrap_recovery_observation(
+                fixture["context"],
+                expected_current_flowise_container_id=RECOVERY_FLOWISE_ID,
+                expected_observed_runtime_config_hash=OBSERVED_HARDENED_CONFIG_HASH,
+                require_interrupted_journal=True,
+            )
+
+        self.assertEqual(
+            reader.call_args_list,
+            [
+                mock.call(RELEASE.LIVE_ENV, 0o600),
+                mock.call(RELEASE.LIVE_COMPOSE, 0o644),
+                mock.call(RELEASE.LIVE_SECCOMP, 0o644),
+            ],
+        )
+        live_hash_reopen.assert_not_called()
+        seccomp_path_reopen.assert_not_called()
+        self.assertEqual(
+            observation["material"]["live_files"],
+            fixture["prepare"]["hardened_active"]["files"],
+        )
+
+    def test_snapshot_bootstrap_recovery_double_observes_exact_hhh_state_and_is_secret_free_zero_write(self):
+        fixture = bootstrap_recovery_fixture()
+        context = fixture["context"]
+        prohibited = {
+            name: mock.Mock(side_effect=AssertionError(f"{name} must remain zero-write"))
+            for name in (
+                "_write_receipt",
+                "_journal",
+                "install_config_set",
+                "compose_recreate",
+                "load_candidate",
+                "atomic_write",
+                "_execute_legacy_rollback_transaction",
+            )
+        }
+        patches = list(self._bootstrap_recovery_observation_patches(fixture))
+        patches.extend(mock.patch.object(RELEASE, name, value) for name, value in prohibited.items())
+        patches.append(mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context))
+        with PatchedLock(self), _MultiPatch(tuple(patches)):
+            result = RELEASE.snapshot_bootstrap_recovery(
+                Path("/recovery-bundle"),
+                Path("/source-bundle"),
+                RECOVERY_RUN_ID,
+                fixture["permit"].path,
+                fixture["permit"].digest,
+                context["prepare_digest"],
+                RECOVERY_FLOWISE_ID,
+                OBSERVED_HARDENED_CONFIG_HASH,
+            )
+
+        self.assertEqual(result["status"], "bootstrap_recovery_snapshot_verified")
+        self.assertEqual(result["run_id"], RECOVERY_RUN_ID)
+        expected_stdout_keys = {
+            "status",
+            "run_id",
+            "recovery_snapshot_sha256",
+            "recovery_bundle_sha256",
+            "source_bundle_sha256",
+            "journal_pre_sha256",
+            "requested_compose_config_hash",
+            "observed_runtime_config_hash",
+            "semantic_runtime_projection_sha256",
+            "full_runtime_projection_sha256",
+            "production_runtime_write",
+            "control_artifact_write",
+            "database_write",
+            "provider_call",
+            "secret_value_output",
+        }
+        self.assertEqual(set(result), expected_stdout_keys)
+        self.assertRegex(result["recovery_snapshot_sha256"], r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(result["requested_compose_config_hash"], REQUESTED_HARDENED_CONFIG_HASH)
+        self.assertEqual(result["observed_runtime_config_hash"], OBSERVED_HARDENED_CONFIG_HASH)
+        for name in ("semantic_runtime_projection_sha256", "full_runtime_projection_sha256"):
+            self.assertRegex(result[name], r"^sha256:[0-9a-f]{64}$")
+        for name in (
+            "production_runtime_write",
+            "control_artifact_write",
+            "database_write",
+            "provider_call",
+            "secret_value_output",
+        ):
+            self.assertIs(result[name], False)
+        self.assertNotIn(fixture["sentinel"], canonical(result).decode())
+        for operation in prohibited.values():
+            operation.assert_not_called()
+
+        stdout = io.StringIO()
+        arguments = types.SimpleNamespace(
+            command="snapshot-bootstrap-recovery",
+            bundle_dir=Path("/recovery-bundle"),
+            source_bundle_dir=Path("/source-bundle"),
+            run_id=RECOVERY_RUN_ID,
+            transition_permit=fixture["permit"].path,
+            transition_permit_sha256=fixture["permit"].digest,
+            bootstrap_prepare_receipt_sha256=context["prepare_digest"],
+            expected_current_flowise_container_id=RECOVERY_FLOWISE_ID,
+            expected_observed_runtime_config_hash=OBSERVED_HARDENED_CONFIG_HASH,
+        )
+        with mock.patch.object(RELEASE, "parse_args", return_value=arguments), mock.patch.object(
+            RELEASE,
+            "snapshot_bootstrap_recovery",
+            return_value=result,
+        ), mock.patch("sys.stdout", stdout):
+            RELEASE.main([])
+        self.assertEqual(
+            stdout.getvalue(),
+            json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n",
+        )
+
+    def test_bootstrap_recovery_observation_rejects_every_live_authority_drift_without_secret_leak(self):
+        fixture = bootstrap_recovery_fixture()
+        context = fixture["context"]
+        base_documents = fixture["documents"]
+        variants = []
+
+        replaced = copy.deepcopy(base_documents)
+        replaced[RELEASE.FLOWISE_CONTAINER]["Id"] = "e" * 64
+        variants.append(("container", {"documents": replaced}, "CONTAINER_ID"))
+
+        label = copy.deepcopy(base_documents)
+        label[RELEASE.FLOWISE_CONTAINER]["Config"]["Labels"][
+            "com.docker.compose.config-hash"
+        ] = "f" * 64
+        variants.append(("label", {"documents": label}, "OBSERVED_CONFIG_HASH"))
+
+        malformed_label = copy.deepcopy(base_documents)
+        malformed_label[RELEASE.FLOWISE_CONTAINER]["Config"]["Labels"][
+            "com.docker.compose.config-hash"
+        ] = "malformed"
+        variants.append(("malformed-label", {"documents": malformed_label}, "CONFIG_HASH_INVALID"))
+
+        image = copy.deepcopy(base_documents)
+        image[RELEASE.FLOWISE_CONTAINER]["Config"]["Image"] = CANDIDATE_TAG
+        variants.append(("image", {"documents": image}, "ACTIVE_IMAGE"))
+
+        sidecar = copy.deepcopy(base_documents)
+        sidecar[RELEASE.POSTGRES_CONTAINER]["RestartCount"] = 1
+        variants.append(("sidecar", {"documents": sidecar}, "SIDECAR_DRIFT"))
+
+        network = copy.deepcopy(base_documents)
+        network[RELEASE.FLOWISE_CONTAINER]["NetworkSettings"]["Networks"][
+            "flowise_flowise_network"
+        ]["NetworkID"] = "f" * 64
+        variants.append(("network", {"documents": network}, "NETWORK"))
+
+        changed_live_bytes = copy.deepcopy(fixture["live_bytes"])
+        changed_live_bytes[RELEASE.LIVE_COMPOSE] = b"compose-bytes-drift"
+        variants.append(("live-files", {"live_bytes": changed_live_bytes}, "LIVE_FILES_NOT_HHH"))
+
+        metadata = copy.deepcopy(fixture["prepare"]["live_metadata"])
+        metadata["env"][2] = 0o644
+        variants.append(("live-file-metadata", {"live_metadata": metadata}, "LIVE_FILE_METADATA_DRIFT"))
+
+        environment = copy.deepcopy(base_documents)
+        environment[RELEASE.FLOWISE_CONTAINER]["Config"]["Env"].append("UNEXPECTED_RUNTIME_FLAG=true")
+        variants.append(("environment", {"documents": environment}, "RUNTIME_ENVIRONMENT_MISMATCH"))
+
+        database = copy.deepcopy(fixture["prepare"]["baseline"]["database"])
+        database["migration_count"] += 1
+        variants.append(("database", {"database": database}, "DATABASE_DRIFT"))
+
+        legacy_inventory = copy.deepcopy(fixture["prepare"]["baseline"]["legacy_journal_inventory"])
+        legacy_inventory["unresolved_rollback_count"] = 1
+        variants.append(("legacy-journal", {"legacy_inventory": legacy_inventory}, "LEGACY_JOURNAL_DRIFT"))
+
+        current_inventory = {"present": True, "unresolved_rollback_count": 1}
+        variants.append(("second-unresolved", {"current_inventory": current_inventory}, "CURRENT_JOURNAL_DRIFT"))
+        variants.append(("key", {"key": b"x" * 32}, "KEY_CAS"))
+        variants.append(("ping", {"ping_error": RELEASE.DeployError("PRIVATE_PING_FAILED")}, "PRIVATE_PING_FAILED"))
+        variants.append(
+            (
+                "seccomp-authority",
+                {"seccomp_authority": digest(b"other-seccomp")},
+                "SECCOMP_NOT_AUTHORIZED",
+            )
+        )
+        variants.append(
+            (
+                "full-runtime-authority",
+                {"full_runtime_authority": digest(b"other-runtime")},
+                "FULL_RUNTIME_NOT_AUTHORIZED",
+            )
+        )
+        variants.append(
+            (
+                "postgres-authority",
+                {"postgres_authority": "a" * 64},
+                "SIDECAR_DRIFT_flowise-postgres",
+            )
+        )
+        variants.append(
+            (
+                "nginx-authority",
+                {"nginx_authority": "b" * 64},
+                f"SIDECAR_DRIFT_{RELEASE.NGINX_CONTAINER}",
+            )
+        )
+        variants.append(
+            (
+                "migration-count-authority",
+                {
+                    "migration_count_authority": fixture["prepare"]["baseline"]["database"][
+                        "migration_count"
+                    ]
+                    + 1
+                },
+                "DATABASE_DRIFT",
+            )
+        )
+        variants.append(
+            (
+                "migration-name-authority",
+                {"migration_name_authority": digest(b"other-migration-names")},
+                "DATABASE_DRIFT",
+            )
+        )
+
+        for label, overrides, expected_error in variants:
+            writer = mock.Mock()
+            with self.subTest(label=label), _MultiPatch(
+                self._bootstrap_recovery_observation_patches(fixture, **overrides)
+                + (
+                    mock.patch.object(RELEASE, "_write_receipt", writer),
+                    mock.patch.object(RELEASE, "_journal", writer),
+                    mock.patch.object(RELEASE, "install_config_set", writer),
+                    mock.patch.object(RELEASE, "compose_recreate", writer),
+                    mock.patch.object(RELEASE, "load_candidate", writer),
+                )
+            ), self.assertRaisesRegex(RELEASE.DeployError, expected_error) as raised:
+                RELEASE._bootstrap_recovery_observation(
+                    context,
+                    expected_current_flowise_container_id=RECOVERY_FLOWISE_ID,
+                    expected_observed_runtime_config_hash=OBSERVED_HARDENED_CONFIG_HASH,
+                    require_interrupted_journal=True,
+                )
+            writer.assert_not_called()
+            self.assertNotIn(fixture["sentinel"], str(raised.exception))
+
+    def test_bootstrap_recovery_double_observation_and_snapshot_digest_are_cas_bound(self):
+        fixture = bootstrap_recovery_fixture()
+        observation = {"material": {"stable": True}, "snapshot": {}, "runtime": {}, "database": {}}
+        drifted = copy.deepcopy(observation)
+        drifted["material"]["stable"] = False
+        with mock.patch.object(
+            RELEASE,
+            "_bootstrap_recovery_observation",
+            side_effect=[observation, drifted],
+        ), self.assertRaisesRegex(RELEASE.DeployError, "OBSERVATION_CAS_MISMATCH"):
+            RELEASE._capture_stable_bootstrap_recovery(
+                fixture["context"],
+                expected_current_flowise_container_id=RECOVERY_FLOWISE_ID,
+                expected_observed_runtime_config_hash=OBSERVED_HARDENED_CONFIG_HASH,
+                require_interrupted_journal=True,
+            )
+
+    def test_bootstrap_recovery_static_context_binds_new_and_source_bundles_permit_receipt_and_journal(self):
+        fixture = bootstrap_recovery_fixture()
+        context = fixture["context"]
+        prepared = fixture["prepare"]
+        target_compose = b"target-compose"
+        target_seccomp = b"target-seccomp"
+        target_env = RELEASE.render_env(
+            context["expected"]["legacy_env"],
+            fixture["source_bundle"].image_tag,
+        )
+        target_config = copy.deepcopy(context["expected"]["hardened_config"])
+        target_config["services"]["flowise"]["image"] = fixture["source_bundle"].image_tag
+        verify_recovery = mock.Mock(return_value=fixture["recovery_bundle"])
+        verify_source = mock.Mock(return_value=fixture["source_bundle"])
+        controls_absent = mock.Mock()
+        patches = (
+            mock.patch.object(RELEASE, "verify_bundle", verify_recovery),
+            mock.patch.object(RELEASE, "verify_source_bundle", verify_source),
+            mock.patch.object(
+                RELEASE,
+                "_validate_bootstrap_recovery_run_topology",
+                return_value=False,
+            ),
+            mock.patch.object(RELEASE, "_validate_transition_permit_parent"),
+            mock.patch.object(RELEASE, "_validate_transition_permit_directory"),
+            mock.patch.object(RELEASE, "verify_transition_permit", return_value=fixture["permit"]),
+            mock.patch.object(
+                RELEASE,
+                "_read_receipt",
+                return_value=(context["run_dir"], prepared),
+            ),
+            mock.patch.object(
+                RELEASE,
+                "_read_canonical_run_journal",
+                return_value=(context["journal"], context["journal_data"], context["journal_pre_sha256"]),
+            ),
+            mock.patch.object(RELEASE, "_require_control_absent", controls_absent),
+            mock.patch.object(RELEASE, "persistent_key", return_value=TEST_KEY),
+            mock.patch.object(RELEASE, "_legacy_restore_expected_state", return_value=context["expected"]),
+            mock.patch.object(
+                RELEASE,
+                "_load_staged",
+                return_value=(Path("/staged/target_bundle"), target_env, target_compose, target_seccomp),
+            ),
+            mock.patch.object(RELEASE, "compose_config", return_value=target_config),
+            mock.patch.object(RELEASE, "validate_hardened_compose"),
+            mock.patch.object(
+                RELEASE,
+                "compose_service_hash",
+                return_value=prepared["target_bundle"]["compose_config_hash"],
+            ),
+        )
+        with _MultiPatch(patches):
+            result = RELEASE._bootstrap_recovery_static_context(
+                Path("/recovery"),
+                Path("/source"),
+                RECOVERY_RUN_ID,
+                fixture["permit"].path,
+                fixture["permit"].digest,
+                context["prepare_digest"],
+                require_interrupted_journal=True,
+                allow_existing_complete_receipt=False,
+            )
+        self.assertIs(result["recovery_bundle"], fixture["recovery_bundle"])
+        self.assertIs(result["source_bundle"], fixture["source_bundle"])
+        self.assertEqual(result["journal_pre_sha256"], context["journal_pre_sha256"])
+        verify_recovery.assert_called_once_with(Path("/recovery"))
+        verify_source.assert_called_once_with(Path("/source"))
+        self.assertEqual(controls_absent.call_count, 2)
+
+        receipt_read = mock.Mock()
+        with mock.patch.object(
+            RELEASE,
+            "_validate_bootstrap_recovery_run_topology",
+            return_value=False,
+        ), mock.patch.object(
+            RELEASE, "verify_bundle", return_value=fixture["source_bundle"]
+        ), mock.patch.object(
+            RELEASE, "verify_source_bundle", return_value=fixture["source_bundle"]
+        ), mock.patch.object(RELEASE, "_read_receipt", receipt_read), self.assertRaisesRegex(
+            RELEASE.DeployError, "BUNDLES_NOT_DISTINCT"
+        ):
+            RELEASE._bootstrap_recovery_static_context(
+                Path("/recovery"),
+                Path("/source"),
+                RECOVERY_RUN_ID,
+                fixture["permit"].path,
+                fixture["permit"].digest,
+                context["prepare_digest"],
+                require_interrupted_journal=True,
+                allow_existing_complete_receipt=False,
+            )
+        receipt_read.assert_not_called()
+
+    def test_bootstrap_recovery_interrupted_journal_and_prepare_authority_are_exact(self):
+        fixture = bootstrap_recovery_fixture()
+        context = fixture["context"]
+        journal_args = {
+            "run_id": RECOVERY_RUN_ID,
+            "permit_digest": fixture["permit"].digest,
+            "source_bundle_digest": fixture["source_bundle"].bundle_digest,
+            "source_bundle_release_id": fixture["source_bundle"].release_id,
+            "prepare_digest": context["prepare_digest"],
+        }
+        RELEASE._validate_bootstrap_recovery_interrupted_journal(context["journal"], **journal_args)
+        for label, mutate in (
+            ("phase", lambda value: value.update({"phase": "hardened_config_installing"})),
+            ("state", lambda value: value.update({"state": "complete_hardened_baseline"})),
+            ("live-write", lambda value: value.update({"live_write_started": False})),
+            ("recreate", lambda value: value.update({"hardened_recreate_started": False})),
+            ("rollback", lambda value: value.update({"rollback_attempted": True})),
+            ("permit", lambda value: value.update({"permit_digest": digest(b"other")})),
+            ("bundle", lambda value: value.update({"target_bundle_digest": digest(b"other")})),
+            ("receipt", lambda value: value.update({"bootstrap_prepare_receipt_sha256": digest(b"other")})),
+            ("unknown-key", lambda value: value.update({"unexpected_authority": True})),
+            ("complete-marker", lambda value: value.update({"bootstrap_complete_receipt_sha256": digest(b"complete")})),
+            ("rollback-marker", lambda value: value.update({"bootstrap_rollback_receipt_sha256": digest(b"rollback")})),
+        ):
+            mutated = copy.deepcopy(context["journal"])
+            mutate(mutated)
+            with self.subTest(layer="journal", label=label), self.assertRaises(RELEASE.DeployError):
+                RELEASE._validate_bootstrap_recovery_interrupted_journal(mutated, **journal_args)
+
+        receipt_args = {
+            "run_id": RECOVERY_RUN_ID,
+            "prepare_digest": context["prepare_digest"],
+            "permit": fixture["permit"],
+            "source_bundle": fixture["source_bundle"],
+        }
+        RELEASE._validate_bootstrap_recovery_prepare_receipt(fixture["prepare"], **receipt_args)
+        for label, mutate in (
+            ("run", lambda value: value.update({"run_id": RUN_ID})),
+            ("permit", lambda value: value.update({"permit": {"digest": digest(b"other")}})),
+            (
+                "source-bundle",
+                lambda value: value["target_bundle"].update({"bundle_digest": digest(b"other")}),
+            ),
+            ("target-hash", lambda value: value["target_bundle"].update({"compose_config_hash": "bad"})),
+            ("legacy-image", lambda value: value["legacy"].update({"image_tag": CANDIDATE_TAG})),
+            (
+                "baseline-container",
+                lambda value: value["baseline"]["containers"][RELEASE.NGINX_CONTAINER].update({"id": "bad"}),
+            ),
+            ("unknown-key", lambda value: value.update({"unexpected_authority": True})),
+        ):
+            mutated = copy.deepcopy(fixture["prepare"])
+            mutate(mutated)
+            with self.subTest(layer="prepare", label=label), self.assertRaises(RELEASE.DeployError):
+                RELEASE._validate_bootstrap_recovery_prepare_receipt(mutated, **receipt_args)
+
+    def test_generic_recovery_never_mutates_or_rolls_back_the_observed_adoption_incident(self):
+        fixture = bootstrap_recovery_fixture()
+        exact = fixture["journal"]
+        variants = (
+            ("exact", exact, "BOOTSTRAP_OBSERVED_RECOVERY_REQUIRED"),
+            (
+                "phase-drift",
+                {**exact, "phase": "hardened_config_installing"},
+                "BOOTSTRAP_RECOVERY_INTERRUPTED_STATE_MISMATCH",
+            ),
+            (
+                "flag-drift",
+                {**exact, "rollback_attempted": True},
+                "BOOTSTRAP_RECOVERY_INTERRUPTED_STATE_MISMATCH",
+            ),
+            (
+                "generic-rolling-back-state",
+                {**exact, "state": "rolling_back"},
+                "BOOTSTRAP_OBSERVED_RECOVERY_STATE_DRIFT",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            runs_dir = Path(directory)
+            run_dir = runs_dir / RECOVERY_RUN_ID
+            run_dir.mkdir()
+            journal_path = run_dir / "journal.json"
+            journal_path.write_bytes(b"present")
+            for label, journal, expected_error in variants:
+                generic_receipt_read = mock.Mock(
+                    side_effect=AssertionError("incident must not enter generic receipt recovery")
+                )
+                writes = mock.Mock(
+                    side_effect=AssertionError("incident recovery must remain zero-write")
+                )
+                with self.subTest(label=label), mock.patch.object(
+                    RELEASE, "RUNS_DIR", runs_dir
+                ), mock.patch.object(
+                    RELEASE, "_validate_inventory_directory"
+                ), mock.patch.object(
+                    RELEASE, "read_regular", return_value=canonical(journal)
+                ), mock.patch.object(
+                    RELEASE, "_read_receipt", generic_receipt_read
+                ), mock.patch.object(
+                    RELEASE, "_journal", writes
+                ), mock.patch.object(
+                    RELEASE, "_execute_legacy_rollback_transaction", writes
+                ), self.assertRaisesRegex(
+                    RELEASE.DeployError, expected_error
+                ):
+                    RELEASE._recover_interrupted_runs()
+                generic_receipt_read.assert_not_called()
+                writes.assert_not_called()
+
+    def test_bootstrap_recovery_scope_and_control_collisions_fail_before_lock_or_write(self):
+        fixture = bootstrap_recovery_fixture()
+        context = fixture["context"]
+        lock = mock.Mock(side_effect=AssertionError("scope failure must happen before lock"))
+        writer = mock.Mock()
+        with mock.patch.object(RELEASE, "require_root"), mock.patch.object(
+            RELEASE, "acquire_lock", lock
+        ), mock.patch.object(RELEASE, "_journal", writer), self.assertRaisesRegex(
+            RELEASE.DeployError, "RUN_NOT_AUTHORIZED"
+        ):
+            RELEASE.snapshot_bootstrap_recovery(
+                Path("/recovery"),
+                Path("/source"),
+                RUN_ID,
+                fixture["permit"].path,
+                fixture["permit"].digest,
+                context["prepare_digest"],
+                RECOVERY_FLOWISE_ID,
+                OBSERVED_HARDENED_CONFIG_HASH,
+            )
+        lock.assert_not_called()
+        writer.assert_not_called()
+
+        for label, kwargs, error in (
+            ("permit", {"transition_permit_sha256": "bad"}, "AUTHORITY_DIGEST_INVALID"),
+            ("receipt", {"bootstrap_prepare_receipt_sha256": "bad"}, "AUTHORITY_DIGEST_INVALID"),
+            ("container", {"expected_current_flowise_container_id": "bad"}, "EXPECTED_CONTAINER_ID_INVALID"),
+            ("label", {"expected_observed_runtime_config_hash": "bad"}, "EXPECTED_CONFIG_HASH_INVALID"),
+            (
+                "well-formed-other-permit",
+                {"transition_permit_sha256": digest(b"other-permit")},
+                "AUTHORITY_NOT_AUTHORIZED",
+            ),
+            (
+                "well-formed-other-receipt",
+                {"bootstrap_prepare_receipt_sha256": digest(b"other-prepare")},
+                "AUTHORITY_NOT_AUTHORIZED",
+            ),
+            (
+                "well-formed-other-container",
+                {"expected_current_flowise_container_id": "a" * 64},
+                "CONTAINER_NOT_AUTHORIZED",
+            ),
+            (
+                "well-formed-other-label",
+                {"expected_observed_runtime_config_hash": "b" * 64},
+                "CONFIG_HASH_NOT_AUTHORIZED",
+            ),
+        ):
+            arguments = {
+                "run_id": RECOVERY_RUN_ID,
+                "transition_permit_sha256": fixture["permit"].digest,
+                "bootstrap_prepare_receipt_sha256": context["prepare_digest"],
+                "expected_current_flowise_container_id": RECOVERY_FLOWISE_ID,
+                "expected_observed_runtime_config_hash": OBSERVED_HARDENED_CONFIG_HASH,
+                **kwargs,
+            }
+            with self.subTest(label=label), self.assertRaisesRegex(RELEASE.DeployError, error):
+                RELEASE._validate_bootstrap_recovery_scope(**arguments)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("bootstrap-complete-receipt.json", "bootstrap-rollback-receipt.json"):
+                path = root / name
+                path.write_bytes(b"occupied")
+                with self.subTest(control=name), self.assertRaisesRegex(RELEASE.DeployError, "ALREADY_EXISTS"):
+                    RELEASE._require_control_absent(path, "BOOTSTRAP_RECOVERY_CONTROL")
+
+    def test_bootstrap_recovery_authority_constants_are_the_exact_observed_incident_facts(self):
+        self.assertEqual(
+            {
+                "run_id": RELEASE.BOOTSTRAP_RECOVERY_RUN_ID,
+                "source_release_id": RELEASE.BOOTSTRAP_RECOVERY_SOURCE_RELEASE_ID,
+                "source_bundle_digest": RELEASE.BOOTSTRAP_RECOVERY_SOURCE_BUNDLE_DIGEST,
+                "permit_digest": RELEASE.BOOTSTRAP_RECOVERY_PERMIT_DIGEST,
+                "prepare_digest": RELEASE.BOOTSTRAP_RECOVERY_PREPARE_DIGEST,
+                "flowise_container_id": RELEASE.BOOTSTRAP_RECOVERY_FLOWISE_CONTAINER_ID,
+                "postgres_container_id": RELEASE.BOOTSTRAP_RECOVERY_POSTGRES_CONTAINER_ID,
+                "nginx_container_id": RELEASE.BOOTSTRAP_RECOVERY_NGINX_CONTAINER_ID,
+                "requested_config_hash": RELEASE.BOOTSTRAP_RECOVERY_REQUESTED_CONFIG_HASH,
+                "observed_config_hash": RELEASE.BOOTSTRAP_RECOVERY_OBSERVED_CONFIG_HASH,
+                "legacy_image_config_digest": RELEASE.BOOTSTRAP_RECOVERY_LEGACY_IMAGE_CONFIG_DIGEST,
+                "seccomp_digest": RELEASE.BOOTSTRAP_RECOVERY_SECCOMP_CANONICAL_DIGEST,
+                "full_runtime_projection_digest": (
+                    RELEASE.BOOTSTRAP_RECOVERY_FULL_RUNTIME_PROJECTION_DIGEST
+                ),
+                "migration_count": RELEASE.BOOTSTRAP_RECOVERY_MIGRATION_COUNT,
+                "migration_name_digest": RELEASE.BOOTSTRAP_RECOVERY_MIGRATION_NAME_DIGEST,
+            },
+            {
+                "run_id": "20260728T171644Z-4914e862",
+                "source_release_id": "git-56196c3cb4a3123f657614274a2227071920ba01",
+                "source_bundle_digest": (
+                    "sha256:61f511a2887afd75da2a2e2ab0bc94399c9c4af944a98920f4bb76c00a98c924"
+                ),
+                "permit_digest": (
+                    "sha256:a8afbf9ca32ef4cc9ead605a81f8624db1cf5538e0a23cccb2e46a3b76f0ada3"
+                ),
+                "prepare_digest": (
+                    "sha256:51402626a07b4b573e17b058e27a6e0df02dd7b34016df465f571ace949e6f2c"
+                ),
+                "flowise_container_id": (
+                    "953d213d666de29fde0b99f4a908ca46e7d642f8bd3126235e8284f82d5e7e39"
+                ),
+                "postgres_container_id": (
+                    "326fc99b16037b719a664b7ecbf9f6ee57f5b4d3cebf1395c65066319f514492"
+                ),
+                "nginx_container_id": (
+                    "0a468dd7d2dd55b05c3804fb67eea62801c83bf431d8f8587ed431bbb4a1f0eb"
+                ),
+                "requested_config_hash": (
+                    "8642827174f0ca74dd1a6fc5a8334f116eafe97f9386c1610d5719555e9d3200"
+                ),
+                "observed_config_hash": (
+                    "d6f328312028f66b37193fa244ad57119afb6fc1df9360b67eb3856c9764fb86"
+                ),
+                "legacy_image_config_digest": (
+                    "sha256:a8f38dca92292711a781432dc7700218273eececa331446d0678251cf6fe2067"
+                ),
+                "seccomp_digest": (
+                    "sha256:8bc9daff33eb5909c662dad46e9600c6cdfcf4327e84e30b94395176738d27cf"
+                ),
+                "full_runtime_projection_digest": (
+                    "sha256:41b684e72f394cb90b84c863a2732ea1b489ca646d1f37f1004becd575ccd874"
+                ),
+                "migration_count": 59,
+                "migration_name_digest": (
+                    "sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6"
+                ),
+            },
+        )
+
+    def test_bootstrap_recovery_run_topology_is_exact_no_follow_and_phase_aware(self):
+        expected_directories = {
+            "legacy",
+            "legacy/docker",
+            "legacy/docker/seccomp",
+            "hardened_active",
+            "hardened_active/docker",
+            "hardened_active/docker/seccomp",
+            "target_bundle",
+            "target_bundle/docker",
+            "target_bundle/docker/seccomp",
+        }
+        base_files = {
+            "journal.json",
+            "bootstrap-prepare-receipt.json",
+            "legacy/.env.production",
+            "legacy/docker-compose.prod.yml",
+            "legacy/image.tar.gz",
+            "hardened_active/.env.production",
+            "hardened_active/docker-compose.prod.yml",
+            "hardened_active/docker/seccomp/chromium.json",
+            "target_bundle/.env.production",
+            "target_bundle/docker-compose.prod.yml",
+            "target_bundle/docker/seccomp/chromium.json",
+        }
+        run_dir = RELEASE.RUNS_DIR / RECOVERY_RUN_ID
+
+        class Entry:
+            def __init__(self, relative, kind="file", *, mode=None, nlink=1, size=1):
+                self.path = str(run_dir / relative)
+                self.relative = relative
+                self.kind = kind
+                self.mode = mode
+                self.nlink = nlink
+                self.size = size
+
+            def stat(self, *, follow_symlinks):
+                if follow_symlinks is not False:
+                    raise AssertionError("topology enumeration must never follow symlinks")
+                kind_mode = {
+                    "directory": stat.S_IFDIR,
+                    "file": stat.S_IFREG,
+                    "symlink": stat.S_IFLNK,
+                }[self.kind]
+                default_mode = 0o700 if self.kind == "directory" else 0o600
+                return types.SimpleNamespace(
+                    st_mode=kind_mode | (default_mode if self.mode is None else self.mode),
+                    st_uid=0,
+                    st_gid=0,
+                    st_nlink=self.nlink,
+                    st_size=self.size,
+                )
+
+        def scanner(entries):
+            by_parent = {}
+            for entry in entries:
+                by_parent.setdefault(str(Path(entry.path).parent), []).append(entry)
+            return lambda parent: list(by_parent.get(str(parent), []))
+
+        def entries(*, complete=False):
+            result = [Entry(path, "directory") for path in expected_directories]
+            result.extend(Entry(path) for path in base_files)
+            if complete:
+                result.append(Entry("bootstrap-complete-receipt.json"))
+            return result
+
+        with mock.patch.object(RELEASE, "_validate_secure_run_directory"), mock.patch.object(
+            RELEASE.os,
+            "scandir",
+            side_effect=scanner(entries()),
+        ):
+            self.assertIs(
+                RELEASE._validate_bootstrap_recovery_run_topology(
+                    run_dir,
+                    complete_receipt="absent",
+                ),
+                False,
+            )
+            with self.assertRaisesRegex(RELEASE.DeployError, "COMPLETE_RECEIPT_MISSING"):
+                RELEASE._validate_bootstrap_recovery_run_topology(
+                    run_dir,
+                    complete_receipt="present",
+                )
+
+        with mock.patch.object(RELEASE, "_validate_secure_run_directory"), mock.patch.object(
+            RELEASE.os,
+            "scandir",
+            side_effect=scanner(entries(complete=True)),
+        ):
+            self.assertIs(
+                RELEASE._validate_bootstrap_recovery_run_topology(
+                    run_dir,
+                    complete_receipt="either",
+                ),
+                True,
+            )
+            with self.assertRaisesRegex(RELEASE.DeployError, "COMPLETE_RECEIPT_UNEXPECTED"):
+                RELEASE._validate_bootstrap_recovery_run_topology(
+                    run_dir,
+                    complete_receipt="absent",
+                )
+
+        topology_variants = (
+            (
+                "symlink",
+                entries() + [Entry("attacker", "symlink")],
+                "TOPOLOGY_SYMLINK_FORBIDDEN",
+            ),
+            (
+                "extra-file",
+                entries() + [Entry("attacker.json")],
+                "TOPOLOGY_FILE_SET_INVALID",
+            ),
+            (
+                "missing-directory",
+                [entry for entry in entries() if entry.relative != "target_bundle/docker/seccomp"],
+                "TOPOLOGY_DIRECTORY_SET_INVALID",
+            ),
+            (
+                "unsafe-file-mode",
+                [
+                    Entry(entry.relative, entry.kind, mode=0o644)
+                    if entry.relative == "journal.json"
+                    else entry
+                    for entry in entries()
+                ],
+                "TOPOLOGY_FILE_METADATA_INVALID",
+            ),
+            (
+                "hardlinked-file",
+                [
+                    Entry(entry.relative, entry.kind, nlink=2)
+                    if entry.relative == "journal.json"
+                    else entry
+                    for entry in entries()
+                ],
+                "TOPOLOGY_FILE_METADATA_INVALID",
+            ),
+        )
+        for label, variant_entries, expected_error in topology_variants:
+            with self.subTest(label=label), mock.patch.object(
+                RELEASE,
+                "_validate_secure_run_directory",
+            ), mock.patch.object(
+                RELEASE.os,
+                "scandir",
+                side_effect=scanner(variant_entries),
+            ), self.assertRaisesRegex(RELEASE.DeployError, expected_error):
+                RELEASE._validate_bootstrap_recovery_run_topology(
+                    run_dir,
+                    complete_receipt="either",
+                )
+
+        with self.assertRaisesRegex(RELEASE.DeployError, "TOPOLOGY_PHASE_INVALID"):
+            RELEASE._validate_bootstrap_recovery_run_topology(
+                run_dir,
+                complete_receipt="unknown",
+            )
+
+    def test_recovery_existing_lock_never_creates_or_follows_a_missing_lock(self):
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+            lock_dir = Path(directory)
+            lock_path = lock_dir / "flowise-production-release.lock"
+            creator = mock.Mock(side_effect=AssertionError("recovery must not create lock state"))
+            with mock.patch.object(RELEASE, "LOCK_DIR", lock_dir), mock.patch.object(
+                RELEASE,
+                "LOCK_PATH",
+                lock_path,
+            ), mock.patch.object(
+                RELEASE,
+                "_validate_inventory_directory",
+            ), mock.patch.object(
+                RELEASE,
+                "_ensure_lock_directory",
+                creator,
+            ), self.assertRaisesRegex(RELEASE.DeployError, "DEPLOY_EXISTING_LOCK_OPEN_FAILED"):
+                RELEASE.acquire_existing_lock()
+            self.assertFalse(lock_path.exists())
+            creator.assert_not_called()
+
+            target = lock_dir / "attacker-target"
+            target.write_bytes(b"unchanged")
+            lock_path.symlink_to(target)
+            with mock.patch.object(RELEASE, "LOCK_DIR", lock_dir), mock.patch.object(
+                RELEASE,
+                "LOCK_PATH",
+                lock_path,
+            ), mock.patch.object(
+                RELEASE,
+                "_validate_inventory_directory",
+            ), self.assertRaisesRegex(RELEASE.DeployError, "DEPLOY_EXISTING_LOCK_OPEN_FAILED"):
+                RELEASE.acquire_existing_lock()
+            self.assertEqual(target.read_bytes(), b"unchanged")
+
+    def test_bootstrap_recovery_cli_requires_every_digest_id_hash_and_completion_cas(self):
+        fixture = bootstrap_recovery_fixture()
+        context = fixture["context"]
+        common = [
+            "--bundle-dir",
+            "/recovery",
+            "--source-bundle-dir",
+            "/source",
+            "--run-id",
+            RECOVERY_RUN_ID,
+            "--transition-permit",
+            "/permit",
+            "--transition-permit-sha256",
+            fixture["permit"].digest,
+            "--bootstrap-prepare-receipt-sha256",
+            context["prepare_digest"],
+            "--expected-current-flowise-container-id",
+            RECOVERY_FLOWISE_ID,
+            "--expected-observed-runtime-config-hash",
+            OBSERVED_HARDENED_CONFIG_HASH,
+        ]
+        snapshot = RELEASE.parse_args(["snapshot-bootstrap-recovery", *common])
+        self.assertEqual(snapshot.command, "snapshot-bootstrap-recovery")
+        self.assertEqual(snapshot.run_id, RECOVERY_RUN_ID)
+        self.assertEqual(snapshot.expected_current_flowise_container_id, RECOVERY_FLOWISE_ID)
+        complete = RELEASE.parse_args(
+            [
+                "complete-bootstrap-recovery",
+                *common,
+                "--expected-recovery-snapshot-sha256",
+                digest(b"snapshot"),
+            ]
+        )
+        self.assertEqual(complete.expected_recovery_snapshot_sha256, digest(b"snapshot"))
+
+        for label, command in (
+            ("snapshot-missing-source", ["snapshot-bootstrap-recovery", *common[2:]]),
+            ("complete-missing-cas", ["complete-bootstrap-recovery", *common]),
+            (
+                "malformed-container",
+                [
+                    "snapshot-bootstrap-recovery",
+                    *common[:-3],
+                    "bad",
+                    *common[-2:],
+                ],
+            ),
+            (
+                "uppercase-label",
+                ["snapshot-bootstrap-recovery", *common[:-1], OBSERVED_HARDENED_CONFIG_HASH.upper()],
+            ),
+        ):
+            with self.subTest(label=label), mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+                RELEASE.parse_args(command)
+
+    def test_complete_bootstrap_recovery_writes_only_immutable_receipt_then_terminal_journal(self):
+        fixture = bootstrap_recovery_fixture()
+        observation, snapshot_digest = self._capture_bootstrap_recovery_fixture(fixture)
+        context = fixture["context"]
+        events = []
+        receipts = []
+        journals = []
+
+        def write_receipt(path, document):
+            events.append("receipt")
+            receipts.append((Path(path), copy.deepcopy(document)))
+            return digest(canonical(document))
+
+        def write_journal(path, document):
+            events.append("journal")
+            journals.append((Path(path), copy.deepcopy(document)))
+
+        def read_journal(_run_dir):
+            if journals:
+                document = journals[-1][1]
+                data = canonical(document)
+                return document, data, digest(data)
+            return context["journal"], context["journal_data"], context["journal_pre_sha256"]
+
+        def read_published_receipt(_run_id):
+            document = receipts[-1][1]
+            data = canonical(document)
+            return context["run_dir"], document, data, digest(data)
+
+        prohibited = {
+            name: mock.Mock(side_effect=AssertionError(f"{name} is outside the recovery write set"))
+            for name in (
+                "install_config_set",
+                "compose_recreate",
+                "load_candidate",
+                "atomic_write",
+                "_execute_legacy_rollback_transaction",
+            )
+        }
+        patches = (
+            mock.patch.object(
+                RELEASE,
+                "_validate_bootstrap_recovery_run_topology",
+                side_effect=recovery_topology_stub(lambda: bool(receipts)),
+            ),
+            mock.patch.object(
+                RELEASE,
+                "_read_canonical_run_journal",
+                side_effect=read_journal,
+            ),
+            mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+            mock.patch.object(
+                RELEASE,
+                "_capture_stable_bootstrap_recovery",
+                return_value=(observation, snapshot_digest),
+            ),
+            mock.patch.object(RELEASE, "_write_receipt", side_effect=write_receipt),
+            mock.patch.object(
+                RELEASE,
+                "_read_existing_bootstrap_recovery_receipt",
+                side_effect=read_published_receipt,
+            ),
+            mock.patch.object(RELEASE, "_journal", side_effect=write_journal),
+            mock.patch.object(RELEASE, "utc_now", return_value="2026-07-28T17:30:00Z"),
+            *(mock.patch.object(RELEASE, name, value) for name, value in prohibited.items()),
+        )
+        with PatchedLock(self), _MultiPatch(patches):
+            result = RELEASE.complete_bootstrap_recovery(
+                Path("/recovery"),
+                Path("/source"),
+                RECOVERY_RUN_ID,
+                fixture["permit"].path,
+                fixture["permit"].digest,
+                context["prepare_digest"],
+                RECOVERY_FLOWISE_ID,
+                OBSERVED_HARDENED_CONFIG_HASH,
+                snapshot_digest,
+            )
+
+        self.assertEqual(events, ["receipt", "journal"])
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(len(journals), 1)
+        complete_receipt = receipts[0][1]
+        terminal_journal = journals[0][1]
+        self.assertEqual(complete_receipt["operation"], "bootstrap")
+        self.assertEqual(complete_receipt["state"], "complete_hardened_baseline")
+        self.assertEqual(complete_receipt["completion_mode"], RELEASE.BOOTSTRAP_RECOVERY_COMPLETION_MODE)
+        self.assertEqual(complete_receipt["recovery"]["recovery_snapshot_sha256"], snapshot_digest)
+        self.assertEqual(
+            complete_receipt["recovery"]["runtime"]["current_flowise_container_id"],
+            RECOVERY_FLOWISE_ID,
+        )
+        self.assertEqual(terminal_journal["state"], "complete_hardened_baseline")
+        self.assertEqual(terminal_journal["phase"], "complete")
+        self.assertEqual(
+            terminal_journal["recovery_authority"],
+            RELEASE._recovery_authority_from_receipt(complete_receipt),
+        )
+        self.assertIs(result["control_artifact_write"], True)
+        self.assertIs(result["production_runtime_write"], False)
+        self.assertIs(result["database_write"], False)
+        self.assertIs(result["provider_call"], False)
+        self.assertIs(result["secret_value_output"], False)
+        self.assertEqual(result["current_flowise_container_id"], RECOVERY_FLOWISE_ID)
+        self.assertEqual(result["requested_compose_config_hash"], REQUESTED_HARDENED_CONFIG_HASH)
+        self.assertEqual(result["observed_runtime_config_hash"], OBSERVED_HARDENED_CONFIG_HASH)
+        self.assertNotIn(fixture["sentinel"], canonical(result).decode())
+        self.assertNotIn(fixture["sentinel"], canonical(complete_receipt).decode())
+        for operation in prohibited.values():
+            operation.assert_not_called()
+
+        receipt_write = mock.Mock()
+        journal_write = mock.Mock()
+        with PatchedLock(self), _MultiPatch(
+            (
+                mock.patch.object(
+                    RELEASE,
+                    "_validate_bootstrap_recovery_run_topology",
+                    side_effect=recovery_topology_stub(False),
+                ),
+                mock.patch.object(
+                    RELEASE,
+                    "_read_canonical_run_journal",
+                    return_value=(context["journal"], context["journal_data"], context["journal_pre_sha256"]),
+                ),
+                mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+                mock.patch.object(
+                    RELEASE,
+                    "_capture_stable_bootstrap_recovery",
+                    return_value=(observation, snapshot_digest),
+                ),
+                mock.patch.object(RELEASE, "_write_receipt", receipt_write),
+                mock.patch.object(RELEASE, "_journal", journal_write),
+            )
+        ), self.assertRaisesRegex(RELEASE.DeployError, "SNAPSHOT_DIGEST_MISMATCH"):
+            RELEASE.complete_bootstrap_recovery(
+                Path("/recovery"),
+                Path("/source"),
+                RECOVERY_RUN_ID,
+                fixture["permit"].path,
+                fixture["permit"].digest,
+                context["prepare_digest"],
+                RECOVERY_FLOWISE_ID,
+                OBSERVED_HARDENED_CONFIG_HASH,
+                digest(b"stale-snapshot"),
+            )
+        receipt_write.assert_not_called()
+        journal_write.assert_not_called()
+
+    def test_complete_bootstrap_recovery_resumes_receipt_written_journal_missing_without_rewrite(self):
+        class JournalCrash(BaseException):
+            pass
+
+        fixture = bootstrap_recovery_fixture()
+        observation, snapshot_digest = self._capture_bootstrap_recovery_fixture(fixture)
+        with tempfile.TemporaryDirectory() as directory:
+            runs_dir = Path(directory)
+            run_dir = runs_dir / RECOVERY_RUN_ID
+            run_dir.mkdir()
+            context = copy.deepcopy(fixture["context"])
+            context["run_dir"] = run_dir
+            written = {}
+            receipt_write_count = 0
+
+            def publish(path, document):
+                nonlocal receipt_write_count
+                receipt_write_count += 1
+                data = canonical(document)
+                Path(path).write_bytes(data)
+                os.chmod(path, 0o600)
+                written.update({"receipt": copy.deepcopy(document), "data": data, "digest": digest(data)})
+                return written["digest"]
+
+            with PatchedLock(self), mock.patch.object(RELEASE, "RUNS_DIR", runs_dir), _MultiPatch(
+                (
+                    mock.patch.object(
+                        RELEASE,
+                        "_validate_bootstrap_recovery_run_topology",
+                        side_effect=recovery_topology_stub(lambda: bool(written)),
+                    ),
+                    mock.patch.object(
+                        RELEASE,
+                        "_read_canonical_run_journal",
+                        return_value=(context["journal"], context["journal_data"], context["journal_pre_sha256"]),
+                    ),
+                    mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+                    mock.patch.object(
+                        RELEASE,
+                        "_capture_stable_bootstrap_recovery",
+                        return_value=(observation, snapshot_digest),
+                    ),
+                    mock.patch.object(RELEASE, "_write_receipt", side_effect=publish),
+                    mock.patch.object(
+                        RELEASE,
+                        "_read_existing_bootstrap_recovery_receipt",
+                        side_effect=lambda _run_id: (
+                            run_dir,
+                            written["receipt"],
+                            written["data"],
+                            written["digest"],
+                        ),
+                    ),
+                    mock.patch.object(RELEASE, "_journal", side_effect=JournalCrash()),
+                    mock.patch.object(RELEASE, "utc_now", return_value="2026-07-28T17:31:00Z"),
+                    mock.patch.object(RELEASE, "install_config_set", side_effect=AssertionError("runtime write")),
+                    mock.patch.object(RELEASE, "compose_recreate", side_effect=AssertionError("runtime write")),
+                    mock.patch.object(RELEASE, "load_candidate", side_effect=AssertionError("image write")),
+                )
+            ), self.assertRaises(JournalCrash):
+                RELEASE.complete_bootstrap_recovery(
+                    Path("/recovery"),
+                    Path("/source"),
+                    RECOVERY_RUN_ID,
+                    fixture["permit"].path,
+                    fixture["permit"].digest,
+                    context["prepare_digest"],
+                    RECOVERY_FLOWISE_ID,
+                    OBSERVED_HARDENED_CONFIG_HASH,
+                    snapshot_digest,
+                )
+            self.assertEqual(receipt_write_count, 1)
+            self.assertTrue((run_dir / "bootstrap-complete-receipt.json").is_file())
+            context["complete_receipt_present"] = True
+
+            repaired = []
+
+            def read_repaired_journal(_run_dir):
+                if repaired:
+                    document = repaired[-1]
+                    data = canonical(document)
+                    return document, data, digest(data)
+                return context["journal"], context["journal_data"], context["journal_pre_sha256"]
+
+            with PatchedLock(self), mock.patch.object(RELEASE, "RUNS_DIR", runs_dir), _MultiPatch(
+                (
+                    mock.patch.object(
+                        RELEASE,
+                        "_validate_bootstrap_recovery_run_topology",
+                        side_effect=recovery_topology_stub(True),
+                    ),
+                    mock.patch.object(
+                        RELEASE,
+                        "_read_canonical_run_journal",
+                        side_effect=read_repaired_journal,
+                    ),
+                    mock.patch.object(
+                        RELEASE,
+                        "_read_existing_bootstrap_recovery_receipt",
+                        return_value=(run_dir, written["receipt"], written["data"], written["digest"]),
+                    ),
+                    mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+                    mock.patch.object(
+                        RELEASE,
+                        "_capture_stable_bootstrap_recovery",
+                        return_value=(observation, snapshot_digest),
+                    ),
+                    mock.patch.object(
+                        RELEASE,
+                        "_write_receipt",
+                        side_effect=AssertionError("immutable receipt must not be rewritten"),
+                    ),
+                    mock.patch.object(
+                        RELEASE,
+                        "_journal",
+                        side_effect=lambda _root, value: repaired.append(copy.deepcopy(value)),
+                    ),
+                )
+            ):
+                result = RELEASE.complete_bootstrap_recovery(
+                    Path("/recovery"),
+                    Path("/source"),
+                    RECOVERY_RUN_ID,
+                    fixture["permit"].path,
+                    fixture["permit"].digest,
+                    context["prepare_digest"],
+                    RECOVERY_FLOWISE_ID,
+                    OBSERVED_HARDENED_CONFIG_HASH,
+                    snapshot_digest,
+                )
+            self.assertEqual(receipt_write_count, 1)
+            self.assertEqual(len(repaired), 1)
+            self.assertIs(result["journal_repaired_after_receipt"], True)
+            self.assertIs(result["idempotent_replay"], False)
+
+    def test_complete_bootstrap_recovery_terminal_replay_is_zero_write_and_mismatch_never_overwrites(self):
+        fixture = bootstrap_recovery_fixture()
+        observation, snapshot_digest = self._capture_bootstrap_recovery_fixture(fixture)
+        context = copy.deepcopy(fixture["context"])
+        context["complete_receipt_present"] = True
+        complete_receipt = RELEASE._build_bootstrap_recovery_complete_receipt(
+            context,
+            observation,
+            snapshot_digest,
+            "2026-07-28T17:32:00Z",
+        )
+        receipt_data = canonical(complete_receipt)
+        receipt_digest = digest(receipt_data)
+        terminal = copy.deepcopy(context["journal"])
+        terminal.update(
+            {
+                "state": "complete_hardened_baseline",
+                "phase": "complete",
+                "completion_mode": RELEASE.BOOTSTRAP_RECOVERY_COMPLETION_MODE,
+                "bootstrap_complete_receipt_sha256": receipt_digest,
+                "recovery_authority": RELEASE._recovery_authority_from_receipt(complete_receipt),
+                "updated_at": "2026-07-28T17:32:01Z",
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            runs_dir = Path(directory)
+            run_dir = runs_dir / RECOVERY_RUN_ID
+            run_dir.mkdir()
+            (run_dir / "bootstrap-complete-receipt.json").write_bytes(b"present")
+            writer = mock.Mock()
+            patches = (
+                mock.patch.object(RELEASE, "RUNS_DIR", runs_dir),
+                mock.patch.object(
+                    RELEASE,
+                    "_validate_bootstrap_recovery_run_topology",
+                    side_effect=recovery_topology_stub(True),
+                ),
+                mock.patch.object(
+                    RELEASE,
+                    "_read_canonical_run_journal",
+                    return_value=(terminal, canonical(terminal), digest(canonical(terminal))),
+                ),
+                mock.patch.object(
+                    RELEASE,
+                    "_read_existing_bootstrap_recovery_receipt",
+                    return_value=(run_dir, complete_receipt, receipt_data, receipt_digest),
+                ),
+                mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+                mock.patch.object(
+                    RELEASE,
+                    "_capture_stable_bootstrap_recovery",
+                    return_value=(observation, snapshot_digest),
+                ),
+                mock.patch.object(RELEASE, "_write_receipt", writer),
+                mock.patch.object(RELEASE, "_journal", writer),
+            )
+            with PatchedLock(self), _MultiPatch(patches):
+                result = RELEASE.complete_bootstrap_recovery(
+                    Path("/recovery"),
+                    Path("/source"),
+                    RECOVERY_RUN_ID,
+                    fixture["permit"].path,
+                    fixture["permit"].digest,
+                    context["prepare_digest"],
+                    RECOVERY_FLOWISE_ID,
+                    OBSERVED_HARDENED_CONFIG_HASH,
+                    snapshot_digest,
+                )
+            writer.assert_not_called()
+            self.assertIs(result["idempotent_replay"], True)
+            self.assertIs(result["control_artifact_write"], False)
+            self.assertIs(result["provider_call"], False)
+            self.assertIs(result["secret_value_output"], False)
+
+            for label, existing, terminal_value, error in (
+                (
+                    "receipt",
+                    {**complete_receipt, "provider_call": True},
+                    terminal,
+                    "COMPLETE_RECEIPT_MISMATCH",
+                ),
+                (
+                    "journal",
+                    complete_receipt,
+                    {**terminal, "recovery_authority": {"tampered": True}},
+                    "TERMINAL_JOURNAL",
+                ),
+            ):
+                existing_data = canonical(existing)
+                writes = mock.Mock()
+                with self.subTest(label=label), PatchedLock(self), _MultiPatch(
+                    (
+                        mock.patch.object(RELEASE, "RUNS_DIR", runs_dir),
+                        mock.patch.object(
+                            RELEASE,
+                            "_validate_bootstrap_recovery_run_topology",
+                            side_effect=recovery_topology_stub(True),
+                        ),
+                        mock.patch.object(
+                            RELEASE,
+                            "_read_canonical_run_journal",
+                            return_value=(terminal_value, canonical(terminal_value), digest(canonical(terminal_value))),
+                        ),
+                        mock.patch.object(
+                            RELEASE,
+                            "_read_existing_bootstrap_recovery_receipt",
+                            return_value=(run_dir, existing, existing_data, digest(existing_data)),
+                        ),
+                        mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+                        mock.patch.object(
+                            RELEASE,
+                            "_capture_stable_bootstrap_recovery",
+                            return_value=(observation, snapshot_digest),
+                        ),
+                        mock.patch.object(RELEASE, "_write_receipt", writes),
+                        mock.patch.object(RELEASE, "_journal", writes),
+                    )
+                ), self.assertRaisesRegex(RELEASE.DeployError, error):
+                    RELEASE.complete_bootstrap_recovery(
+                        Path("/recovery"),
+                        Path("/source"),
+                        RECOVERY_RUN_ID,
+                        fixture["permit"].path,
+                        fixture["permit"].digest,
+                        context["prepare_digest"],
+                        RECOVERY_FLOWISE_ID,
+                        OBSERVED_HARDENED_CONFIG_HASH,
+                        snapshot_digest,
+                    )
+                writes.assert_not_called()
+
+    def test_complete_bootstrap_recovery_rechecks_receipt_and_terminal_journal_cas_before_write(self):
+        fixture = bootstrap_recovery_fixture()
+        observation, snapshot_digest = self._capture_bootstrap_recovery_fixture(fixture)
+        context = copy.deepcopy(fixture["context"])
+        context["complete_receipt_present"] = True
+        complete_receipt = RELEASE._build_bootstrap_recovery_complete_receipt(
+            context,
+            observation,
+            snapshot_digest,
+            "2026-07-28T17:32:00Z",
+        )
+        receipt_data = canonical(complete_receipt)
+        receipt_digest = digest(receipt_data)
+        terminal = copy.deepcopy(context["journal"])
+        terminal.update(
+            {
+                "state": "complete_hardened_baseline",
+                "phase": "complete",
+                "completion_mode": RELEASE.BOOTSTRAP_RECOVERY_COMPLETION_MODE,
+                "bootstrap_complete_receipt_sha256": receipt_digest,
+                "recovery_authority": RELEASE._recovery_authority_from_receipt(complete_receipt),
+                "updated_at": "2026-07-28T17:32:01Z",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            runs_dir = Path(directory)
+            run_dir = runs_dir / RECOVERY_RUN_ID
+            run_dir.mkdir()
+            (run_dir / "bootstrap-complete-receipt.json").write_bytes(b"present")
+            tampered_receipt = {**complete_receipt, "provider_call": True}
+            tampered_receipt_data = canonical(tampered_receipt)
+            writes = mock.Mock()
+            with self.subTest(control="receipt"), PatchedLock(self), _MultiPatch(
+                (
+                    mock.patch.object(RELEASE, "RUNS_DIR", runs_dir),
+                    mock.patch.object(
+                        RELEASE,
+                        "_validate_bootstrap_recovery_run_topology",
+                        side_effect=recovery_topology_stub(True),
+                    ),
+                    mock.patch.object(
+                        RELEASE,
+                        "_read_canonical_run_journal",
+                        return_value=(
+                            context["journal"],
+                            context["journal_data"],
+                            context["journal_pre_sha256"],
+                        ),
+                    ),
+                    mock.patch.object(
+                        RELEASE,
+                        "_read_existing_bootstrap_recovery_receipt",
+                        side_effect=[
+                            (run_dir, complete_receipt, receipt_data, receipt_digest),
+                            (
+                                run_dir,
+                                tampered_receipt,
+                                tampered_receipt_data,
+                                digest(tampered_receipt_data),
+                            ),
+                        ],
+                    ),
+                    mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+                    mock.patch.object(
+                        RELEASE,
+                        "_capture_stable_bootstrap_recovery",
+                        return_value=(observation, snapshot_digest),
+                    ),
+                    mock.patch.object(RELEASE, "_write_receipt", writes),
+                    mock.patch.object(RELEASE, "_journal", writes),
+                )
+            ), self.assertRaisesRegex(RELEASE.DeployError, "COMPLETE_RECEIPT_CAS_MISMATCH"):
+                RELEASE.complete_bootstrap_recovery(
+                    Path("/recovery"),
+                    Path("/source"),
+                    RECOVERY_RUN_ID,
+                    fixture["permit"].path,
+                    fixture["permit"].digest,
+                    context["prepare_digest"],
+                    RECOVERY_FLOWISE_ID,
+                    OBSERVED_HARDENED_CONFIG_HASH,
+                    snapshot_digest,
+                )
+            writes.assert_not_called()
+
+            drifted_terminal = copy.deepcopy(terminal)
+            drifted_terminal["updated_at"] = "2026-07-28T17:32:02Z"
+            terminal_data = canonical(terminal)
+            drifted_terminal_data = canonical(drifted_terminal)
+            writes.reset_mock()
+            with self.subTest(control="terminal-journal"), PatchedLock(self), _MultiPatch(
+                (
+                    mock.patch.object(RELEASE, "RUNS_DIR", runs_dir),
+                    mock.patch.object(
+                        RELEASE,
+                        "_validate_bootstrap_recovery_run_topology",
+                        side_effect=recovery_topology_stub(True),
+                    ),
+                    mock.patch.object(
+                        RELEASE,
+                        "_read_canonical_run_journal",
+                        side_effect=[
+                            (terminal, terminal_data, digest(terminal_data)),
+                            (
+                                drifted_terminal,
+                                drifted_terminal_data,
+                                digest(drifted_terminal_data),
+                            ),
+                        ],
+                    ),
+                    mock.patch.object(
+                        RELEASE,
+                        "_read_existing_bootstrap_recovery_receipt",
+                        return_value=(run_dir, complete_receipt, receipt_data, receipt_digest),
+                    ),
+                    mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+                    mock.patch.object(
+                        RELEASE,
+                        "_capture_stable_bootstrap_recovery",
+                        return_value=(observation, snapshot_digest),
+                    ),
+                    mock.patch.object(RELEASE, "_write_receipt", writes),
+                    mock.patch.object(RELEASE, "_journal", writes),
+                )
+            ), self.assertRaisesRegex(RELEASE.DeployError, "TERMINAL_JOURNAL_CAS_MISMATCH"):
+                RELEASE.complete_bootstrap_recovery(
+                    Path("/recovery"),
+                    Path("/source"),
+                    RECOVERY_RUN_ID,
+                    fixture["permit"].path,
+                    fixture["permit"].digest,
+                    context["prepare_digest"],
+                    RECOVERY_FLOWISE_ID,
+                    OBSERVED_HARDENED_CONFIG_HASH,
+                    snapshot_digest,
+                )
+            writes.assert_not_called()
+
+    def test_bootstrap_recovery_terminal_journal_rechecks_preimage_before_its_only_write(self):
+        fixture = bootstrap_recovery_fixture()
+        observation, snapshot_digest = self._capture_bootstrap_recovery_fixture(fixture)
+        context = fixture["context"]
+        complete_receipt = RELEASE._build_bootstrap_recovery_complete_receipt(
+            context,
+            observation,
+            snapshot_digest,
+            "2026-07-28T17:32:00Z",
+        )
+        complete_digest = digest(canonical(complete_receipt))
+        drifted = copy.deepcopy(context["journal"])
+        drifted["updated_at"] = "2026-07-28T17:32:01Z"
+        drifted_data = canonical(drifted)
+        writes = mock.Mock(
+            side_effect=AssertionError("journal preimage drift must remain zero-write")
+        )
+        with mock.patch.object(
+            RELEASE,
+            "_validate_bootstrap_recovery_run_topology",
+            side_effect=recovery_topology_stub(True),
+        ), mock.patch.object(
+            RELEASE,
+            "_read_canonical_run_journal",
+            return_value=(drifted, drifted_data, digest(drifted_data)),
+        ), mock.patch.object(
+            RELEASE,
+            "_journal",
+            writes,
+        ), self.assertRaisesRegex(
+            RELEASE.DeployError,
+            "JOURNAL_PREIMAGE_CAS_MISMATCH",
+        ):
+            RELEASE._complete_bootstrap_recovery_journal(
+                context["run_dir"],
+                context["journal"],
+                complete_receipt,
+                complete_digest,
+            )
+        writes.assert_not_called()
+
+    def test_generic_terminal_recovery_rejects_consistently_tampered_receipt_and_journal(self):
+        fixture = bootstrap_recovery_fixture()
+        observation, snapshot_digest = self._capture_bootstrap_recovery_fixture(fixture)
+        context = fixture["context"]
+        complete_receipt = RELEASE._build_bootstrap_recovery_complete_receipt(
+            context,
+            observation,
+            snapshot_digest,
+            "2026-07-28T17:32:00Z",
+        )
+        authority_patches = (
+            mock.patch.object(
+                RELEASE,
+                "BOOTSTRAP_RECOVERY_SECCOMP_CANONICAL_DIGEST",
+                TEST_SECCOMP_DIGEST,
+            ),
+            mock.patch.object(
+                RELEASE,
+                "BOOTSTRAP_RECOVERY_FULL_RUNTIME_PROJECTION_DIGEST",
+                fixture["full_runtime_projection_digest"],
+            ),
+            mock.patch.object(RELEASE, "BOOTSTRAP_RECOVERY_POSTGRES_CONTAINER_ID", POSTGRES_ID),
+            mock.patch.object(RELEASE, "BOOTSTRAP_RECOVERY_NGINX_CONTAINER_ID", NGINX_ID),
+            mock.patch.object(
+                RELEASE,
+                "BOOTSTRAP_RECOVERY_MIGRATION_COUNT",
+                fixture["prepare"]["baseline"]["database"]["migration_count"],
+            ),
+            mock.patch.object(
+                RELEASE,
+                "BOOTSTRAP_RECOVERY_MIGRATION_NAME_DIGEST",
+                fixture["prepare"]["baseline"]["database"]["migration_name_sha256"],
+            ),
+        )
+        with _MultiPatch(authority_patches):
+            RELEASE._validate_bootstrap_recovery_terminal_receipt_authority(complete_receipt)
+
+        tampered_receipt = copy.deepcopy(complete_receipt)
+        other_requested_hash = "a" * 64
+        tampered_receipt["hardened_active"]["compose_config_hash"] = other_requested_hash
+        tampered_receipt["runtime"]["requested_compose_config_hash"] = other_requested_hash
+        tampered_receipt["recovery"]["runtime"][
+            "requested_compose_config_hash"
+        ] = other_requested_hash
+        tampered_receipt_data = canonical(tampered_receipt)
+        tampered_receipt_digest = digest(tampered_receipt_data)
+        terminal_journal = copy.deepcopy(context["journal"])
+        terminal_journal.update(
+            {
+                "state": "complete_hardened_baseline",
+                "phase": "complete",
+                "completion_mode": RELEASE.BOOTSTRAP_RECOVERY_COMPLETION_MODE,
+                "bootstrap_complete_receipt_sha256": tampered_receipt_digest,
+                "recovery_authority": RELEASE._recovery_authority_from_receipt(
+                    tampered_receipt
+                ),
+                "updated_at": "2026-07-28T17:32:01Z",
+            }
+        )
+        terminal_journal_data = canonical(terminal_journal)
+        with tempfile.TemporaryDirectory() as directory:
+            runs_dir = Path(directory)
+            run_dir = runs_dir / RECOVERY_RUN_ID
+            run_dir.mkdir()
+            (run_dir / "journal.json").write_bytes(b"present")
+            writes = mock.Mock(
+                side_effect=AssertionError("tampered terminal authority must remain zero-write")
+            )
+
+            def read_control(path, **_kwargs):
+                if Path(path).name == "journal.json":
+                    return terminal_journal_data
+                if Path(path).name == "bootstrap-complete-receipt.json":
+                    return tampered_receipt_data
+                raise AssertionError(f"unexpected control read: {Path(path).name}")
+
+            with mock.patch.object(RELEASE, "RUNS_DIR", runs_dir), mock.patch.object(
+                RELEASE,
+                "_validate_inventory_directory",
+            ), mock.patch.object(
+                RELEASE,
+                "_validate_bootstrap_recovery_run_topology",
+                side_effect=recovery_topology_stub(True),
+            ), mock.patch.object(
+                RELEASE,
+                "read_regular",
+                side_effect=read_control,
+            ), mock.patch.object(
+                RELEASE,
+                "_read_receipt",
+                return_value=(run_dir, fixture["prepare"]),
+            ), mock.patch.object(
+                RELEASE,
+                "_journal",
+                writes,
+            ), mock.patch.object(
+                RELEASE,
+                "_execute_legacy_rollback_transaction",
+                writes,
+            ), _MultiPatch(authority_patches), self.assertRaisesRegex(
+                RELEASE.DeployError,
+                "TERMINAL_ACTIVE_AUTHORITY_INVALID",
+            ):
+                RELEASE._recover_interrupted_runs()
+            writes.assert_not_called()
+
+    def test_recovery_receipt_publish_collision_and_control_roundtrip_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bootstrap-complete-receipt.json"
+            original = b"pre-existing-immutable-receipt"
+            path.write_bytes(original)
+            with mock.patch.object(RELEASE.os, "fchown"), self.assertRaisesRegex(
+                RELEASE.DeployError, "RECEIPT_ALREADY_EXISTS"
+            ):
+                RELEASE._write_receipt(path, {"schema_version": 1, "state": "replacement"})
+            self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(sorted(item.name for item in path.parent.iterdir()), [path.name])
+
+        fixture = bootstrap_recovery_fixture()
+        observation, snapshot_digest = self._capture_bootstrap_recovery_fixture(fixture)
+        context = fixture["context"]
+        journal_write = mock.Mock()
+        with PatchedLock(self), _MultiPatch(
+            (
+                mock.patch.object(
+                    RELEASE,
+                    "_validate_bootstrap_recovery_run_topology",
+                    side_effect=recovery_topology_stub(False),
+                ),
+                mock.patch.object(
+                    RELEASE,
+                    "_read_canonical_run_journal",
+                    return_value=(context["journal"], context["journal_data"], context["journal_pre_sha256"]),
+                ),
+                mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+                mock.patch.object(
+                    RELEASE,
+                    "_capture_stable_bootstrap_recovery",
+                    return_value=(observation, snapshot_digest),
+                ),
+                mock.patch.object(RELEASE, "_write_receipt", return_value=digest(b"published")),
+                mock.patch.object(
+                    RELEASE,
+                    "_read_existing_bootstrap_recovery_receipt",
+                    return_value=(context["run_dir"], {"tampered": True}, canonical({"tampered": True}), digest(b"tampered")),
+                ),
+                mock.patch.object(RELEASE, "_journal", journal_write),
+            )
+        ), self.assertRaisesRegex(RELEASE.DeployError, "COMPLETE_RECEIPT_ROUNDTRIP_MISMATCH"):
+            RELEASE.complete_bootstrap_recovery(
+                Path("/recovery"),
+                Path("/source"),
+                RECOVERY_RUN_ID,
+                fixture["permit"].path,
+                fixture["permit"].digest,
+                context["prepare_digest"],
+                RECOVERY_FLOWISE_ID,
+                OBSERVED_HARDENED_CONFIG_HASH,
+                snapshot_digest,
+            )
+        journal_write.assert_not_called()
+
+        published = []
+        journals = []
+
+        def receipt_write(_path, document):
+            published.append(copy.deepcopy(document))
+            return digest(canonical(document))
+
+        def receipt_read(_run_id):
+            document = published[-1]
+            data = canonical(document)
+            return context["run_dir"], document, data, digest(data)
+
+        with PatchedLock(self), _MultiPatch(
+            (
+                mock.patch.object(
+                    RELEASE,
+                    "_validate_bootstrap_recovery_run_topology",
+                    side_effect=recovery_topology_stub(lambda: bool(published)),
+                ),
+                mock.patch.object(
+                    RELEASE,
+                    "_read_canonical_run_journal",
+                    return_value=(context["journal"], context["journal_data"], context["journal_pre_sha256"]),
+                ),
+                mock.patch.object(RELEASE, "_bootstrap_recovery_static_context", return_value=context),
+                mock.patch.object(
+                    RELEASE,
+                    "_capture_stable_bootstrap_recovery",
+                    return_value=(observation, snapshot_digest),
+                ),
+                mock.patch.object(RELEASE, "_write_receipt", side_effect=receipt_write),
+                mock.patch.object(RELEASE, "_read_existing_bootstrap_recovery_receipt", side_effect=receipt_read),
+                mock.patch.object(
+                    RELEASE,
+                    "_journal",
+                    side_effect=lambda _root, value: journals.append(copy.deepcopy(value)),
+                ),
+                mock.patch.object(RELEASE, "utc_now", return_value="2026-07-28T17:33:00Z"),
+            )
+        ), self.assertRaisesRegex(RELEASE.DeployError, "TERMINAL_JOURNAL_ROUNDTRIP_MISMATCH"):
+            RELEASE.complete_bootstrap_recovery(
+                Path("/recovery"),
+                Path("/source"),
+                RECOVERY_RUN_ID,
+                fixture["permit"].path,
+                fixture["permit"].digest,
+                context["prepare_digest"],
+                RECOVERY_FLOWISE_ID,
+                OBSERVED_HARDENED_CONFIG_HASH,
+                snapshot_digest,
+            )
+        self.assertEqual(len(published), 1)
+        self.assertEqual(len(journals), 1)
 
     def test_bootstrap_runtime_environment_is_exact_image_overlay_and_secret_safe_hmac(self):
         image_environment = {"NODE_OPTIONS": "--max-old-space-size=4096", "OVERRIDDEN": "image"}
