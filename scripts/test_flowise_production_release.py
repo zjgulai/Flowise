@@ -88,6 +88,8 @@ def write_config_archive(
     config_is_file=True,
     config_member_type=None,
     config_pax_headers=None,
+    manifest_member_type=None,
+    manifest_is_pax_sparse=False,
     include_alternate_alias=False,
 ):
     config_bytes = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
@@ -102,6 +104,13 @@ def write_config_archive(
     ).encode()
     with tarfile.open(archive_path, "w:gz") as archive:
         manifest_info = tarfile.TarInfo("manifest.json")
+        if manifest_member_type is not None:
+            manifest_info.type = manifest_member_type
+        if manifest_is_pax_sparse:
+            manifest_info.pax_headers = {
+                "GNU.sparse.map": f"0,{len(manifest_bytes)}",
+                "GNU.sparse.realsize": str(len(manifest_bytes)),
+            }
         manifest_info.size = len(manifest_bytes)
         archive.addfile(manifest_info, io.BytesIO(manifest_bytes))
         config_names = [config_name] * config_copies
@@ -3147,6 +3156,53 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                     config_name_style="containerd",
                     config_member_type=member_type,
                     config_pax_headers=pax_headers,
+                )
+                with self.subTest(label=label), self.assertRaisesRegex(
+                    RELEASE.DeployError,
+                    "IMAGE_ARCHIVE_MEMBER_INVALID",
+                ):
+                    RELEASE.verify_archive_contract(
+                        archive_path,
+                        image_tag=CANDIDATE_TAG,
+                        image_config_digest=config_digest,
+                        revision=REVISION,
+                        release_id=f"git-{REVISION}",
+                        repository_url=source,
+                    )
+
+    def test_archive_manifest_member_rejects_contiguous_gnu_and_pax_sparse_types(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = "https://github.com/example/flowise"
+            config = {
+                "architecture": "amd64",
+                "os": "linux",
+                "config": {
+                    "User": "node",
+                    "WorkingDir": "/usr/src/flowise",
+                    "Cmd": ["node", "packages/server/bin/run", "start"],
+                    "Labels": {
+                        "org.opencontainers.image.created": "2026-07-28T19:26:44+08:00",
+                        "org.opencontainers.image.revision": REVISION,
+                        "org.opencontainers.image.source": source,
+                        "org.opencontainers.image.version": f"git-{REVISION}",
+                    },
+                },
+            }
+            cases = (
+                ("contiguous", tarfile.CONTTYPE, False),
+                ("gnu-sparse", tarfile.GNUTYPE_SPARSE, False),
+                ("pax-sparse", tarfile.REGTYPE, True),
+            )
+            for label, member_type, pax_sparse in cases:
+                archive_path = root / f"manifest-{label}.tar.gz"
+                config_digest = write_config_archive(
+                    archive_path,
+                    image_tag=CANDIDATE_TAG,
+                    config=config,
+                    config_name_style="containerd",
+                    manifest_member_type=member_type,
+                    manifest_is_pax_sparse=pax_sparse,
                 )
                 with self.subTest(label=label), self.assertRaisesRegex(
                     RELEASE.DeployError,
