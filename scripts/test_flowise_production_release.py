@@ -2139,6 +2139,29 @@ class ProductionReleaseTests(unittest.TestCase):
                 with self.subTest(label=label), self.assertRaisesRegex(RELEASE.DeployError, error):
                     RELEASE.validate_release_manifest(manifest)
 
+    def test_python_wrapper_manifest_inputs_match_node_manifest_validator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = BundleFixture(directory)
+            script = """
+import fs from 'node:fs'
+const { validateManifest } = await import(process.argv[1])
+validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
+"""
+            result = subprocess.run(
+                [
+                    "node",
+                    "--input-type=module",
+                    "--eval",
+                    script,
+                    MODULE_PATH.with_name("release-manifest.mjs").as_uri(),
+                ],
+                input=(fixture.root / "release-manifest.json").read_text(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_evidence_rejects_bad_hash_boolean_and_line_order(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = BundleFixture(directory)

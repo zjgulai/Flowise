@@ -90,6 +90,8 @@ EXPECTED_MANIFEST_INPUTS = (
     ".nvmrc",
     "Dockerfile",
     "docker-compose.prod.yml",
+    "docker/apk-build.lock",
+    "docker/apk-runtime.lock",
     "docker/seccomp/chromium.json",
     "package.json",
     "pnpm-lock.yaml",
