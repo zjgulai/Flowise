@@ -62,6 +62,10 @@ RUN_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\Z")
 CONFIG_HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
 DOCKER_ID_RE = re.compile(r"[0-9a-f]{64}\Z")
 ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+OCI_CREATED_AT_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\Z"
+)
 LEGACY_BOOTSTRAP_REVISION = "c947339b7033c930be37591918f59c7725800bbe"
 LEGACY_BOOTSTRAP_REPOSITORY_URLS = (
     "https://github.com/zjgulai/Flowise",
@@ -661,14 +665,41 @@ def _valid_timestamp(value: Any) -> bool:
     return True
 
 
+def _valid_oci_created_at(value: Any) -> bool:
+    """Accept a strict RFC3339 instant from an OCI image provenance label."""
+
+    if (
+        not isinstance(value, str)
+        or OCI_CREATED_AT_RE.fullmatch(value) is None
+        or value.endswith("-00:00")
+    ):
+        return False
+    try:
+        datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return False
+    return True
+
+
 def _archive_member_bytes(archive: tarfile.TarFile, name: str, maximum: int) -> bytes:
     members = [item for item in archive.getmembers() if item.name == name]
-    if len(members) != 1 or not members[0].isfile() or members[0].size > maximum:
+    if (
+        len(members) != 1
+        or members[0].type not in (tarfile.REGTYPE, tarfile.AREGTYPE)
+        or members[0].sparse is not None
+        or any(key.startswith("GNU.sparse.") for key in members[0].pax_headers)
+        or members[0].size < 0
+        or members[0].size > maximum
+    ):
         raise DeployError("IMAGE_ARCHIVE_MEMBER_INVALID")
     stream = archive.extractfile(members[0])
     if stream is None:
         raise DeployError("IMAGE_ARCHIVE_MEMBER_UNREADABLE")
-    return stream.read()
+    with stream:
+        data = stream.read(maximum + 1)
+    if len(data) != members[0].size or len(data) > maximum:
+        raise DeployError("IMAGE_ARCHIVE_MEMBER_UNREADABLE")
+    return data
 
 
 def _parse_archive_json(data: bytes) -> Any:
@@ -676,6 +707,25 @@ def _parse_archive_json(data: bytes) -> Any:
         return json.loads(data.decode("utf-8"), object_pairs_hook=_strict_object)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise DeployError("IMAGE_ARCHIVE_JSON_INVALID") from error
+
+
+def _verified_archive_config_bytes(
+    archive: tarfile.TarFile,
+    config_name: Any,
+    image_config_digest: str,
+    mismatch_error: str,
+) -> bytes:
+    if not isinstance(config_name, str):
+        raise DeployError(mismatch_error)
+    match = re.fullmatch(r"(?:blobs/sha256/([0-9a-f]{64})|([0-9a-f]{64})\.json)", config_name)
+    digest_hex = (match.group(1) or match.group(2)) if match is not None else None
+    if digest_hex is None or f"sha256:{digest_hex}" != image_config_digest:
+        raise DeployError(mismatch_error)
+    aliases = {f"blobs/sha256/{digest_hex}", f"{digest_hex}.json"}
+    matching_members = [item for item in archive.getmembers() if item.name in aliases]
+    if len(matching_members) != 1 or matching_members[0].name != config_name:
+        raise DeployError("IMAGE_ARCHIVE_MEMBER_INVALID")
+    return _archive_member_bytes(archive, config_name, 16 * 1024 * 1024)
 
 
 def verify_archive_contract(
@@ -695,14 +745,13 @@ def verify_archive_contract(
             entry = manifest[0]
             if entry.get("RepoTags") != [image_tag]:
                 raise DeployError("IMAGE_ARCHIVE_TAG_MISMATCH")
-            config_name = entry.get("Config")
-            if not isinstance(config_name, str):
-                raise DeployError("IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH")
-            match = re.fullmatch(r"([0-9a-f]{64})\.json", config_name)
-            if not match or f"sha256:{match.group(1)}" != image_config_digest:
-                raise DeployError("IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH")
-            config_bytes = _archive_member_bytes(archive, config_name, 16 * 1024 * 1024)
-    except (tarfile.TarError, OSError) as error:
+            config_bytes = _verified_archive_config_bytes(
+                archive,
+                entry.get("Config"),
+                image_config_digest,
+                "IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH",
+            )
+    except (tarfile.TarError, OSError, ValueError) as error:
         raise DeployError("IMAGE_ARCHIVE_UNREADABLE") from error
     if sha256_bytes(config_bytes) != image_config_digest:
         raise DeployError("IMAGE_ARCHIVE_CONFIG_DIGEST_MISMATCH")
@@ -723,7 +772,7 @@ def verify_archive_contract(
         or runtime.get("Cmd") != ["node", "packages/server/bin/run", "start"]
         or not isinstance(labels, dict)
         or any(labels.get(key) != value for key, value in expected_labels.items())
-        or not _valid_timestamp(labels.get("org.opencontainers.image.created"))
+        or not _valid_oci_created_at(labels.get("org.opencontainers.image.created"))
     ):
         raise DeployError("IMAGE_ARCHIVE_OCI_CONTRACT_MISMATCH")
     return {"platform": "linux/amd64", "oci_labels_verified": True}
@@ -749,14 +798,13 @@ def verify_legacy_archive_contract(
             entry = manifest[0]
             if entry.get("RepoTags") != [image_tag]:
                 raise DeployError("LEGACY_IMAGE_ARCHIVE_TAG_MISMATCH")
-            config_name = entry.get("Config")
-            if not isinstance(config_name, str):
-                raise DeployError("LEGACY_IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH")
-            match = re.fullmatch(r"([0-9a-f]{64})\.json", config_name)
-            if match is None or f"sha256:{match.group(1)}" != image_config_digest:
-                raise DeployError("LEGACY_IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH")
-            config_bytes = _archive_member_bytes(archive, config_name, 16 * 1024 * 1024)
-    except (tarfile.TarError, OSError) as error:
+            config_bytes = _verified_archive_config_bytes(
+                archive,
+                entry.get("Config"),
+                image_config_digest,
+                "LEGACY_IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH",
+            )
+    except (tarfile.TarError, OSError, ValueError) as error:
         raise DeployError("LEGACY_IMAGE_ARCHIVE_UNREADABLE") from error
     if sha256_bytes(config_bytes) != image_config_digest:
         raise DeployError("LEGACY_IMAGE_ARCHIVE_CONFIG_DIGEST_MISMATCH")
@@ -775,7 +823,7 @@ def verify_legacy_archive_contract(
         or labels.get("org.opencontainers.image.version") != release_id
         or labels.get("org.opencontainers.image.source") != repository_url
         or labels.get("org.opencontainers.image.created") != created_at
-        or not _valid_timestamp(created_at)
+        or not _valid_oci_created_at(created_at)
     ):
         raise DeployError("LEGACY_IMAGE_ARCHIVE_RUNTIME_CONTRACT_MISMATCH")
     return {
@@ -1138,7 +1186,7 @@ def verify_transition_permit(
         or active_tag != f"flowise-chinese:git-{active_revision}"
         or active.get("release_id") != f"git-{active_revision}"
         or active.get("repository_url") not in LEGACY_BOOTSTRAP_REPOSITORY_URLS
-        or not _valid_timestamp(active.get("created_at"))
+        or not _valid_oci_created_at(active.get("created_at"))
         or not isinstance(active.get("image_config_digest"), str)
         or not DIGEST_RE.fullmatch(active["image_config_digest"])
         or not isinstance(active.get("runtime_label_config_hash"), str)
@@ -2408,7 +2456,7 @@ def inspect_image(
         labels.get("org.opencontainers.image.version") != f"git-{expected_revision}"
         or not isinstance(labels.get("org.opencontainers.image.source"), str)
         or not labels.get("org.opencontainers.image.source")
-        or not _valid_timestamp(labels.get("org.opencontainers.image.created"))
+        or not _valid_oci_created_at(labels.get("org.opencontainers.image.created"))
     ):
         raise DeployError("IMAGE_OCI_LABEL_CONTRACT_MISMATCH")
     if expected_repository_url is not None and labels.get("org.opencontainers.image.source") != expected_repository_url:

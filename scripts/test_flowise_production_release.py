@@ -77,6 +77,64 @@ def digest(value):
     return "sha256:" + hashlib.sha256(value).hexdigest()
 
 
+def write_config_archive(
+    archive_path,
+    *,
+    image_tag,
+    config,
+    config_name_style="classic",
+    config_name=None,
+    config_copies=1,
+    config_is_file=True,
+    config_member_type=None,
+    config_pax_headers=None,
+    manifest_member_type=None,
+    manifest_is_pax_sparse=False,
+    include_alternate_alias=False,
+):
+    config_bytes = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+    config_hex = hashlib.sha256(config_bytes).hexdigest()
+    if config_name is None:
+        config_name = (
+            f"blobs/sha256/{config_hex}" if config_name_style == "containerd" else f"{config_hex}.json"
+        )
+    manifest_bytes = json.dumps(
+        [{"Config": config_name, "RepoTags": [image_tag], "Layers": []}],
+        separators=(",", ":"),
+    ).encode()
+    with tarfile.open(archive_path, "w:gz") as archive:
+        manifest_info = tarfile.TarInfo("manifest.json")
+        if manifest_member_type is not None:
+            manifest_info.type = manifest_member_type
+        if manifest_is_pax_sparse:
+            manifest_info.pax_headers = {
+                "GNU.sparse.map": f"0,{len(manifest_bytes)}",
+                "GNU.sparse.realsize": str(len(manifest_bytes)),
+            }
+        manifest_info.size = len(manifest_bytes)
+        archive.addfile(manifest_info, io.BytesIO(manifest_bytes))
+        config_names = [config_name] * config_copies
+        if include_alternate_alias:
+            alternate_name = (
+                f"{config_hex}.json" if config_name.startswith("blobs/sha256/") else f"blobs/sha256/{config_hex}"
+            )
+            config_names.append(alternate_name)
+        for member_name in config_names:
+            config_info = tarfile.TarInfo(member_name)
+            if config_member_type is not None:
+                config_info.type = config_member_type
+            if config_pax_headers is not None:
+                config_info.pax_headers = dict(config_pax_headers)
+            if config_is_file:
+                config_info.size = len(config_bytes)
+                archive.addfile(config_info, io.BytesIO(config_bytes))
+            else:
+                config_info.type = tarfile.SYMTYPE
+                config_info.linkname = "manifest.json"
+                archive.addfile(config_info)
+    return f"sha256:{config_hex}"
+
+
 def environment_binding(environment):
     return RELEASE.runtime_environment_binding(environment, TEST_KEY)
 
@@ -2678,6 +2736,88 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
             )
         self.assertNotIn("sentinel-secret", str(consumer_error.exception))
 
+    def test_control_and_oci_created_timestamp_contracts_are_distinct(self):
+        for value in (
+            "2026-07-28T11:26:44Z",
+            "2026-07-28T19:26:44+08:00",
+            "2026-07-23T01:39:35-04:30",
+            "2026-07-28T19:26:44.123456789+08:00",
+        ):
+            with self.subTest(value=value):
+                self.assertTrue(RELEASE._valid_oci_created_at(value))
+        for value in (
+            "2026-07-28 19:26:44+08:00",
+            "2026-07-28T19:26:44",
+            "2026-07-28T19:26:44+08:60",
+            "2026-07-28T19:26:44+24:00",
+            "2026-07-28T19:26:44-00:00",
+            "2026-07-28T24:00:00Z",
+            "2026-02-30T19:26:44Z",
+            "2026-07-28T19:26:44z",
+            "2026-07-28T19:26:44Z\n",
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(RELEASE._valid_oci_created_at(value))
+
+        self.assertTrue(RELEASE._valid_timestamp("2026-07-28T11:26:44.123Z"))
+        self.assertFalse(RELEASE._valid_timestamp("2026-07-28T19:26:44+08:00"))
+
+    def test_release_manifest_control_created_at_rejects_numeric_offset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = BundleFixture(directory)
+            manifest = json.loads((fixture.root / "release-manifest.json").read_text())
+            manifest["created_at"] = "2026-07-28T19:26:44+08:00"
+            with self.assertRaisesRegex(RELEASE.DeployError, "RELEASE_MANIFEST_HEADER_INVALID"):
+                RELEASE.validate_release_manifest(manifest)
+
+    def test_inspect_image_accepts_exact_oci_created_numeric_offset(self):
+        source = "https://github.com/example/flowise"
+        created_at = "2026-07-28T19:26:44+08:00"
+        image_document = {
+            "Id": CANDIDATE_DIGEST,
+            "Os": "linux",
+            "Architecture": "amd64",
+            "Config": {
+                "User": "node",
+                "WorkingDir": "/usr/src/flowise",
+                "Cmd": ["node", "packages/server/bin/run", "start"],
+                "Env": [],
+                "Labels": {
+                    "org.opencontainers.image.created": created_at,
+                    "org.opencontainers.image.revision": REVISION,
+                    "org.opencontainers.image.source": source,
+                    "org.opencontainers.image.version": f"git-{REVISION}",
+                },
+            },
+        }
+        with mock.patch.object(RELEASE, "run_command", return_value=json.dumps([image_document])):
+            observed = RELEASE.inspect_image(
+                CANDIDATE_TAG,
+                CANDIDATE_DIGEST,
+                REVISION,
+                source,
+            )
+        self.assertEqual(observed["created_at"], created_at)
+
+    def test_transition_permit_accepts_exact_oci_created_numeric_offset(self):
+        bundle = types.SimpleNamespace(
+            bundle_digest=digest(b"bundle"),
+            revision=REVISION,
+            image_tag=CANDIDATE_TAG,
+            image_config_digest=CANDIDATE_DIGEST,
+        )
+        document = transition_permit_document(bundle)
+        document["active_legacy"]["created_at"] = "2026-07-23T14:09:35+08:00"
+        permit_bytes = canonical(document)
+        with mock.patch.object(RELEASE, "read_regular", return_value=permit_bytes):
+            verified = RELEASE.verify_transition_permit(
+                Path("/permit.json"),
+                digest(permit_bytes),
+                bundle=bundle,
+                run_id=RUN_ID,
+            )
+        self.assertEqual(verified.document["active_legacy"]["created_at"], "2026-07-23T14:09:35+08:00")
+
     def test_archive_config_digest_uses_exact_member_bytes_not_reserialized_json(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2720,6 +2860,363 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                     repository_url=source,
                 )
 
+    def test_candidate_and_legacy_archive_contracts_accept_exact_config_name_styles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cases = (
+                (
+                    "candidate",
+                    CANDIDATE_TAG,
+                    REVISION,
+                    f"git-{REVISION}",
+                    "https://github.com/example/flowise",
+                    "2026-07-28T11:26:44.000Z",
+                    RELEASE.verify_archive_contract,
+                ),
+                (
+                    "legacy",
+                    LEGACY_TAG,
+                    LEGACY_REVISION,
+                    f"git-{LEGACY_REVISION}",
+                    LEGACY_SOURCE,
+                    LEGACY_CREATED_AT,
+                    RELEASE.verify_legacy_archive_contract,
+                ),
+            )
+            for contract, image_tag, revision, release_id, source, created_at, verifier in cases:
+                config = {
+                    "architecture": "amd64",
+                    "os": "linux",
+                    "config": {
+                        "User": "node",
+                        "WorkingDir": "/usr/src/flowise",
+                        "Cmd": ["node", "packages/server/bin/run", "start"],
+                        "Labels": {
+                            "org.opencontainers.image.created": created_at,
+                            "org.opencontainers.image.revision": revision,
+                            "org.opencontainers.image.source": source,
+                            "org.opencontainers.image.version": release_id,
+                        },
+                    },
+                }
+                for config_name_style in ("classic", "containerd"):
+                    archive_path = root / f"{contract}-{config_name_style}.tar.gz"
+                    config_digest = write_config_archive(
+                        archive_path,
+                        image_tag=image_tag,
+                        config=config,
+                        config_name_style=config_name_style,
+                    )
+                    arguments = {
+                        "image_tag": image_tag,
+                        "image_config_digest": config_digest,
+                        "revision": revision,
+                        "release_id": release_id,
+                        "repository_url": source,
+                    }
+                    if contract == "legacy":
+                        arguments["created_at"] = created_at
+                    with self.subTest(contract=contract, config_name_style=config_name_style):
+                        self.assertEqual(verifier(archive_path, **arguments)["platform"], "linux/amd64")
+
+    def test_candidate_and_legacy_archive_contracts_accept_oci_created_numeric_offset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            created_at = "2026-07-28T19:26:44+08:00"
+            cases = (
+                (
+                    "candidate",
+                    CANDIDATE_TAG,
+                    REVISION,
+                    f"git-{REVISION}",
+                    "https://github.com/example/flowise",
+                    RELEASE.verify_archive_contract,
+                ),
+                (
+                    "legacy",
+                    LEGACY_TAG,
+                    LEGACY_REVISION,
+                    f"git-{LEGACY_REVISION}",
+                    LEGACY_SOURCE,
+                    RELEASE.verify_legacy_archive_contract,
+                ),
+            )
+            for contract, image_tag, revision, release_id, source, verifier in cases:
+                config = {
+                    "architecture": "amd64",
+                    "os": "linux",
+                    "config": {
+                        "User": "node",
+                        "WorkingDir": "/usr/src/flowise",
+                        "Cmd": ["node", "packages/server/bin/run", "start"],
+                        "Labels": {
+                            "org.opencontainers.image.created": created_at,
+                            "org.opencontainers.image.revision": revision,
+                            "org.opencontainers.image.source": source,
+                            "org.opencontainers.image.version": release_id,
+                        },
+                    },
+                }
+                archive_path = root / f"offset-{contract}.tar.gz"
+                config_digest = write_config_archive(
+                    archive_path,
+                    image_tag=image_tag,
+                    config=config,
+                    config_name_style="containerd",
+                )
+                arguments = {
+                    "image_tag": image_tag,
+                    "image_config_digest": config_digest,
+                    "revision": revision,
+                    "release_id": release_id,
+                    "repository_url": source,
+                }
+                if contract == "legacy":
+                    arguments["created_at"] = created_at
+                with self.subTest(contract=contract):
+                    self.assertEqual(verifier(archive_path, **arguments)["platform"], "linux/amd64")
+
+    def test_candidate_and_legacy_archive_contracts_reject_config_path_digest_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cases = (
+                (
+                    "candidate",
+                    CANDIDATE_TAG,
+                    REVISION,
+                    f"git-{REVISION}",
+                    "https://github.com/example/flowise",
+                    "2026-07-28T19:26:44+08:00",
+                    RELEASE.verify_archive_contract,
+                    "IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH",
+                ),
+                (
+                    "legacy",
+                    LEGACY_TAG,
+                    LEGACY_REVISION,
+                    f"git-{LEGACY_REVISION}",
+                    LEGACY_SOURCE,
+                    LEGACY_CREATED_AT,
+                    RELEASE.verify_legacy_archive_contract,
+                    "LEGACY_IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH",
+                ),
+            )
+            for contract, image_tag, revision, release_id, source, created_at, verifier, error in cases:
+                config = {
+                    "architecture": "amd64",
+                    "os": "linux",
+                    "config": {
+                        "User": "node",
+                        "WorkingDir": "/usr/src/flowise",
+                        "Cmd": ["node", "packages/server/bin/run", "start"],
+                        "Labels": {
+                            "org.opencontainers.image.created": created_at,
+                            "org.opencontainers.image.revision": revision,
+                            "org.opencontainers.image.source": source,
+                            "org.opencontainers.image.version": release_id,
+                        },
+                    },
+                }
+                for config_name_style in ("classic", "containerd"):
+                    wrong_hex = "0" * 64
+                    wrong_name = (
+                        f"blobs/sha256/{wrong_hex}"
+                        if config_name_style == "containerd"
+                        else f"{wrong_hex}.json"
+                    )
+                    archive_path = root / f"wrong-path-digest-{contract}-{config_name_style}.tar.gz"
+                    config_digest = write_config_archive(
+                        archive_path,
+                        image_tag=image_tag,
+                        config=config,
+                        config_name=wrong_name,
+                    )
+                    arguments = {
+                        "image_tag": image_tag,
+                        "image_config_digest": config_digest,
+                        "revision": revision,
+                        "release_id": release_id,
+                        "repository_url": source,
+                    }
+                    if contract == "legacy":
+                        arguments["created_at"] = created_at
+                    with self.subTest(contract=contract, config_name_style=config_name_style):
+                        with self.assertRaisesRegex(RELEASE.DeployError, error):
+                            verifier(archive_path, **arguments)
+
+    def test_containerd_config_path_remains_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = "https://github.com/example/flowise"
+            created_at = "2026-07-27T04:00:00.000Z"
+            config = {
+                "architecture": "amd64",
+                "os": "linux",
+                "config": {
+                    "User": "node",
+                    "WorkingDir": "/usr/src/flowise",
+                    "Cmd": ["node", "packages/server/bin/run", "start"],
+                    "Labels": {
+                        "org.opencontainers.image.created": created_at,
+                        "org.opencontainers.image.revision": REVISION,
+                        "org.opencontainers.image.source": source,
+                        "org.opencontainers.image.version": f"git-{REVISION}",
+                    },
+                },
+            }
+            arguments = {
+                "image_tag": CANDIDATE_TAG,
+                "revision": REVISION,
+                "release_id": f"git-{REVISION}",
+                "repository_url": source,
+            }
+
+            unsafe_path = "blobs/sha256/../" + "0" * 64
+            unsafe_archive = root / "unsafe-config-path.tar.gz"
+            arguments["image_config_digest"] = write_config_archive(
+                unsafe_archive,
+                image_tag=CANDIDATE_TAG,
+                config=config,
+                config_name=unsafe_path,
+            )
+            with self.assertRaisesRegex(RELEASE.DeployError, "IMAGE_ARCHIVE_CONFIG_NAME_MISMATCH"):
+                RELEASE.verify_archive_contract(unsafe_archive, **arguments)
+
+            duplicate_archive = root / "duplicate-config-member.tar.gz"
+            arguments["image_config_digest"] = write_config_archive(
+                duplicate_archive,
+                image_tag=CANDIDATE_TAG,
+                config=config,
+                config_name_style="containerd",
+                config_copies=2,
+            )
+            with self.assertRaisesRegex(RELEASE.DeployError, "IMAGE_ARCHIVE_MEMBER_INVALID"):
+                RELEASE.verify_archive_contract(duplicate_archive, **arguments)
+
+            alias_archive = root / "ambiguous-config-alias.tar.gz"
+            arguments["image_config_digest"] = write_config_archive(
+                alias_archive,
+                image_tag=CANDIDATE_TAG,
+                config=config,
+                config_name_style="containerd",
+                include_alternate_alias=True,
+            )
+            with self.assertRaisesRegex(RELEASE.DeployError, "IMAGE_ARCHIVE_MEMBER_INVALID"):
+                RELEASE.verify_archive_contract(alias_archive, **arguments)
+
+            symlink_archive = root / "symlink-config-member.tar.gz"
+            arguments["image_config_digest"] = write_config_archive(
+                symlink_archive,
+                image_tag=CANDIDATE_TAG,
+                config=config,
+                config_name_style="containerd",
+                config_is_file=False,
+            )
+            with self.assertRaisesRegex(RELEASE.DeployError, "IMAGE_ARCHIVE_MEMBER_INVALID"):
+                RELEASE.verify_archive_contract(symlink_archive, **arguments)
+
+    def test_archive_config_member_rejects_contiguous_gnu_and_pax_sparse_types(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = "https://github.com/example/flowise"
+            config = {
+                "architecture": "amd64",
+                "os": "linux",
+                "config": {
+                    "User": "node",
+                    "WorkingDir": "/usr/src/flowise",
+                    "Cmd": ["node", "packages/server/bin/run", "start"],
+                    "Labels": {
+                        "org.opencontainers.image.created": "2026-07-28T19:26:44+08:00",
+                        "org.opencontainers.image.revision": REVISION,
+                        "org.opencontainers.image.source": source,
+                        "org.opencontainers.image.version": f"git-{REVISION}",
+                    },
+                },
+            }
+            config_bytes_length = len(json.dumps(config, sort_keys=True, separators=(",", ":")).encode())
+            cases = (
+                ("contiguous", tarfile.CONTTYPE, None),
+                ("gnu-sparse", tarfile.GNUTYPE_SPARSE, None),
+                (
+                    "pax-sparse",
+                    tarfile.REGTYPE,
+                    {
+                        "GNU.sparse.map": f"0,{config_bytes_length}",
+                        "GNU.sparse.realsize": str(config_bytes_length),
+                    },
+                ),
+            )
+            for label, member_type, pax_headers in cases:
+                archive_path = root / f"{label}.tar.gz"
+                config_digest = write_config_archive(
+                    archive_path,
+                    image_tag=CANDIDATE_TAG,
+                    config=config,
+                    config_name_style="containerd",
+                    config_member_type=member_type,
+                    config_pax_headers=pax_headers,
+                )
+                with self.subTest(label=label), self.assertRaisesRegex(
+                    RELEASE.DeployError,
+                    "IMAGE_ARCHIVE_MEMBER_INVALID",
+                ):
+                    RELEASE.verify_archive_contract(
+                        archive_path,
+                        image_tag=CANDIDATE_TAG,
+                        image_config_digest=config_digest,
+                        revision=REVISION,
+                        release_id=f"git-{REVISION}",
+                        repository_url=source,
+                    )
+
+    def test_archive_manifest_member_rejects_contiguous_gnu_and_pax_sparse_types(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = "https://github.com/example/flowise"
+            config = {
+                "architecture": "amd64",
+                "os": "linux",
+                "config": {
+                    "User": "node",
+                    "WorkingDir": "/usr/src/flowise",
+                    "Cmd": ["node", "packages/server/bin/run", "start"],
+                    "Labels": {
+                        "org.opencontainers.image.created": "2026-07-28T19:26:44+08:00",
+                        "org.opencontainers.image.revision": REVISION,
+                        "org.opencontainers.image.source": source,
+                        "org.opencontainers.image.version": f"git-{REVISION}",
+                    },
+                },
+            }
+            cases = (
+                ("contiguous", tarfile.CONTTYPE, False),
+                ("gnu-sparse", tarfile.GNUTYPE_SPARSE, False),
+                ("pax-sparse", tarfile.REGTYPE, True),
+            )
+            for label, member_type, pax_sparse in cases:
+                archive_path = root / f"manifest-{label}.tar.gz"
+                config_digest = write_config_archive(
+                    archive_path,
+                    image_tag=CANDIDATE_TAG,
+                    config=config,
+                    config_name_style="containerd",
+                    manifest_member_type=member_type,
+                    manifest_is_pax_sparse=pax_sparse,
+                )
+                with self.subTest(label=label), self.assertRaisesRegex(
+                    RELEASE.DeployError,
+                    "IMAGE_ARCHIVE_MEMBER_INVALID",
+                ):
+                    RELEASE.verify_archive_contract(
+                        archive_path,
+                        image_tag=CANDIDATE_TAG,
+                        image_config_digest=config_digest,
+                        revision=REVISION,
+                        release_id=f"git-{REVISION}",
+                        repository_url=source,
+                    )
+
     def test_legacy_archive_requires_exact_oci_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2728,7 +3225,7 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                 (
                     "mismatch",
                     {
-                        "org.opencontainers.image.created": "2026-07-23T06:09:34Z",
+                        "org.opencontainers.image.created": "2026-07-23T14:09:35+08:00",
                         "org.opencontainers.image.revision": LEGACY_REVISION,
                         "org.opencontainers.image.source": LEGACY_SOURCE,
                         "org.opencontainers.image.version": f"git-{LEGACY_REVISION}",
