@@ -69,6 +69,7 @@ describe('authenticated Chatflow continuity', () => {
         cy.get('button[title="Save Chatflow"]').click()
         cy.get('#chatflow-name').type(expectedName)
         cy.get('[role="dialog"]').contains('button', '保存').click()
+        cy.contains('Chatflow saved', { timeout: 30_000 }).should('be.visible')
 
         return getCurrentChatflowId().then((id) => {
             createdChatflowIds.push(id)
@@ -76,8 +77,22 @@ describe('authenticated Chatflow continuity', () => {
         })
     }
 
+    const returnToChatflows = () => {
+        cy.get('body').then(($body) => {
+            const backButton = $body.find('button[title="返回"]:visible').first()
+            if (backButton.length) cy.wrap(backButton).click()
+        })
+        cy.location('pathname', { timeout: 30_000 }).should((pathname) => {
+            expect(['/', '/chatflows']).to.include(pathname)
+        })
+        return cy.get('input[type="search"]').should('be.visible')
+    }
+
     const reopenChatflowThroughUi = (id, expectedName) => {
-        cy.visit(`/canvas/${id}`)
+        returnToChatflows()
+        cy.get('input[type="search"]').clear().type(expectedName)
+        cy.contains(expectedName).should('be.visible').click()
+        cy.location('pathname', { timeout: 30_000 }).should('eq', `/canvas/${id}`)
         cy.get('.react-flow__node-stickyNote').should('have.length', 1)
         cy.get('[placeholder="Type something here"]').should('have.value', noteText)
         return readStoredChatflow(id, expectedName)
@@ -91,7 +106,9 @@ describe('authenticated Chatflow continuity', () => {
             cy.then(() => expect(openCopyCanvas).to.have.been.calledWithMatch(/\/canvas$/, '_blank'))
         })
 
-        cy.visit('/canvas')
+        returnToChatflows()
+        cy.contains('button', '新增流程').click()
+        cy.location('pathname', { timeout: 30_000 }).should('eq', '/canvas')
         cy.get('.react-flow__node-stickyNote').should('have.length', 1)
         cy.get('[placeholder="Type something here"]').should('have.value', noteText)
         return createChatflowThroughUi(copyName).then((copyId) => {

@@ -103,6 +103,12 @@ describe('Chatflow continuity specification contract', () => {
         assert.match(source, /Cypress\.config\('baseUrl'\)/)
         assert.match(source, /Cypress\.env\('runId'\)/)
         assert.match(source, /afterEach\(/)
+        assert.match(source, /Chatflow saved/)
+        assert.match(source, /returnToChatflows/)
+        assert.match(source, /button\[title="返回"\]/)
+        assert.match(source, /新增流程/)
+        assert.match(source, /cy\.visit\('\/canvas'\)/)
+        assert.equal(source.match(/cy\.visit\(/g)?.length, 1)
         for (const lifecycleAlias of ['createChatflow', 'reopenChatflow', 'copyChatflow', 'deleteChatflow']) {
             assert.match(source, new RegExp(lifecycleAlias))
         }

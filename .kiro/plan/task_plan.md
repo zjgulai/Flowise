@@ -284,7 +284,11 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 
 -   [x] 冻结文档与计划状态，原子提交 recovery wrapper、测试和 spec；CI portability 与审查修复继续使用独立原子 commit。
 -   [x] 关闭 exact-head Node CI 暴露的 Chatflow Cypress alias 竞态：保持真实 UI CRUD/reopen 链路，改用页面状态与 API 回读作确定性证据；两次独立新数据库的本地 Chrome 聚焦重跑均通过。
--   [ ] 推送分支、创建 PR，等待 required CI 对精确 commit 全绿并合并到 `main`。
+-   [x] 关闭第四笔 exact-head Node CI 暴露的首次 reopen 硬导航竞态：等待保存成功提示，通过流程列表内 SPA 导航完成 reopen/copy；最终内容双轮聚焦 Chrome `1/1`、四套件全量 Chrome `5/5`。
+-   [x] 推送分支并创建 PR `zjgulai/Flowise#10`；第四笔 exact head 的 Docker CI 已全绿，Node CI 的唯一失败已形成第五笔最小 test-only 候选。
+-   [x] 对第五笔候选完成本地 release/security/build/static 和独立复审；复审 `APPROVE`，唯一 LOW 已用精确初始 `/canvas` 访问合同关闭。
+-   [x] 对 LOW 修复后的第五笔精确代码内容重跑 release/security/build/static，全部通过；独立复审确认所有 severity 均为 `0`。
+-   [ ] 原子提交第五笔候选并等待 required CI，全绿后合并到 `main`。
 -   [ ] 从合并后的 `main` 只触发一次人工 Docker readiness workflow；下载并独立验证包含 recovery 命令的自绑定 `linux/amd64` release artifact。
 
 ## Gate R3：生产恢复与新版本部署
