@@ -16,6 +16,8 @@ describe('authenticated Chatflow continuity', () => {
     ]
     const createdChatflowIds = []
     const consoleWarnings = []
+    const internalHeaders = { 'x-request-from': 'internal' }
+    const deletionConfirmationAttempts = 5
 
     const expectStoredStickyNote = (responseBody, expectedName) => {
         expect(responseBody.name).to.eq(expectedName)
@@ -27,8 +29,79 @@ describe('authenticated Chatflow continuity', () => {
         expect(flowData.nodes[0].data.inputs.note).to.eq(noteText)
     }
 
-    const deleteCurrentChatflow = (alias) => {
-        cy.intercept('DELETE', '**/api/v1/chatflows/*').as(alias)
+    const getCurrentChatflowId = () =>
+        cy
+            .location('pathname', { timeout: 30_000 })
+            .should('match', /^\/canvas\/[^/]+$/)
+            .then((pathname) => pathname.slice('/canvas/'.length))
+
+    const readStoredChatflow = (id, expectedName) =>
+        cy
+            .request({
+                url: `/api/v1/chatflows/${id}`,
+                headers: internalHeaders
+            })
+            .then((response) => {
+                expect(response.status, `stored Chatflow ${id}`).to.eq(200)
+                expect(response.body.id).to.eq(id)
+                expectStoredStickyNote(response.body, expectedName)
+                return response.body
+            })
+
+    const confirmChatflowDeleted = (id, attemptsRemaining = deletionConfirmationAttempts) =>
+        cy
+            .request({
+                url: `/api/v1/chatflows/${id}`,
+                headers: internalHeaders,
+                failOnStatusCode: false
+            })
+            .then((response) => {
+                if (response.status === 404) return
+
+                expect(response.status, `Chatflow ${id} deletion probe`).to.eq(200)
+                if (attemptsRemaining === 1) {
+                    throw new Error(`Chatflow ${id} still exists after ${deletionConfirmationAttempts} deletion probes`)
+                }
+                return confirmChatflowDeleted(id, attemptsRemaining - 1)
+            })
+
+    const createChatflowThroughUi = (expectedName) => {
+        cy.get('button[title="Save Chatflow"]').click()
+        cy.get('#chatflow-name').type(expectedName)
+        cy.get('[role="dialog"]').contains('button', '保存').click()
+
+        return getCurrentChatflowId().then((id) => {
+            createdChatflowIds.push(id)
+            return readStoredChatflow(id, expectedName).then(() => id)
+        })
+    }
+
+    const reopenChatflowThroughUi = (id, expectedName) => {
+        cy.visit(`/canvas/${id}`)
+        cy.get('.react-flow__node-stickyNote').should('have.length', 1)
+        cy.get('[placeholder="Type something here"]').should('have.value', noteText)
+        return readStoredChatflow(id, expectedName)
+    }
+
+    const copyChatflowThroughUi = (originalId) => {
+        cy.window().then((browserWindow) => {
+            const openCopyCanvas = cy.stub(browserWindow, 'open')
+            cy.get('button[title="设置"]').click()
+            cy.contains('复制对话流程').click()
+            cy.then(() => expect(openCopyCanvas).to.have.been.calledWithMatch(/\/canvas$/, '_blank'))
+        })
+
+        cy.visit('/canvas')
+        cy.get('.react-flow__node-stickyNote').should('have.length', 1)
+        cy.get('[placeholder="Type something here"]').should('have.value', noteText)
+        return createChatflowThroughUi(copyName).then((copyId) => {
+            expect(copyId).not.to.eq(originalId)
+            return copyId
+        })
+    }
+
+    const deleteChatflowThroughUi = (id) => {
+        cy.location('pathname').should('eq', `/canvas/${id}`)
         cy.get('button[title="设置"]').click()
         cy.contains('复制对话流程').should('be.visible')
         cy.contains('删除对话流程').click()
@@ -37,7 +110,8 @@ describe('authenticated Chatflow continuity', () => {
             .within(() => {
                 cy.contains('button', 'Delete').click()
             })
-        cy.wait(`@${alias}`).its('response.statusCode').should('eq', 200)
+        cy.location('pathname', { timeout: 30_000 }).should('eq', '/')
+        return confirmChatflowDeleted(id)
     }
 
     beforeEach(() => {
@@ -68,32 +142,28 @@ describe('authenticated Chatflow continuity', () => {
         for (const id of [...new Set(createdChatflowIds)]) {
             cy.request({
                 url: `/api/v1/chatflows/${id}`,
-                headers: { 'x-request-from': 'internal' },
+                headers: internalHeaders,
                 failOnStatusCode: false
             }).then((response) => {
                 if (response.status === 404) return
                 expect(response.status).to.eq(200)
-                cy.request({
-                    method: 'DELETE',
-                    url: `/api/v1/chatflows/${id}`,
-                    headers: { 'x-request-from': 'internal' }
-                })
-                    .its('status')
-                    .should('eq', 200)
+                return cy
+                    .request({
+                        method: 'DELETE',
+                        url: `/api/v1/chatflows/${id}`,
+                        headers: internalHeaders
+                    })
+                    .then((deleteResponse) => {
+                        expect(deleteResponse.status).to.eq(200)
+                        return confirmChatflowDeleted(id)
+                    })
             })
         }
         cy.then(() => expect(consoleWarnings, 'application console warnings').to.deep.eq([]))
     })
 
     it('creates, reopens, copies, and deletes a local Sticky Note Chatflow', () => {
-        cy.intercept('GET', '**/api/v1/nodes*').as('loadNodes')
         cy.visit('/canvas')
-        cy.wait('@loadNodes').then(({ response }) => {
-            expect(response.statusCode).to.eq(200)
-            expect(response.body).to.be.an('array')
-            expect(response.body.some((node) => node?.name === 'stickyNote')).to.eq(true)
-        })
-
         cy.get('button[title="添加节点"]').click()
         cy.get('[id^="nodes-accordian-header-"]').should('exist')
         cy.contains('[role="tab"]', 'Utilities').click().should('have.attr', 'aria-selected', 'true')
@@ -113,70 +183,18 @@ describe('authenticated Chatflow continuity', () => {
         cy.get('.react-flow__node-stickyNote').should('have.length', 1)
         cy.get('[placeholder="Type something here"]').clear().type(noteText)
 
-        cy.intercept('POST', '**/api/v1/chatflows').as('createChatflow')
-        cy.get('button[title="Save Chatflow"]').click()
-        cy.get('#chatflow-name').type(originalName)
-        cy.get('[role="dialog"]').contains('button', '保存').click()
-        cy.wait('@createChatflow').then(({ response }) => {
-            expect(response.statusCode).to.be.oneOf([200, 201])
-            expectStoredStickyNote(response.body, originalName)
-            createdChatflowIds.push(response.body.id)
-            const originalId = response.body.id
-            cy.location('pathname').should('eq', `/canvas/${originalId}`)
+        let originalId
+        let copyId
 
-            cy.intercept('GET', `**/api/v1/chatflows/${originalId}`).as('reopenChatflow')
-            cy.visit(`/canvas/${originalId}`)
-            cy.wait('@reopenChatflow').then(({ response: reopenResponse }) => {
-                expect(reopenResponse.statusCode).to.eq(200)
-                expectStoredStickyNote(reopenResponse.body, originalName)
-            })
-            cy.get('.react-flow__node-stickyNote').should('have.length', 1)
-            cy.get('[placeholder="Type something here"]').should('have.value', noteText)
-
-            cy.window().then((window) => {
-                cy.stub(window, 'open').as('openCopyCanvas')
-            })
-            cy.get('button[title="设置"]').click()
-            cy.contains('复制对话流程').click()
-            cy.get('@openCopyCanvas').should('have.been.calledWithMatch', /\/canvas$/, '_blank')
-
-            cy.intercept('POST', '**/api/v1/chatflows').as('copyChatflow')
-            cy.visit('/canvas')
-            cy.get('.react-flow__node-stickyNote').should('have.length', 1)
-            cy.get('[placeholder="Type something here"]').should('have.value', noteText)
-            cy.get('button[title="Save Chatflow"]').click()
-            cy.get('#chatflow-name').type(copyName)
-            cy.get('[role="dialog"]').contains('button', '保存').click()
-            cy.wait('@copyChatflow').then(({ response: copyResponse }) => {
-                expect(copyResponse.statusCode).to.be.oneOf([200, 201])
-                expect(copyResponse.body.id).not.to.eq(originalId)
-                expectStoredStickyNote(copyResponse.body, copyName)
-                createdChatflowIds.push(copyResponse.body.id)
-
-                deleteCurrentChatflow('deleteChatflowCopy')
-                cy.intercept({ method: 'GET', url: `**/api/v1/chatflows/${originalId}`, middleware: true }, (request) => {
-                    delete request.headers['if-none-match']
-                    delete request.headers['if-modified-since']
-                }).as('reloadOriginalAfterCopyDelete')
-                cy.visit(`/canvas/${originalId}`)
-                cy.wait('@reloadOriginalAfterCopyDelete').then(({ response: reloadResponse }) => {
-                    expect(reloadResponse.statusCode).to.eq(200)
-                    expectStoredStickyNote(reloadResponse.body, originalName)
-                })
-                cy.get('.react-flow__node-stickyNote').should('have.length', 1)
-                deleteCurrentChatflow('deleteChatflowOriginal')
-
-                cy.loginAsLocalOwner()
-                for (const id of [originalId, copyResponse.body.id]) {
-                    cy.request({
-                        url: `/api/v1/chatflows/${id}`,
-                        headers: { 'x-request-from': 'internal' },
-                        failOnStatusCode: false
-                    })
-                        .its('status')
-                        .should('eq', 404)
-                }
-            })
+        createChatflowThroughUi(originalName).then((id) => {
+            originalId = id
         })
+        cy.then(() => reopenChatflowThroughUi(originalId, originalName))
+        cy.then(() => copyChatflowThroughUi(originalId)).then((id) => {
+            copyId = id
+        })
+        cy.then(() => deleteChatflowThroughUi(copyId))
+        cy.then(() => reopenChatflowThroughUi(originalId, originalName))
+        cy.then(() => deleteChatflowThroughUi(originalId))
     })
 })

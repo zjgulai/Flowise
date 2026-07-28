@@ -283,6 +283,7 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 ## Gate R2：提交、CI 与自绑定恢复产物
 
 -   [x] 冻结文档与计划状态，原子提交 recovery wrapper、测试和 spec；CI portability 与审查修复继续使用独立原子 commit。
+-   [x] 关闭 exact-head Node CI 暴露的 Chatflow Cypress alias 竞态：保持真实 UI CRUD/reopen 链路，改用页面状态与 API 回读作确定性证据；两次独立新数据库的本地 Chrome 聚焦重跑均通过。
 -   [ ] 推送分支、创建 PR，等待 required CI 对精确 commit 全绿并合并到 `main`。
 -   [ ] 从合并后的 `main` 只触发一次人工 Docker readiness workflow；下载并独立验证包含 recovery 命令的自绑定 `linux/amd64` release artifact。
 
