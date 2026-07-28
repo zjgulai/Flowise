@@ -1894,18 +1894,24 @@ class ProductionReleaseTests(unittest.TestCase):
 
             def root_lstat(path):
                 value = real_lstat(path)
+                if Path(path).name == "flowise-node24-20260710-authorized-v2.tar.gz":
+                    uid, gid, size = 1000, 1000, 1_132_842_786
+                else:
+                    uid, gid, size = 0, 0, value.st_size
                 return types.SimpleNamespace(
                     st_mode=value.st_mode,
                     st_nlink=value.st_nlink,
-                    st_uid=0,
-                    st_gid=0,
-                    st_size=value.st_size,
+                    st_uid=uid,
+                    st_gid=gid,
+                    st_size=size,
                     st_dev=value.st_dev,
                     st_ino=value.st_ino,
                     st_mtime_ns=value.st_mtime_ns,
                 )
 
             def relaxed_read(path, **_kwargs):
+                if Path(path).name in RELEASE.LEGACY_NON_JOURNAL_FILE_SIBLINGS:
+                    raise AssertionError("non-journal sibling content must not be read")
                 return Path(path).read_bytes()
 
             common = (
@@ -1915,7 +1921,19 @@ class ProductionReleaseTests(unittest.TestCase):
                 mock.patch.object(RELEASE, "read_regular", side_effect=relaxed_read),
             )
             with _MultiPatch(common):
+                journal_only_inventory = RELEASE.legacy_journal_inventory()
+
+            for name in RELEASE.LEGACY_NON_JOURNAL_DIRECTORY_SIBLINGS:
+                (releases / name).mkdir(mode=0o700)
+            sibling_lock = releases / ".flowise-backup-permission-hardening.lock"
+            sibling_lock.write_bytes(b"")
+            sibling_lock.chmod(0o600)
+            sibling_archive = releases / "flowise-node24-20260710-authorized-v2.tar.gz"
+            sibling_archive.write_bytes(b"legacy archive")
+            sibling_archive.chmod(0o600)
+            with _MultiPatch(common):
                 inventory = RELEASE.legacy_journal_inventory()
+            self.assertEqual(inventory, journal_only_inventory)
             expected_records = [
                 {"path": path, "canonical_sha256": digest(canonical(document))}
                 for path, document in sorted(control_documents.items())
@@ -1952,12 +1970,126 @@ class ProductionReleaseTests(unittest.TestCase):
                 RELEASE.legacy_journal_inventory()
             unknown_release.rmdir()
 
+            collision = releases / "browser-acceptance" / "deployments"
+            collision.mkdir(mode=0o700)
+            with _MultiPatch(common), self.assertRaisesRegex(
+                RELEASE.DeployError, "SIBLING_DEPLOYMENTS_COLLISION"
+            ):
+                RELEASE.legacy_journal_inventory()
+            collision.rmdir()
+
             control_path = run_paths[0] / "prepare-status.json"
             in_progress = json.loads(control_path.read_text())
             in_progress.update({"state": "in_progress", "phase": "validated_pre_load"})
             control_path.write_bytes(canonical(in_progress))
             with _MultiPatch(common), self.assertRaisesRegex(RELEASE.DeployError, "UNRESOLVED_ROLLBACK"):
                 RELEASE.legacy_journal_inventory()
+
+    def test_legacy_non_journal_file_siblings_require_exact_safe_metadata(self):
+        def sibling(name, *, kind=stat.S_IFREG, mode=0o600, links=1, uid=0, gid=0, size=1):
+            path = mock.Mock()
+            path.name = name
+            path.lstat.return_value = types.SimpleNamespace(
+                st_mode=kind | mode,
+                st_nlink=links,
+                st_uid=uid,
+                st_gid=gid,
+                st_size=size,
+            )
+            return path
+
+        def archive(**overrides):
+            values = {"uid": 1000, "gid": 1000, "size": 1_132_842_786}
+            values.update(overrides)
+            return sibling("flowise-node24-20260710-authorized-v2.tar.gz", **values)
+
+        RELEASE._validate_legacy_non_journal_sibling(
+            sibling(".flowise-backup-permission-hardening.lock", size=0)
+        )
+        RELEASE._validate_legacy_non_journal_sibling(archive())
+
+        invalid = [
+            ("lock_nonempty", sibling(".flowise-backup-permission-hardening.lock", size=1), "SIZE_INVALID"),
+            ("archive_size_low", archive(size=1_132_842_785), "SIZE_INVALID"),
+            ("archive_size_high", archive(size=1_132_842_787), "SIZE_INVALID"),
+            ("hardlink", archive(links=2), "FILE_UNSAFE"),
+            ("owner", archive(uid=0, gid=0), "FILE_UNSAFE"),
+            ("mixed_owner", archive(uid=1000, gid=0), "FILE_UNSAFE"),
+            ("mixed_group", archive(uid=0, gid=1000), "FILE_UNSAFE"),
+            ("mode", archive(mode=0o644), "FILE_UNSAFE"),
+            ("unknown", sibling("flowise-node24-20260710-authorized-v3.tar.gz"), "RELEASE_ROOT_UNKNOWN"),
+        ]
+        invalid.extend(
+            (label, archive(kind=kind), "FILE_UNSAFE")
+            for label, kind in (
+                ("directory", stat.S_IFDIR),
+                ("symlink", stat.S_IFLNK),
+                ("fifo", stat.S_IFIFO),
+                ("socket", stat.S_IFSOCK),
+                ("character_device", stat.S_IFCHR),
+                ("block_device", stat.S_IFBLK),
+            )
+        )
+        for label, path, error in invalid:
+            with self.subTest(label=label), self.assertRaisesRegex(RELEASE.DeployError, error) as raised:
+                RELEASE._validate_legacy_non_journal_sibling(path)
+            self.assertNotIn("sentinel-secret-value", str(raised.exception))
+
+        unavailable = archive()
+        unavailable.lstat.side_effect = OSError("sentinel-secret-value")
+        with self.assertRaisesRegex(RELEASE.DeployError, "SIBLING_FILE_UNAVAILABLE") as raised:
+            RELEASE._validate_legacy_non_journal_sibling(unavailable)
+        self.assertNotIn("sentinel-secret-value", str(raised.exception))
+
+    def test_legacy_non_journal_directory_siblings_reject_unsafe_metadata_and_hidden_journals(self):
+        def sibling(info, *, deployments=None):
+            path = mock.MagicMock()
+            path.name = "browser-acceptance"
+            path.lstat.return_value = info
+            child = mock.Mock()
+            child.lstat.side_effect = FileNotFoundError if deployments is None else None
+            if deployments is not None:
+                child.lstat.return_value = deployments
+            path.__truediv__.return_value = child
+            return path
+
+        safe = types.SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o700,
+            st_uid=0,
+            st_gid=0,
+            st_nlink=99,
+            st_size=1,
+        )
+        RELEASE._validate_legacy_non_journal_sibling(sibling(safe))
+
+        unsafe = (
+            ("owner", types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=1000, st_gid=0)),
+            ("group", types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0, st_gid=1000)),
+            ("mode", types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=0)),
+            ("symlink", types.SimpleNamespace(st_mode=stat.S_IFLNK | 0o700, st_uid=0, st_gid=0)),
+            ("file", types.SimpleNamespace(st_mode=stat.S_IFREG | 0o700, st_uid=0, st_gid=0)),
+        )
+        for label, info in unsafe:
+            with self.subTest(label=label), self.assertRaisesRegex(RELEASE.DeployError, "DIRECTORY_UNSAFE"):
+                RELEASE._validate_legacy_non_journal_sibling(sibling(info))
+
+        with self.assertRaisesRegex(RELEASE.DeployError, "SIBLING_DEPLOYMENTS_COLLISION"):
+            RELEASE._validate_legacy_non_journal_sibling(sibling(safe, deployments=safe))
+
+        for name in (
+            "flowise-node24-20260710-authorized-v3.tar.gz",
+            "flowise-node24-20260710-authorized-v2.tar.gz.bak",
+            "Flowise-node24-20260710-authorized-v2.tar.gz",
+            "browser-acceptance-copy",
+            "sentinel-secret-value",
+        ):
+            path = mock.Mock()
+            path.name = name
+            with self.subTest(name=name), self.assertRaisesRegex(
+                RELEASE.DeployError, "LEGACY_JOURNAL_RELEASE_ROOT_UNKNOWN"
+            ) as raised:
+                RELEASE._validate_legacy_non_journal_sibling(path)
+            self.assertNotIn("sentinel-secret-value", str(raised.exception))
 
     def test_legacy_inventory_rejects_unsafe_directory_metadata_and_bad_post_timestamp(self):
         safe = types.SimpleNamespace(st_mode=0o040700, st_uid=0, st_gid=0)

@@ -118,6 +118,16 @@ The transition command must require a canonical JSON permit that is:
     `root_count`, `run_count`, `control_count`,
     `canonical_inventory_sha256`, and `unresolved_rollback_count`.
 
+The releases directory may also contain the exact, previously observed backup,
+restore, permission-hardening and browser-acceptance siblings that are not
+release journals. The wrapper classifies those siblings by exact name and
+requires their observed direct-child type, owner, group, mode and regular-file
+link/size shape on every transition observation. An unknown sibling, unsafe
+metadata, or an allowlisted directory containing a direct `deployments` child
+still fails closed. Their contents are not recursively read and are not folded
+into `legacy_journal_inventory`; unrelated evidence and backup drift is outside
+the journal authorization domain and may contain sensitive material.
+
 Unknown keys, missing keys, non-canonical JSON, a reused run, or any observed
 state drift must fail before a production write.
 
