@@ -171,6 +171,118 @@ EXPECTED_RUNTIME_HEALTHCHECK = {
     "Retries": 3,
     "StartPeriod": 60_000_000_000,
 }
+EXPECTED_RUNTIME_CONFIG_SURFACE = {
+    "AttachStderr": True,
+    "AttachStdin": False,
+    "AttachStdout": True,
+    "Cmd": ["node", "packages/server/bin/run", "start"],
+    "Domainname": "",
+    "Entrypoint": ["docker-entrypoint.sh"],
+    "ExposedPorts": {"3000/tcp": {}},
+    "Healthcheck": copy.deepcopy(EXPECTED_RUNTIME_HEALTHCHECK),
+    "Hostname": "__CURRENT_ID_PREFIX__",
+    "Image": "__IMAGE_TAG__",
+    "OnBuild": None,
+    "OpenStdin": False,
+    "StdinOnce": False,
+    "Tty": False,
+    "User": "1000:1000",
+    "Volumes": None,
+    "WorkingDir": "/usr/src/flowise",
+}
+EXPECTED_RUNTIME_HOST_CONFIG_SURFACE = {
+    "AutoRemove": False,
+    "Binds": None,
+    "BlkioDeviceReadBps": None,
+    "BlkioDeviceReadIOps": None,
+    "BlkioDeviceWriteBps": None,
+    "BlkioDeviceWriteIOps": None,
+    "BlkioWeight": 0,
+    "BlkioWeightDevice": None,
+    "CapAdd": None,
+    "CapDrop": ["ALL"],
+    "Cgroup": "",
+    "CgroupParent": "",
+    "CgroupnsMode": "private",
+    "ConsoleSize": [0, 0],
+    "ContainerIDFile": "",
+    "CpuCount": 0,
+    "CpuPercent": 0,
+    "CpuPeriod": 0,
+    "CpuQuota": 0,
+    "CpuRealtimePeriod": 0,
+    "CpuRealtimeRuntime": 0,
+    "CpuShares": 0,
+    "CpusetCpus": "",
+    "CpusetMems": "",
+    "DeviceCgroupRules": None,
+    "DeviceRequests": None,
+    "Devices": None,
+    "Dns": None,
+    "DnsOptions": None,
+    "DnsSearch": None,
+    "ExtraHosts": [],
+    "GroupAdd": None,
+    "IOMaximumBandwidth": 0,
+    "IOMaximumIOps": 0,
+    "Init": True,
+    "IpcMode": "private",
+    "Isolation": "",
+    "Links": None,
+    "LogConfig": copy.deepcopy(EXPECTED_RUNTIME_LOG_CONFIG),
+    "MaskedPaths": [
+        "/proc/asound",
+        "/proc/acpi",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/sys/firmware",
+        "/sys/devices/virtual/powercap",
+    ],
+    "Memory": 4_294_967_296,
+    "MemoryReservation": 2_147_483_648,
+    "MemorySwap": 8_589_934_592,
+    "MemorySwappiness": None,
+    "Mounts": [
+        {
+            "Source": "flowise_flowise_data",
+            "Target": "/usr/src/flowise/.flowise",
+            "Type": "volume",
+            "VolumeOptions": {},
+        }
+    ],
+    "NanoCpus": 2_000_000_000,
+    "NetworkMode": "flowise_flowise_network",
+    "OomKillDisable": None,
+    "OomScoreAdj": 0,
+    "PidMode": "",
+    "PidsLimit": 512,
+    "PortBindings": {"3000/tcp": [{"HostIp": "172.20.0.1", "HostPort": "3000"}]},
+    "Privileged": False,
+    "PublishAllPorts": False,
+    "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger",
+    ],
+    "ReadonlyRootfs": True,
+    "RestartPolicy": {"MaximumRetryCount": 0, "Name": "always"},
+    "Runtime": "runc",
+    "SecurityOpt": "__SEMANTIC_SECURITY_OPT__",
+    "ShmSize": 67_108_864,
+    "Tmpfs": copy.deepcopy(EXPECTED_TMPFS_BY_PATH),
+    "UTSMode": "",
+    "Ulimits": None,
+    "UsernsMode": "",
+    "VolumeDriver": "",
+    "VolumesFrom": None,
+}
 EXPECTED_FLOWISE_DEPLOY = {
     "resources": {
         "limits": {"cpus": 2, "memory": "4294967296", "pids": 512},
@@ -1001,7 +1113,7 @@ def validate_release_evidence(
     return evidence
 
 
-def verify_bundle(bundle_dir: Path) -> Bundle:
+def _verify_bundle(bundle_dir: Path, *, require_executing_wrapper: bool) -> Bundle:
     root = bundle_dir.absolute()
     bundle_path = _safe_relative_path(root, "deployment-bundle.json")
     bundle_bytes = read_regular(bundle_path, maximum=1024 * 1024, expected_uid=0, expected_gid=0, expected_mode=0o600)
@@ -1047,7 +1159,10 @@ def verify_bundle(bundle_dir: Path) -> Bundle:
         files[role] = path
     if set(by_role) != set(EXPECTED_BUNDLE_FILES):
         raise DeployError("BUNDLE_FILE_SET_INVALID")
-    if payload_data["production_wrapper"] != read_regular(SCRIPT_PATH, maximum=2 * 1024 * 1024):
+    if require_executing_wrapper and payload_data["production_wrapper"] != read_regular(
+        SCRIPT_PATH,
+        maximum=2 * 1024 * 1024,
+    ):
         raise DeployError("BUNDLE_WRAPPER_EXECUTION_MISMATCH")
     manifest = parse_canonical_json(payload_data["release_manifest"], "RELEASE_MANIFEST")
     validate_release_manifest(manifest)
@@ -1120,6 +1235,24 @@ def verify_bundle(bundle_dir: Path) -> Bundle:
         image_config_digest=image_config_digest,
         bundle_digest=sha256_bytes(bundle_bytes),
     )
+
+
+def verify_bundle(bundle_dir: Path) -> Bundle:
+    """Verify a deployment bundle and bind it to the executing wrapper bytes."""
+
+    return _verify_bundle(bundle_dir, require_executing_wrapper=True)
+
+
+def verify_source_bundle(bundle_dir: Path) -> Bundle:
+    """Verify a historical source bundle without granting it execution authority.
+
+    The bundle, manifest, evidence, image archive, and embedded wrapper remain
+    mutually digest-bound.  Only the equality between that historical embedded
+    wrapper and the currently executing recovery wrapper is intentionally not
+    required.
+    """
+
+    return _verify_bundle(bundle_dir, require_executing_wrapper=False)
 
 
 def verify_transition_permit(
@@ -1351,6 +1484,102 @@ def _validate_secure_run_directory(run_dir: Path) -> None:
         raise DeployError("RUN_DIRECTORY_PATH_INVALID")
     _validate_inventory_directory(RUNS_DIR, "RUNS_ROOT")
     _validate_inventory_directory(run_dir, "RUN")
+
+
+def _validate_bootstrap_recovery_run_topology(
+    run_dir: Path,
+    *,
+    complete_receipt: str,
+) -> bool:
+    """Validate the incident run as one exact, no-follow filesystem tree.
+
+    ``complete_receipt`` is ``absent``, ``present``, or ``either``.  The latter
+    is used only to classify the immutable-receipt crash window before the
+    journal state is read; it still permits exactly one of the two known trees.
+    """
+
+    if complete_receipt not in {"absent", "present", "either"}:
+        raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_PHASE_INVALID")
+    _validate_secure_run_directory(run_dir)
+    expected_directories = {
+        "legacy",
+        "legacy/docker",
+        "legacy/docker/seccomp",
+        "hardened_active",
+        "hardened_active/docker",
+        "hardened_active/docker/seccomp",
+        "target_bundle",
+        "target_bundle/docker",
+        "target_bundle/docker/seccomp",
+    }
+    base_files = {
+        "journal.json",
+        "bootstrap-prepare-receipt.json",
+        "legacy/.env.production",
+        "legacy/docker-compose.prod.yml",
+        "legacy/image.tar.gz",
+        "hardened_active/.env.production",
+        "hardened_active/docker-compose.prod.yml",
+        "hardened_active/docker/seccomp/chromium.json",
+        "target_bundle/.env.production",
+        "target_bundle/docker-compose.prod.yml",
+        "target_bundle/docker/seccomp/chromium.json",
+    }
+    actual_directories: set[str] = set()
+    actual_files: set[str] = set()
+    pending = [run_dir]
+    while pending:
+        parent = pending.pop()
+        try:
+            entries = list(os.scandir(parent))
+        except OSError as error:
+            raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_ENUMERATION_FAILED") from error
+        for entry in entries:
+            path = Path(entry.path)
+            try:
+                info = entry.stat(follow_symlinks=False)
+            except OSError as error:
+                raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_PATH_UNAVAILABLE") from error
+            relative = path.relative_to(run_dir).as_posix()
+            if stat.S_ISLNK(info.st_mode):
+                raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_SYMLINK_FORBIDDEN")
+            if stat.S_ISDIR(info.st_mode):
+                if (
+                    info.st_uid != 0
+                    or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o700
+                ):
+                    raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_DIRECTORY_METADATA_INVALID")
+                actual_directories.add(relative)
+                pending.append(path)
+                continue
+            if stat.S_ISREG(info.st_mode):
+                if (
+                    info.st_uid != 0
+                    or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600
+                    or info.st_nlink != 1
+                    or info.st_size <= 0
+                    or info.st_size > 16 * 1024 * 1024 * 1024
+                ):
+                    raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_FILE_METADATA_INVALID")
+                actual_files.add(relative)
+                continue
+            raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_PATH_TYPE_INVALID")
+    if actual_directories != expected_directories:
+        raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_DIRECTORY_SET_INVALID")
+    with_complete = base_files | {"bootstrap-complete-receipt.json"}
+    if actual_files == base_files:
+        present = False
+    elif actual_files == with_complete:
+        present = True
+    else:
+        raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_FILE_SET_INVALID")
+    if complete_receipt == "absent" and present:
+        raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_COMPLETE_RECEIPT_UNEXPECTED")
+    if complete_receipt == "present" and not present:
+        raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_COMPLETE_RECEIPT_MISSING")
+    return present
 
 
 def _validate_secure_run_role(
@@ -1859,6 +2088,49 @@ def acquire_lock() -> int:
     return descriptor
 
 
+def acquire_existing_lock() -> int:
+    """Acquire the pre-provisioned deploy lock without creating anything.
+
+    The observed-recovery commands promise a zero-write snapshot boundary up
+    to the explicitly authorized completion artifacts.  They therefore must
+    not inherit ``acquire_lock``'s directory/file bootstrap behavior.
+    """
+
+    parent = LOCK_DIR.parent
+    try:
+        parent_info = parent.lstat()
+    except OSError as error:
+        raise DeployError("LOCK_PARENT_UNAVAILABLE") from error
+    parent_mode = stat.S_IMODE(parent_info.st_mode)
+    if (
+        not stat.S_ISDIR(parent_info.st_mode)
+        or stat.S_ISLNK(parent_info.st_mode)
+        or parent_info.st_uid != 0
+        or (parent_mode & 0o022 and not parent_mode & stat.S_ISVTX)
+    ):
+        raise DeployError("LOCK_PARENT_UNSAFE")
+    _validate_inventory_directory(LOCK_DIR, "LOCK", expected_mode=0o700)
+    flags = os.O_RDWR | os.O_CLOEXEC
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise DeployError("DEPLOY_LOCK_NOFOLLOW_UNAVAILABLE")
+    flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(LOCK_PATH, flags)
+    except OSError as error:
+        raise DeployError("DEPLOY_EXISTING_LOCK_OPEN_FAILED") from error
+    try:
+        _validate_lock_identity(descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _validate_lock_identity(descriptor)
+    except BlockingIOError as error:
+        os.close(descriptor)
+        raise DeployError("DEPLOY_LOCK_BUSY") from error
+    except Exception:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
 def fsync_dir(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -2216,11 +2488,22 @@ def _secure_directory(path: Path) -> None:
         os.chmod(path, 0o700)
 
 
-def live_file(path: Path, mode: int) -> tuple[bytes, tuple[int, int, int]]:
+def live_file(
+    path: Path,
+    mode: int,
+    *,
+    maximum: int | None = None,
+) -> tuple[bytes, tuple[int, int, int]]:
     info = path.lstat()
     if (info.st_uid, info.st_gid) not in ((0, 0), (1000, 1000)) or stat.S_IMODE(info.st_mode) != mode:
         raise DeployError(f"LIVE_FILE_METADATA_MISMATCH_{path.name}")
-    data = read_regular(path, expected_uid=info.st_uid, expected_gid=info.st_gid, expected_mode=mode)
+    data = read_regular(
+        path,
+        maximum=maximum,
+        expected_uid=info.st_uid,
+        expected_gid=info.st_gid,
+        expected_mode=mode,
+    )
     return data, (info.st_uid, info.st_gid, mode)
 
 
@@ -2827,10 +3110,108 @@ def validate_container_health(documents: dict[str, dict[str, Any]]) -> None:
             raise DeployError(f"CONTAINER_NOT_HEALTHY_{name}")
 
 
-def _hardened_runtime_stable_projection(flowise: dict[str, Any]) -> dict[str, Any]:
+def _canonical_json_value(data: bytes, label: str) -> Any:
+    try:
+        return json.loads(data.decode("utf-8"), object_pairs_hook=_strict_object)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise DeployError(f"{label}_JSON_INVALID") from error
+
+
+def _seccomp_canonical_digest_bytes(data: bytes, label: str) -> str:
+    document = _canonical_json_value(data, label)
+    if not isinstance(document, dict):
+        raise DeployError(f"{label}_JSON_INVALID")
+    return sha256_bytes(canonical_json(document))
+
+
+def _live_seccomp_canonical_digest() -> str:
+    """Hash the semantic JSON profile rather than its on-disk formatting."""
+
+    _validate_live_seccomp_parents(allow_missing=False)
+    try:
+        data, _metadata = live_file(
+            LIVE_SECCOMP,
+            0o644,
+            maximum=2 * 1024 * 1024,
+        )
+    except OSError as error:
+        raise DeployError("LIVE_SECCOMP_UNAVAILABLE") from error
+    if not data:
+        raise DeployError("LIVE_SECCOMP_UNSAFE")
+    return _seccomp_canonical_digest_bytes(data, "LIVE_SECCOMP")
+
+
+def _normalize_runtime_security_options(
+    options: Any,
+    expected_seccomp_digest: str,
+) -> dict[str, Any]:
+    """Parse Docker's runtime form into one strict, order-independent meaning.
+
+    Docker expands a seccomp path to inline JSON and may render the enabled
+    no-new-privileges flag with an explicit ``:true`` suffix.  Neither rendering
+    is a safe reason to skip validation: every item is parsed, duplicates and
+    unknown options are rejected, and the inline profile is bound to the live
+    canonical profile digest.
+    """
+
+    if not isinstance(expected_seccomp_digest, str) or not DIGEST_RE.fullmatch(expected_seccomp_digest):
+        raise DeployError("FLOWISE_RUNTIME_SECCOMP_EXPECTED_DIGEST_INVALID")
+    if not isinstance(options, list) or any(not isinstance(option, str) for option in options):
+        raise DeployError("FLOWISE_RUNTIME_SECURITY_OPT_INVALID")
+    no_new_privileges: bool | None = None
+    seccomp_digest: str | None = None
+    for option in options:
+        if option in {"no-new-privileges", "no-new-privileges:true", "no-new-privileges=true"}:
+            if no_new_privileges is not None:
+                raise DeployError("FLOWISE_RUNTIME_SECURITY_OPT_DUPLICATE")
+            no_new_privileges = True
+            continue
+        if option.startswith("no-new-privileges"):
+            # Explicitly reject disabled, empty, and otherwise malformed forms.
+            raise DeployError("FLOWISE_RUNTIME_NO_NEW_PRIVILEGES_INVALID")
+        if option.startswith("seccomp="):
+            if seccomp_digest is not None:
+                raise DeployError("FLOWISE_RUNTIME_SECURITY_OPT_DUPLICATE")
+            inline = option.removeprefix("seccomp=")
+            if not inline or inline[0] != "{":
+                raise DeployError("FLOWISE_RUNTIME_SECCOMP_INLINE_REQUIRED")
+            document = _canonical_json_value(inline.encode("utf-8"), "FLOWISE_RUNTIME_SECCOMP")
+            if not isinstance(document, dict):
+                raise DeployError("FLOWISE_RUNTIME_SECCOMP_JSON_INVALID")
+            seccomp_digest = sha256_bytes(canonical_json(document))
+            continue
+        raise DeployError("FLOWISE_RUNTIME_SECURITY_OPT_UNKNOWN")
+    if no_new_privileges is not True or seccomp_digest is None:
+        raise DeployError("FLOWISE_RUNTIME_SECURITY_OPT_INCOMPLETE")
+    if not hmac.compare_digest(seccomp_digest, expected_seccomp_digest):
+        raise DeployError("FLOWISE_RUNTIME_SECCOMP_DIGEST_MISMATCH")
+    return {
+        "no_new_privileges": True,
+        "seccomp_canonical_sha256": seccomp_digest,
+    }
+
+
+def _normalized_hardened_runtime_snapshot(
+    runtime: dict[str, Any],
+    expected_seccomp_digest: str,
+) -> dict[str, Any]:
+    normalized = copy.deepcopy(runtime)
+    normalized["security_opt"] = _normalize_runtime_security_options(
+        normalized.get("security_opt"),
+        expected_seccomp_digest,
+    )
+    return normalized
+
+
+def _hardened_runtime_stable_projection(
+    flowise: dict[str, Any],
+    expected_seccomp_digest: str | None = None,
+) -> dict[str, Any]:
+    if expected_seccomp_digest is None:
+        expected_seccomp_digest = _live_seccomp_canonical_digest()
     runtime = container_snapshot({FLOWISE_CONTAINER: flowise})[FLOWISE_CONTAINER]["runtime"]
     healthcheck = copy.deepcopy(runtime["healthcheck"])
-    if healthcheck.get("StartInterval") == 0:
+    if type(healthcheck.get("StartInterval")) is int and healthcheck.get("StartInterval") == 0:
         healthcheck.pop("StartInterval")
     volume_mounts = [mount for mount in runtime["mounts"] if mount.get("type") == "volume"]
     return {
@@ -2851,7 +3232,10 @@ def _hardened_runtime_stable_projection(flowise: dict[str, Any]) -> dict[str, An
         "uts_mode": runtime["uts_mode"],
         "cgroupns_mode": runtime["cgroupns_mode"],
         "network_mode": runtime["network_mode"],
-        "security_opt": runtime["security_opt"],
+        "security_opt": _normalize_runtime_security_options(
+            runtime["security_opt"],
+            expected_seccomp_digest,
+        ),
         "devices": runtime["devices"],
         "device_requests": runtime["device_requests"],
         "binds": runtime["binds"],
@@ -2868,7 +3252,12 @@ def _hardened_runtime_stable_projection(flowise: dict[str, Any]) -> dict[str, An
     }
 
 
-def _expected_hardened_runtime_stable_projection(expected_compose: dict[str, Any]) -> dict[str, Any]:
+def _expected_hardened_runtime_stable_projection(
+    expected_compose: dict[str, Any],
+    expected_seccomp_digest: str | None = None,
+) -> dict[str, Any]:
+    if expected_seccomp_digest is None:
+        expected_seccomp_digest = _live_seccomp_canonical_digest()
     expectations = _candidate_runtime_expectations(expected_compose)
     volume_name = expectations["volume_name"]
     return {
@@ -2889,7 +3278,10 @@ def _expected_hardened_runtime_stable_projection(expected_compose: dict[str, Any
         "uts_mode": "",
         "cgroupns_mode": "private",
         "network_mode": EXPECTED_TOP_LEVEL_NETWORKS["flowise_network"]["name"],
-        "security_opt": ["no-new-privileges", f"seccomp={LIVE_SECCOMP}"],
+        "security_opt": {
+            "no_new_privileges": True,
+            "seccomp_canonical_sha256": expected_seccomp_digest,
+        },
         "devices": [],
         "device_requests": [],
         "binds": [],
@@ -2915,6 +3307,165 @@ def _expected_hardened_runtime_stable_projection(expected_compose: dict[str, Any
     }
 
 
+def _recovery_runtime_projection(flowise: dict[str, Any], expected_seccomp_digest: str) -> dict[str, Any]:
+    """Return a full, secret-free, stable runtime projection for recovery CAS.
+
+    Environment values are deliberately omitted.  Their exact identity is
+    independently bound with the keyed environment digest already used by the
+    release protocol.
+    """
+
+    config = copy.deepcopy(flowise.get("Config") or {})
+    if not isinstance(config, dict):
+        raise DeployError("BOOTSTRAP_RECOVERY_RUNTIME_CONFIG_INVALID")
+    config.pop("Env", None)
+    host = copy.deepcopy(flowise.get("HostConfig") or {})
+    if not isinstance(host, dict):
+        raise DeployError("BOOTSTRAP_RECOVERY_HOST_CONFIG_INVALID")
+    host["SecurityOpt"] = _normalize_runtime_security_options(
+        host.get("SecurityOpt"),
+        expected_seccomp_digest,
+    )
+    mounts = copy.deepcopy(flowise.get("Mounts") or [])
+    if not isinstance(mounts, list) or any(not isinstance(mount, dict) for mount in mounts):
+        raise DeployError("BOOTSTRAP_RECOVERY_MOUNTS_INVALID")
+    mounts.sort(key=lambda item: canonical_json(item))
+    networks = copy.deepcopy((flowise.get("NetworkSettings") or {}).get("Networks") or {})
+    if not isinstance(networks, dict) or any(not isinstance(value, dict) for value in networks.values()):
+        raise DeployError("BOOTSTRAP_RECOVERY_NETWORKS_INVALID")
+    return {
+        "path": flowise.get("Path"),
+        "args": copy.deepcopy(flowise.get("Args") or []),
+        "config_without_environment": config,
+        # This full HostConfig binding includes DNS, ExtraHosts, Sysctls,
+        # Ulimits, GroupAdd, Links, VolumesFrom, namespace/resource controls,
+        # device controls, mounts and port policy.  SecurityOpt is semantic.
+        "host_config": host,
+        "mounts": mounts,
+        "network_attachments": networks,
+    }
+
+
+def recovery_runtime_projection_digest(flowise: dict[str, Any], expected_seccomp_digest: str) -> str:
+    return sha256_bytes(canonical_json(_recovery_runtime_projection(flowise, expected_seccomp_digest)))
+
+
+def _observed_runtime_config_hash(flowise: dict[str, Any]) -> str:
+    config = flowise.get("Config") or {}
+    labels = config.get("Labels") or {}
+    if not isinstance(labels, dict):
+        raise DeployError("FLOWISE_RUNTIME_LABELS_INVALID")
+    value = labels.get("com.docker.compose.config-hash")
+    if not isinstance(value, str) or not CONFIG_HASH_RE.fullmatch(value):
+        raise DeployError("FLOWISE_RUNTIME_CONFIG_HASH_INVALID")
+    return value
+
+
+def _validate_hardened_runtime_semantic_surface(
+    flowise: dict[str, Any],
+    *,
+    image_tag: str,
+    image_digest: str,
+    observed_config_hash: str,
+    expected_image: dict[str, Any],
+    expected_replaced_container_id: str | None,
+    expected_seccomp_digest: str,
+) -> None:
+    """Validate stable Docker state independently of Compose's opaque label.
+
+    Compose 2.27.1 does not make ``config --hash`` equal the label written by
+    ``up``.  A mismatch is therefore accepted only when this complete stable
+    surface, including process metadata, image/Compose labels, and the
+    otherwise easy-to-miss HostConfig fields, matches the independently
+    verified image and deployment contract.
+    """
+
+    current_id = flowise.get("Id")
+    if not isinstance(current_id, str) or not DOCKER_ID_RE.fullmatch(current_id):
+        raise DeployError("FLOWISE_RUNTIME_CONTAINER_ID_INVALID")
+    if (
+        expected_image.get("image_tag") != image_tag
+        or expected_image.get("image_config_digest") != image_digest
+        or not isinstance(expected_image.get("revision"), str)
+        or not REVISION_RE.fullmatch(expected_image["revision"])
+        or expected_image.get("release_id") != f"git-{expected_image['revision']}"
+        or not isinstance(expected_image.get("repository_url"), str)
+        or not expected_image["repository_url"]
+        or not _valid_oci_created_at(expected_image.get("created_at"))
+    ):
+        raise DeployError("FLOWISE_RUNTIME_EXPECTED_IMAGE_AUTHORITY_INVALID")
+    config = flowise.get("Config")
+    host = flowise.get("HostConfig")
+    if not isinstance(config, dict) or not isinstance(host, dict):
+        raise DeployError("FLOWISE_RUNTIME_SEMANTIC_DOCUMENT_INVALID")
+    command = ["node", "packages/server/bin/run", "start"]
+    if flowise.get("Path") != "docker-entrypoint.sh" or flowise.get("Args") != command:
+        raise DeployError("FLOWISE_RUNTIME_PROCESS_CONTRACT_MISMATCH")
+    labels = config.get("Labels")
+    if not isinstance(labels, dict):
+        raise DeployError("FLOWISE_RUNTIME_LABELS_INVALID")
+    replacement_id = labels.get("com.docker.compose.replace")
+    if (
+        not isinstance(replacement_id, str)
+        or not DOCKER_ID_RE.fullmatch(replacement_id)
+        or replacement_id == current_id
+    ):
+        raise DeployError("FLOWISE_RUNTIME_REPLACE_LABEL_INVALID")
+    if expected_replaced_container_id is not None and replacement_id != expected_replaced_container_id:
+        raise DeployError("FLOWISE_RUNTIME_REPLACE_LABEL_MISMATCH")
+    expected_labels = {
+        "com.docker.compose.config-hash": observed_config_hash,
+        "com.docker.compose.container-number": "1",
+        "com.docker.compose.depends_on": "",
+        "com.docker.compose.image": image_digest,
+        "com.docker.compose.oneoff": "False",
+        "com.docker.compose.project": "flowise",
+        "com.docker.compose.project.config_files": str(BASE_DIR / "docker-compose.prod.yml"),
+        "com.docker.compose.project.environment_file": str(BASE_DIR / ".env.production"),
+        "com.docker.compose.project.working_dir": str(BASE_DIR),
+        "com.docker.compose.replace": replacement_id,
+        "com.docker.compose.service": "flowise",
+        "com.docker.compose.version": "2.27.1",
+        "org.opencontainers.image.created": expected_image["created_at"],
+        "org.opencontainers.image.revision": expected_image["revision"],
+        "org.opencontainers.image.source": expected_image["repository_url"],
+        "org.opencontainers.image.version": expected_image["release_id"],
+    }
+    if labels != expected_labels:
+        raise DeployError("FLOWISE_RUNTIME_LABEL_CONTRACT_MISMATCH")
+
+    normalized_config = copy.deepcopy(config)
+    normalized_config.pop("Env", None)
+    normalized_config.pop("Labels", None)
+    healthcheck = normalized_config.get("Healthcheck")
+    if (
+        isinstance(healthcheck, dict)
+        and type(healthcheck.get("StartInterval")) is int
+        and healthcheck.get("StartInterval") == 0
+    ):
+        healthcheck.pop("StartInterval")
+    if normalized_config.get("Hostname") != current_id[:12]:
+        raise DeployError("FLOWISE_RUNTIME_HOSTNAME_BINDING_MISMATCH")
+    normalized_config["Hostname"] = "__CURRENT_ID_PREFIX__"
+    expected_config = copy.deepcopy(EXPECTED_RUNTIME_CONFIG_SURFACE)
+    expected_config["Image"] = image_tag
+    if canonical_json(normalized_config) != canonical_json(expected_config):
+        raise DeployError("FLOWISE_RUNTIME_CONFIG_CONTRACT_MISMATCH")
+
+    normalized_host = copy.deepcopy(host)
+    normalized_host["SecurityOpt"] = _normalize_runtime_security_options(
+        normalized_host.get("SecurityOpt"),
+        expected_seccomp_digest,
+    )
+    expected_host = copy.deepcopy(EXPECTED_RUNTIME_HOST_CONFIG_SURFACE)
+    expected_host["SecurityOpt"] = {
+        "no_new_privileges": True,
+        "seccomp_canonical_sha256": expected_seccomp_digest,
+    }
+    if canonical_json(normalized_host) != canonical_json(expected_host):
+        raise DeployError("FLOWISE_RUNTIME_HOSTCONFIG_CONTRACT_MISMATCH")
+
+
 def validate_runtime(
     documents: dict[str, dict[str, Any]],
     *,
@@ -2927,15 +3478,27 @@ def validate_runtime(
     expected_compose: dict[str, Any] | None = None,
     expected_runtime: dict[str, Any] | None = None,
     expected_runtime_stable: dict[str, Any] | None = None,
+    allow_opaque_config_hash: bool = False,
+    expected_image: dict[str, Any] | None = None,
+    expected_replaced_container_id: str | None = None,
+    expected_seccomp_digest: str | None = None,
 ) -> dict[str, Any]:
     validate_container_health(documents)
     flowise = documents[FLOWISE_CONTAINER]
     config = flowise.get("Config") or {}
-    labels = config.get("Labels") or {}
     if config.get("Image") != image_tag or flowise.get("Image") != image_digest:
         raise DeployError("FLOWISE_RUNTIME_IMAGE_MISMATCH")
-    if labels.get("com.docker.compose.config-hash") != expected_config_hash:
+    if not isinstance(expected_config_hash, str) or not CONFIG_HASH_RE.fullmatch(expected_config_hash):
+        raise DeployError("FLOWISE_RUNTIME_REQUESTED_CONFIG_HASH_INVALID")
+    observed_config_hash = _observed_runtime_config_hash(flowise)
+    if observed_config_hash != expected_config_hash and not allow_opaque_config_hash:
         raise DeployError("FLOWISE_RUNTIME_CONFIG_HASH_MISMATCH")
+    if allow_opaque_config_hash and (
+        not require_candidate_hardening
+        or not require_exact_environment
+        or not isinstance(expected_image, dict)
+    ):
+        raise DeployError("FLOWISE_RUNTIME_OPAQUE_HASH_AUTHORITY_MISSING")
     actual_environment = _container_env(flowise)
     if (
         actual_environment != expected_environment
@@ -2973,9 +3536,14 @@ def validate_runtime(
         if expected_compose is None:
             raise DeployError("FLOWISE_RUNTIME_EXPECTED_COMPOSE_MISSING")
         expectations = _candidate_runtime_expectations(expected_compose)
-        security = host.get("SecurityOpt") or []
-        if security != ["no-new-privileges", f"seccomp={LIVE_SECCOMP}"]:
-            raise DeployError("FLOWISE_RUNTIME_SECURITY_OPT_MISMATCH")
+        seccomp_digest = (
+            _live_seccomp_canonical_digest()
+            if expected_seccomp_digest is None
+            else expected_seccomp_digest
+        )
+        if not isinstance(seccomp_digest, str) or not DIGEST_RE.fullmatch(seccomp_digest):
+            raise DeployError("FLOWISE_RUNTIME_SECCOMP_EXPECTED_DIGEST_INVALID")
+        _normalize_runtime_security_options(host.get("SecurityOpt"), seccomp_digest)
         if (
             config.get("User") != "1000:1000"
             or host.get("ReadonlyRootfs") is not True
@@ -2997,7 +3565,8 @@ def validate_runtime(
             raise DeployError("FLOWISE_RUNTIME_HARDENING_MISMATCH")
         healthcheck = config.get("Healthcheck") or {}
         if any(healthcheck.get(key) != value for key, value in EXPECTED_RUNTIME_HEALTHCHECK.items()) or any(
-            key not in EXPECTED_RUNTIME_HEALTHCHECK and not (key == "StartInterval" and value == 0)
+            key not in EXPECTED_RUNTIME_HEALTHCHECK
+            and not (key == "StartInterval" and type(value) is int and value == 0)
             for key, value in healthcheck.items()
         ):
             raise DeployError("FLOWISE_RUNTIME_HEALTHCHECK_MISMATCH")
@@ -3048,17 +3617,41 @@ def validate_runtime(
             raise DeployError("FLOWISE_RUNTIME_BASELINE_MISSING")
         if expected_runtime is not None:
             actual_runtime = container_snapshot({FLOWISE_CONTAINER: flowise})[FLOWISE_CONTAINER]["runtime"]
-            runtime_matches = actual_runtime == expected_runtime
+            runtime_matches = _normalized_hardened_runtime_snapshot(
+                actual_runtime,
+                seccomp_digest,
+            ) == _normalized_hardened_runtime_snapshot(
+                expected_runtime,
+                seccomp_digest,
+            )
         else:
-            runtime_matches = _hardened_runtime_stable_projection(flowise) == expected_runtime_stable
+            runtime_matches = _hardened_runtime_stable_projection(
+                flowise,
+                seccomp_digest,
+            ) == expected_runtime_stable
         if not runtime_matches:
             raise DeployError("FLOWISE_RUNTIME_BASELINE_DRIFT")
+        if allow_opaque_config_hash:
+            if not isinstance(expected_image, dict):
+                raise DeployError("FLOWISE_RUNTIME_OPAQUE_HASH_AUTHORITY_MISSING")
+            _validate_hardened_runtime_semantic_surface(
+                flowise,
+                image_tag=image_tag,
+                image_digest=image_digest,
+                observed_config_hash=observed_config_hash,
+                expected_image=expected_image,
+                expected_replaced_container_id=expected_replaced_container_id,
+                expected_seccomp_digest=seccomp_digest,
+            )
     return {
         "runtime_image_verified": True,
-        "runtime_config_hash": expected_config_hash,
+        "runtime_config_hash": observed_config_hash,
+        "requested_compose_config_hash": expected_config_hash,
+        "observed_runtime_config_hash": observed_config_hash,
         "runtime_environment_verified": True,
         "runtime_environment_key_count": len(expected_environment),
         "runtime_hardening_verified": require_candidate_hardening,
+        "opaque_config_hash_semantic_contract_verified": allow_opaque_config_hash,
     }
 
 
@@ -3105,10 +3698,24 @@ def validate_bootstrap_hardened_runtime(
     expected_environment: dict[str, str],
     expected_compose: dict[str, Any],
     expected_network_identity: dict[str, Any],
+    expected_image: dict[str, Any] | None = None,
+    expected_replaced_container_id: str | None = None,
+    allow_opaque_config_hash: bool = False,
+    expected_seccomp_digest: str | None = None,
 ) -> dict[str, Any]:
     """Apply the unchanged hardening contract to the newly recreated baseline."""
 
-    expected_runtime_stable = _expected_hardened_runtime_stable_projection(expected_compose)
+    seccomp_digest = (
+        _live_seccomp_canonical_digest()
+        if expected_seccomp_digest is None
+        else expected_seccomp_digest
+    )
+    if not isinstance(seccomp_digest, str) or not DIGEST_RE.fullmatch(seccomp_digest):
+        raise DeployError("FLOWISE_RUNTIME_SECCOMP_EXPECTED_DIGEST_INVALID")
+    expected_runtime_stable = _expected_hardened_runtime_stable_projection(
+        expected_compose,
+        seccomp_digest,
+    )
     runtime = validate_runtime(
         documents,
         image_tag=image_tag,
@@ -3119,8 +3726,15 @@ def validate_bootstrap_hardened_runtime(
         require_exact_environment=True,
         expected_compose=expected_compose,
         expected_runtime_stable=expected_runtime_stable,
+        allow_opaque_config_hash=allow_opaque_config_hash,
+        expected_image=expected_image,
+        expected_replaced_container_id=expected_replaced_container_id,
+        expected_seccomp_digest=seccomp_digest,
     )
-    projection = _hardened_runtime_stable_projection(documents[FLOWISE_CONTAINER])
+    projection = _hardened_runtime_stable_projection(
+        documents[FLOWISE_CONTAINER],
+        seccomp_digest,
+    )
     network_identity = validate_runtime_network_identity(documents, expected_network_identity)
     return {
         **runtime,
@@ -3466,10 +4080,69 @@ def _receipt_path(run_dir: Path, name: str) -> Path:
 
 
 def _write_receipt(path: Path, document: dict[str, Any]) -> str:
-    if path.exists() or path.is_symlink():
-        raise DeployError(f"RECEIPT_ALREADY_EXISTS_{path.stem}")
-    atomic_json(path, document)
-    return sha256_file(path)
+    """Atomically publish an immutable receipt without a replace race."""
+
+    data = canonical_json(document)
+    if len(data) > 2 * 1024 * 1024:
+        raise DeployError(f"RECEIPT_TOO_LARGE_{path.stem}")
+    temporary = path.parent / f".{path.name}.{secrets.token_hex(12)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise DeployError("RECEIPT_NOFOLLOW_UNAVAILABLE")
+    flags |= os.O_NOFOLLOW
+    descriptor: int | None = None
+    linked = False
+    try:
+        try:
+            descriptor = os.open(temporary, flags, 0o600)
+        except OSError as error:
+            raise DeployError(f"RECEIPT_TEMP_CREATE_FAILED_{path.stem}") from error
+        view = memoryview(data)
+        while view:
+            count = os.write(descriptor, view)
+            if count <= 0:
+                raise DeployError(f"RECEIPT_SHORT_WRITE_{path.stem}")
+            view = view[count:]
+        os.fchown(descriptor, 0, 0)
+        os.fchmod(descriptor, 0o600)
+        os.fsync(descriptor)
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size != len(data):
+            raise DeployError(f"RECEIPT_TEMP_IDENTITY_INVALID_{path.stem}")
+        os.close(descriptor)
+        descriptor = None
+        try:
+            os.link(temporary, path, follow_symlinks=False)
+        except FileExistsError as error:
+            raise DeployError(f"RECEIPT_ALREADY_EXISTS_{path.stem}") from error
+        except OSError as error:
+            raise DeployError(f"RECEIPT_PUBLISH_FAILED_{path.stem}") from error
+        linked = True
+        fsync_dir(path.parent)
+        temporary.unlink()
+        fsync_dir(path.parent)
+        linked = False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+            if linked:
+                fsync_dir(path.parent)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            # Never remove or replace a destination that may already have been
+            # published.  A leftover hard link makes metadata verification fail
+            # closed and preserves the evidence for an operator.
+            pass
+    digest = sha256_bytes(data)
+    verify_regular_identity(
+        path,
+        expected_bytes=len(data),
+        expected_digest=digest,
+    )
+    return digest
 
 
 def _read_receipt(run_id: str, name: str, expected_digest: str | None = None) -> tuple[Path, dict[str, Any]]:
@@ -3675,7 +4348,11 @@ def _prepare_preflight(bundle: Bundle) -> dict[str, Any]:
         live_seccomp = None
         seccomp_metadata = (compose_metadata[0], compose_metadata[1], 0o644)
     key = persistent_key()
-    rollback_config, rollback_hash, rollback_environment = _resolved_live(active_tag, key)
+    rollback_config, rollback_hash, rollback_compose_environment = _resolved_live(active_tag, key)
+    rollback_environment = expected_container_environment(
+        active_image["image_environment"],
+        rollback_compose_environment,
+    )
     validate_database_runtime_identity(rollback_config, documents)
     validate_key_continuity(documents, rollback_environment, key)
     validate_runtime(
@@ -3685,8 +4362,11 @@ def _prepare_preflight(bundle: Bundle) -> dict[str, Any]:
         expected_config_hash=rollback_hash,
         expected_environment=rollback_environment,
         require_candidate_hardening=True,
+        require_exact_environment=True,
         expected_compose=rollback_config,
         expected_runtime=snapshot[FLOWISE_CONTAINER]["runtime"],
+        allow_opaque_config_hash=True,
+        expected_image=active_image,
     )
     database = database_state()
     runtime_pings()
@@ -4430,7 +5110,7 @@ def _cutover_preflight(run_id: str, receipt_digest: str) -> tuple[Path, dict[str
     return run_dir, receipt, documents, key
 
 
-def _ensure_rollback_image(run_dir: Path, receipt: dict[str, Any]) -> None:
+def _ensure_rollback_image(run_dir: Path, receipt: dict[str, Any]) -> dict[str, Any]:
     rollback = receipt["rollback"]
     archive = rollback["archive"]
     rollback_root = _validate_secure_run_role(run_dir, "rollback")
@@ -4449,7 +5129,7 @@ def _ensure_rollback_image(run_dir: Path, receipt: dict[str, Any]) -> None:
         repository_url=rollback["repository_url"],
     )
     try:
-        inspect_image(
+        image = inspect_image(
             rollback["image_tag"],
             rollback["image_config_digest"],
             rollback["revision"],
@@ -4459,12 +5139,13 @@ def _ensure_rollback_image(run_dir: Path, receipt: dict[str, Any]) -> None:
         # Missing or conflicting local tags are recovered exclusively from the
         # frozen run-scoped archive.  No registry or mutable remote is consulted.
         load_candidate(archive_path)
-        inspect_image(
+        image = inspect_image(
             rollback["image_tag"],
             rollback["image_config_digest"],
             rollback["revision"],
             rollback["repository_url"],
         )
+    return image
 
 
 def _restore_rollback(
@@ -4473,12 +5154,24 @@ def _restore_rollback(
     before: dict[str, dict[str, Any]],
     key: bytes,
 ) -> dict[str, Any]:
-    _ensure_rollback_image(run_dir, receipt)
-    rollback_root, env, compose, seccomp = _load_staged(receipt, "rollback", run_dir)
+    rollback_image = _ensure_rollback_image(run_dir, receipt)
+    pre_recreate = inspect_containers()
+    _validate_sidecars(before, pre_recreate)
+    pre_recreate_id = container_snapshot(pre_recreate)[FLOWISE_CONTAINER]["id"]
+    if not isinstance(pre_recreate_id, str) or not DOCKER_ID_RE.fullmatch(pre_recreate_id):
+        raise DeployError("ROLLBACK_REPLACED_CONTAINER_ID_INVALID")
+    _rollback_root, env, compose, seccomp = _load_staged(receipt, "rollback", run_dir)
     install_config_set(env, compose, seccomp, receipt["live_metadata"])
     if _live_hashes() != receipt["rollback"]["files"]:
         raise DeployError("ROLLBACK_LIVE_FILE_HASH_MISMATCH")
-    resolved_rollback, expected_hash, environment = _resolved_live(receipt["rollback"]["image_tag"], key)
+    resolved_rollback, expected_hash, compose_environment = _resolved_live(
+        receipt["rollback"]["image_tag"],
+        key,
+    )
+    environment = expected_container_environment(
+        rollback_image["image_environment"],
+        compose_environment,
+    )
     if expected_hash != receipt["rollback"]["compose_config_hash"]:
         raise DeployError("ROLLBACK_RESOLVED_COMPOSE_HASH_MISMATCH")
     compose_recreate()
@@ -4490,8 +5183,12 @@ def _restore_rollback(
         expected_config_hash=expected_hash,
         expected_environment=environment,
         require_candidate_hardening=True,
+        require_exact_environment=True,
         expected_compose=resolved_rollback,
         expected_runtime=receipt["baseline"]["containers"][FLOWISE_CONTAINER]["runtime"],
+        allow_opaque_config_hash=True,
+        expected_image=rollback_image,
+        expected_replaced_container_id=pre_recreate_id,
     )
     validate_database_runtime_identity(resolved_rollback, after)
     _validate_sidecars(before, after)
@@ -4961,12 +5658,20 @@ def _classify_legacy_rollback_live_state(
             ):
                 raise DeployError("LEGACY_ROLLBACK_RUNTIME_BINDING_MISMATCH")
             runtime_config = expected["legacy_config"]
-        elif config_hash == hardened_hash:
+        elif (
+            isinstance(config_hash, str)
+            and CONFIG_HASH_RE.fullmatch(config_hash)
+            and config_hash not in legacy_hashes
+        ):
             runtime_profile = "hardened"
+            seccomp_digest = _live_seccomp_canonical_digest()
             if (
                 actual_environment != expected["hardened_environment"]
-                or _hardened_runtime_stable_projection(flowise)
-                != _expected_hardened_runtime_stable_projection(expected["hardened_config"])
+                or _hardened_runtime_stable_projection(flowise, seccomp_digest)
+                != _expected_hardened_runtime_stable_projection(
+                    expected["hardened_config"],
+                    seccomp_digest,
+                )
             ):
                 raise DeployError("LEGACY_ROLLBACK_RUNTIME_BINDING_MISMATCH")
             runtime_config = expected["hardened_config"]
@@ -5160,11 +5865,12 @@ def _restore_legacy_frozen(
     )
     compose_recreate()
     after = inspect_containers()
+    observed_legacy_hash = _observed_runtime_config_hash(after[FLOWISE_CONTAINER])
     runtime = validate_legacy_runtime(
         after,
         image_tag=receipt["legacy"]["image_tag"],
         image_digest=receipt["legacy"]["image_config_digest"],
-        expected_config_hash=computed_hash,
+        expected_config_hash=observed_legacy_hash,
         expected_environment=expected["legacy_environment"],
         expected_runtime_projection_digest=receipt["legacy"]["runtime_projection_digest"],
     )
@@ -5537,6 +6243,9 @@ def bootstrap(
             expected_environment=hardened_active_environment,
             expected_compose=hardened_active_config,
             expected_network_identity=baseline["network_identity"],
+            expected_image=baseline["active_image"],
+            expected_replaced_container_id=baseline["snapshot"][FLOWISE_CONTAINER]["id"],
+            allow_opaque_config_hash=True,
         )
         _validate_runtime_environment_binding(
             prepare_receipt["hardened_active"],
@@ -5655,6 +6364,1709 @@ def bootstrap(
         os.close(lock)
 
 
+BOOTSTRAP_RECOVERY_COMPLETION_MODE = "post_interrupt_verified_adoption"
+BOOTSTRAP_RECOVERY_RUN_ID = "20260728T171644Z-4914e862"
+BOOTSTRAP_RECOVERY_SOURCE_RELEASE_ID = "git-56196c3cb4a3123f657614274a2227071920ba01"
+BOOTSTRAP_RECOVERY_SOURCE_BUNDLE_DIGEST = (
+    "sha256:61f511a2887afd75da2a2e2ab0bc94399c9c4af944a98920f4bb76c00a98c924"
+)
+BOOTSTRAP_RECOVERY_PERMIT_DIGEST = (
+    "sha256:a8afbf9ca32ef4cc9ead605a81f8624db1cf5538e0a23cccb2e46a3b76f0ada3"
+)
+BOOTSTRAP_RECOVERY_PREPARE_DIGEST = (
+    "sha256:51402626a07b4b573e17b058e27a6e0df02dd7b34016df465f571ace949e6f2c"
+)
+BOOTSTRAP_RECOVERY_FLOWISE_CONTAINER_ID = (
+    "953d213d666de29fde0b99f4a908ca46e7d642f8bd3126235e8284f82d5e7e39"
+)
+BOOTSTRAP_RECOVERY_POSTGRES_CONTAINER_ID = (
+    "326fc99b16037b719a664b7ecbf9f6ee57f5b4d3cebf1395c65066319f514492"
+)
+BOOTSTRAP_RECOVERY_NGINX_CONTAINER_ID = (
+    "0a468dd7d2dd55b05c3804fb67eea62801c83bf431d8f8587ed431bbb4a1f0eb"
+)
+BOOTSTRAP_RECOVERY_REQUESTED_CONFIG_HASH = (
+    "8642827174f0ca74dd1a6fc5a8334f116eafe97f9386c1610d5719555e9d3200"
+)
+BOOTSTRAP_RECOVERY_OBSERVED_CONFIG_HASH = (
+    "d6f328312028f66b37193fa244ad57119afb6fc1df9360b67eb3856c9764fb86"
+)
+BOOTSTRAP_RECOVERY_LEGACY_IMAGE_CONFIG_DIGEST = (
+    "sha256:a8f38dca92292711a781432dc7700218273eececa331446d0678251cf6fe2067"
+)
+BOOTSTRAP_RECOVERY_SECCOMP_CANONICAL_DIGEST = (
+    "sha256:8bc9daff33eb5909c662dad46e9600c6cdfcf4327e84e30b94395176738d27cf"
+)
+BOOTSTRAP_RECOVERY_FULL_RUNTIME_PROJECTION_DIGEST = (
+    "sha256:41b684e72f394cb90b84c863a2732ea1b489ca646d1f37f1004becd575ccd874"
+)
+BOOTSTRAP_RECOVERY_MIGRATION_COUNT = 59
+BOOTSTRAP_RECOVERY_MIGRATION_NAME_DIGEST = (
+    "sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6"
+)
+
+
+def _bundle_identity(bundle: Bundle) -> dict[str, str]:
+    return {
+        "bundle_digest": bundle.bundle_digest,
+        "release_id": bundle.release_id,
+        "revision": bundle.revision,
+        "image_tag": bundle.image_tag,
+        "image_config_digest": bundle.image_config_digest,
+    }
+
+
+def _read_canonical_run_journal(run_dir: Path) -> tuple[dict[str, Any], bytes, str]:
+    _validate_secure_run_directory(run_dir)
+    data = read_regular(
+        run_dir / "journal.json",
+        maximum=2 * 1024 * 1024,
+        expected_uid=0,
+        expected_gid=0,
+        expected_mode=0o600,
+    )
+    document = parse_canonical_json(data, "BOOTSTRAP_RECOVERY_JOURNAL")
+    if document.get("run_id") != run_dir.name:
+        raise DeployError("BOOTSTRAP_RECOVERY_JOURNAL_RUN_ID_MISMATCH")
+    return document, data, sha256_bytes(data)
+
+
+def _require_control_absent(path: Path, label: str) -> None:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise DeployError(f"{label}_STATUS_UNAVAILABLE") from error
+    raise DeployError(f"{label}_ALREADY_EXISTS")
+
+
+def _validate_bootstrap_recovery_interrupted_journal(
+    journal: dict[str, Any],
+    *,
+    run_id: str,
+    permit_digest: str,
+    source_bundle_digest: str,
+    source_bundle_release_id: str,
+    prepare_digest: str,
+) -> None:
+    _validate_policy(journal.get("policy"), LEGACY_BOOTSTRAP_POLICY, "BOOTSTRAP_RECOVERY_JOURNAL")
+    exact_keys(
+        journal,
+        (
+            "schema_version",
+            "policy",
+            "operation",
+            "state",
+            "phase",
+            "run_id",
+            "permit_digest",
+            "target_bundle_digest",
+            "target_bundle_release_id",
+            "active_legacy_release_id",
+            "live_write_started",
+            "hardened_recreate_started",
+            "rollback_attempted",
+            "bootstrap_prepare_receipt_sha256",
+            "updated_at",
+        ),
+        "BOOTSTRAP_RECOVERY_INTERRUPTED_JOURNAL",
+    )
+    required = {
+        "schema_version": 1,
+        "operation": "bootstrap",
+        "state": "in_progress",
+        "phase": "hardened_recreate_intent",
+        "run_id": run_id,
+        "permit_digest": permit_digest,
+        "target_bundle_digest": source_bundle_digest,
+        "target_bundle_release_id": source_bundle_release_id,
+        "active_legacy_release_id": f"git-{LEGACY_BOOTSTRAP_REVISION}",
+        "bootstrap_prepare_receipt_sha256": prepare_digest,
+        "live_write_started": True,
+        "hardened_recreate_started": True,
+        "rollback_attempted": False,
+    }
+    if any(journal.get(name) != value for name, value in required.items()):
+        raise DeployError("BOOTSTRAP_RECOVERY_INTERRUPTED_STATE_MISMATCH")
+    if "bootstrap_complete_receipt_sha256" in journal or "bootstrap_rollback_receipt_sha256" in journal:
+        raise DeployError("BOOTSTRAP_RECOVERY_INTERRUPTED_STATE_MISMATCH")
+    if not _valid_timestamp(journal.get("updated_at")):
+        raise DeployError("BOOTSTRAP_RECOVERY_JOURNAL_TIMESTAMP_INVALID")
+
+
+def _validate_bootstrap_recovery_prepare_receipt(
+    receipt: dict[str, Any],
+    *,
+    run_id: str,
+    prepare_digest: str,
+    permit: TransitionPermit,
+    source_bundle: Bundle,
+) -> None:
+    exact_keys(
+        receipt,
+        (
+            "schema_version",
+            "policy",
+            "operation",
+            "state",
+            "run_id",
+            "permit",
+            "target_bundle",
+            "hardened_active",
+            "legacy",
+            "baseline",
+            "live_metadata",
+            "target_bundle_non_image_match",
+            "candidate_archive_loaded",
+            "key_continuity_verified",
+            "container_recreated",
+            "provider_call",
+            "created_at",
+        ),
+        "BOOTSTRAP_RECOVERY_PREPARE_RECEIPT",
+    )
+    _validate_receipt_policy(receipt, "bootstrap-prepare")
+    if (
+        receipt.get("schema_version") != 1
+        or receipt.get("operation") != "bootstrap"
+        or receipt.get("state") != "prepared_legacy_frozen"
+        or receipt.get("run_id") != run_id
+        or receipt.get("permit") != {"digest": permit.digest}
+        or receipt.get("target_bundle_non_image_match") is not True
+        or receipt.get("candidate_archive_loaded") is not False
+        or receipt.get("key_continuity_verified") is not True
+        or receipt.get("container_recreated") is not False
+        or receipt.get("provider_call") is not False
+        or not _valid_timestamp(receipt.get("created_at"))
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_PREPARE_RECEIPT_INVALID")
+    target = receipt.get("target_bundle")
+    exact_keys(
+        target,
+        (
+            "bundle_digest",
+            "release_id",
+            "revision",
+            "image_tag",
+            "image_config_digest",
+            "files",
+            "compose_config_hash",
+        ),
+        "BOOTSTRAP_RECOVERY_TARGET_BUNDLE",
+    )
+    if not isinstance(target, dict) or any(
+        target.get(name) != value
+        for name, value in _bundle_identity(source_bundle).items()
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_SOURCE_BUNDLE_MISMATCH")
+    if (
+        source_bundle.bundle_digest != BOOTSTRAP_RECOVERY_SOURCE_BUNDLE_DIGEST
+        or source_bundle.release_id != BOOTSTRAP_RECOVERY_SOURCE_RELEASE_ID
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_SOURCE_BUNDLE_NOT_AUTHORIZED")
+    if not isinstance(target.get("compose_config_hash"), str) or not CONFIG_HASH_RE.fullmatch(
+        target["compose_config_hash"]
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TARGET_CONFIG_HASH_INVALID")
+    hardened = receipt.get("hardened_active")
+    exact_keys(
+        hardened,
+        (
+            "release_id",
+            "revision",
+            "image_tag",
+            "image_config_digest",
+            "repository_url",
+            "created_at",
+            "files",
+            "compose_config_hash",
+            "runtime_environment_keys",
+            "runtime_environment_hmac_sha256",
+        ),
+        "BOOTSTRAP_RECOVERY_HARDENED_ACTIVE",
+    )
+    legacy = receipt.get("legacy")
+    exact_keys(
+        legacy,
+        (
+            "release_id",
+            "revision",
+            "image_tag",
+            "image_config_digest",
+            "repository_url",
+            "created_at",
+            "files",
+            "archive",
+            "runtime_label_config_hash",
+            "live_computed_config_hash",
+            "runtime_projection_digest",
+            "runtime_environment_keys",
+            "runtime_environment_hmac_sha256",
+        ),
+        "BOOTSTRAP_RECOVERY_LEGACY",
+    )
+    if not isinstance(hardened, dict) or not isinstance(legacy, dict):
+        raise DeployError("BOOTSTRAP_RECOVERY_ACTIVE_FIELDS_INVALID")
+    target_files = target.get("files")
+    hardened_files = hardened.get("files")
+    legacy_files = legacy.get("files")
+    if (
+        not isinstance(target_files, dict)
+        or not isinstance(hardened_files, dict)
+        or not isinstance(legacy_files, dict)
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_STAGED_FILES_INVALID")
+    for label, files, seccomp_present in (
+        ("TARGET", target_files, True),
+        ("HARDENED", hardened_files, True),
+        ("LEGACY", legacy_files, False),
+    ):
+        exact_keys(files, ("env", "compose", "seccomp"), f"BOOTSTRAP_RECOVERY_{label}_FILES")
+        exact_keys(files.get("seccomp"), ("present", "digest"), f"BOOTSTRAP_RECOVERY_{label}_SECCOMP")
+        seccomp = files.get("seccomp")
+        if (
+            not isinstance(files.get("env"), str)
+            or not DIGEST_RE.fullmatch(files["env"])
+            or not isinstance(files.get("compose"), str)
+            or not DIGEST_RE.fullmatch(files["compose"])
+            or not isinstance(seccomp, dict)
+            or seccomp.get("present") is not seccomp_present
+            or (
+                seccomp_present
+                and (
+                    not isinstance(seccomp.get("digest"), str)
+                    or not DIGEST_RE.fullmatch(seccomp["digest"])
+                )
+            )
+            or (not seccomp_present and seccomp.get("digest") is not None)
+        ):
+            raise DeployError(f"BOOTSTRAP_RECOVERY_{label}_FILES_INVALID")
+    if (
+        target_files["compose"] != hardened_files["compose"]
+        or target_files["seccomp"] != hardened_files["seccomp"]
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_HARDENED_TARGET_FILES_MISMATCH")
+    exact_keys(legacy.get("archive"), ("bytes", "digest"), "BOOTSTRAP_RECOVERY_LEGACY_ARCHIVE")
+    archive = legacy.get("archive")
+    if (
+        not isinstance(archive, dict)
+        or not isinstance(archive.get("bytes"), int)
+        or isinstance(archive.get("bytes"), bool)
+        or archive["bytes"] <= 0
+        or not isinstance(archive.get("digest"), str)
+        or not DIGEST_RE.fullmatch(archive["digest"])
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_LEGACY_ARCHIVE_INVALID")
+    expected_legacy_tag = f"flowise-chinese:git-{LEGACY_BOOTSTRAP_REVISION}"
+    if (
+        legacy.get("revision") != LEGACY_BOOTSTRAP_REVISION
+        or legacy.get("release_id") != f"git-{LEGACY_BOOTSTRAP_REVISION}"
+        or legacy.get("image_tag") != expected_legacy_tag
+        or hardened.get("revision") != LEGACY_BOOTSTRAP_REVISION
+        or hardened.get("release_id") != f"git-{LEGACY_BOOTSTRAP_REVISION}"
+        or hardened.get("image_tag") != expected_legacy_tag
+        or hardened.get("image_config_digest") != legacy.get("image_config_digest")
+        or hardened.get("repository_url") != legacy.get("repository_url")
+        or hardened.get("created_at") != legacy.get("created_at")
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_LEGACY_IDENTITY_MISMATCH")
+    if (
+        not isinstance(legacy.get("image_config_digest"), str)
+        or not DIGEST_RE.fullmatch(legacy["image_config_digest"])
+        or legacy.get("repository_url") not in LEGACY_BOOTSTRAP_REPOSITORY_URLS
+        or not _valid_oci_created_at(legacy.get("created_at"))
+        or legacy.get("image_config_digest") != BOOTSTRAP_RECOVERY_LEGACY_IMAGE_CONFIG_DIGEST
+        or not isinstance(hardened.get("compose_config_hash"), str)
+        or not CONFIG_HASH_RE.fullmatch(hardened["compose_config_hash"])
+        or not isinstance(legacy.get("runtime_label_config_hash"), str)
+        or not CONFIG_HASH_RE.fullmatch(legacy["runtime_label_config_hash"])
+        or not isinstance(legacy.get("live_computed_config_hash"), str)
+        or not CONFIG_HASH_RE.fullmatch(legacy["live_computed_config_hash"])
+        or legacy["runtime_label_config_hash"] == legacy["live_computed_config_hash"]
+        or not isinstance(legacy.get("runtime_projection_digest"), str)
+        or not DIGEST_RE.fullmatch(legacy["runtime_projection_digest"])
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_LEGACY_PROVENANCE_INVALID")
+    baseline = receipt.get("baseline")
+    exact_keys(
+        baseline,
+        (
+            "containers",
+            "database",
+            "network_identity",
+            "legacy_journal_inventory",
+            "current_journal_inventory",
+        ),
+        "BOOTSTRAP_RECOVERY_BASELINE",
+    )
+    if not isinstance(baseline, dict):
+        raise DeployError("BOOTSTRAP_RECOVERY_BASELINE_INVALID")
+    containers = baseline.get("containers")
+    exact_keys(containers, MANAGED_CONTAINERS, "BOOTSTRAP_RECOVERY_BASELINE_CONTAINERS")
+    if not isinstance(containers, dict) or any(
+        not isinstance((containers.get(name) or {}).get("id"), str)
+        or not DOCKER_ID_RE.fullmatch(containers[name]["id"])
+        for name in MANAGED_CONTAINERS
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_BASELINE_CONTAINER_ID_INVALID")
+    _validate_network_identity_binding(
+        baseline.get("network_identity"),
+        "BOOTSTRAP_RECOVERY_BASELINE_NETWORK_IDENTITY",
+    )
+    database = baseline.get("database")
+    exact_keys(
+        database,
+        ("transaction_read_only", "migration_count", "migration_sha256", "migration_name_sha256"),
+        "BOOTSTRAP_RECOVERY_BASELINE_DATABASE",
+    )
+    if (
+        not isinstance(database, dict)
+        or database.get("transaction_read_only") is not True
+        or not isinstance(database.get("migration_count"), int)
+        or isinstance(database.get("migration_count"), bool)
+        or database["migration_count"] <= 0
+        or not isinstance(database.get("migration_sha256"), str)
+        or not DIGEST_RE.fullmatch(database["migration_sha256"])
+        or not isinstance(database.get("migration_name_sha256"), str)
+        or not DIGEST_RE.fullmatch(database["migration_name_sha256"])
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_BASELINE_DATABASE_INVALID")
+    live_metadata = receipt.get("live_metadata")
+    exact_keys(live_metadata, ("env", "compose", "seccomp"), "BOOTSTRAP_RECOVERY_LIVE_METADATA")
+    if not isinstance(live_metadata, dict) or any(
+        not isinstance(live_metadata.get(name), list)
+        or len(live_metadata[name]) != 3
+        or any(not isinstance(value, int) or isinstance(value, bool) for value in live_metadata[name])
+        for name in ("env", "compose", "seccomp")
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_LIVE_METADATA_INVALID")
+    # The caller-supplied digest was already verified by _read_receipt.  Keep
+    # it in this validator so static-analysis and callers cannot omit the CAS.
+    if not DIGEST_RE.fullmatch(prepare_digest):
+        raise DeployError("BOOTSTRAP_RECOVERY_PREPARE_DIGEST_INVALID")
+
+
+def _bootstrap_recovery_static_context(
+    bundle_dir: Path,
+    source_bundle_dir: Path,
+    run_id: str,
+    transition_permit_path: Path,
+    transition_permit_sha256: str,
+    bootstrap_prepare_receipt_sha256: str,
+    *,
+    require_interrupted_journal: bool,
+    allow_existing_complete_receipt: bool,
+    journal_pre_sha256: str | None = None,
+) -> dict[str, Any]:
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise DeployError("RUN_ID_INVALID")
+    if run_id != BOOTSTRAP_RECOVERY_RUN_ID:
+        raise DeployError("BOOTSTRAP_RECOVERY_RUN_NOT_AUTHORIZED")
+    run_dir = RUNS_DIR / run_id
+    complete_receipt_present = _validate_bootstrap_recovery_run_topology(
+        run_dir,
+        complete_receipt="either" if allow_existing_complete_receipt else "absent",
+    )
+    recovery_bundle = verify_bundle(bundle_dir)
+    source_bundle = verify_source_bundle(source_bundle_dir)
+    if recovery_bundle.bundle_digest == source_bundle.bundle_digest:
+        raise DeployError("BOOTSTRAP_RECOVERY_BUNDLES_NOT_DISTINCT")
+    expected_permit_path = (TRANSITION_PERMITS_DIR / f"{run_id}.json").absolute()
+    if transition_permit_path.absolute() != expected_permit_path:
+        raise DeployError("BOOTSTRAP_RECOVERY_TRANSITION_PERMIT_PATH_MISMATCH")
+    _validate_transition_permit_parent(TRANSITION_PERMITS_DIR.parent)
+    _validate_transition_permit_directory(TRANSITION_PERMITS_DIR)
+    permit = verify_transition_permit(
+        transition_permit_path,
+        transition_permit_sha256,
+        bundle=source_bundle,
+        run_id=run_id,
+    )
+    receipt_run_dir, prepare_receipt = _read_receipt(
+        run_id,
+        "bootstrap-prepare",
+        bootstrap_prepare_receipt_sha256,
+    )
+    if receipt_run_dir != run_dir:
+        raise DeployError("BOOTSTRAP_RECOVERY_RUN_DIRECTORY_MISMATCH")
+    _validate_bootstrap_recovery_prepare_receipt(
+        prepare_receipt,
+        run_id=run_id,
+        prepare_digest=bootstrap_prepare_receipt_sha256,
+        permit=permit,
+        source_bundle=source_bundle,
+    )
+    journal, journal_data, observed_journal_digest = _read_canonical_run_journal(run_dir)
+    if require_interrupted_journal:
+        _validate_bootstrap_recovery_interrupted_journal(
+            journal,
+            run_id=run_id,
+            permit_digest=permit.digest,
+            source_bundle_digest=source_bundle.bundle_digest,
+            source_bundle_release_id=source_bundle.release_id,
+            prepare_digest=bootstrap_prepare_receipt_sha256,
+        )
+        journal_pre_sha256 = observed_journal_digest
+    elif not isinstance(journal_pre_sha256, str) or not DIGEST_RE.fullmatch(journal_pre_sha256):
+        raise DeployError("BOOTSTRAP_RECOVERY_JOURNAL_PRE_DIGEST_INVALID")
+    if allow_existing_complete_receipt:
+        complete_path = _receipt_path(run_dir, "bootstrap-complete")
+    else:
+        _require_control_absent(
+            _receipt_path(run_dir, "bootstrap-complete"),
+            "BOOTSTRAP_RECOVERY_COMPLETE_RECEIPT",
+        )
+        complete_path = None
+    _require_control_absent(
+        _receipt_path(run_dir, "bootstrap-rollback"),
+        "BOOTSTRAP_RECOVERY_ROLLBACK_RECEIPT",
+    )
+    key = persistent_key()
+    expected = _legacy_restore_expected_state(run_dir, prepare_receipt, key)
+    target_root, target_env, _target_compose, target_seccomp = _load_staged(
+        prepare_receipt,
+        "target_bundle",
+        run_dir,
+    )
+    if target_seccomp is None:
+        raise DeployError("BOOTSTRAP_RECOVERY_TARGET_SECCOMP_MISSING")
+    target_config = compose_config(
+        target_root / ".env.production",
+        target_root / "docker-compose.prod.yml",
+        target_root,
+    )
+    validate_hardened_compose(target_config, source_bundle.image_tag, key)
+    if _compose_without_flowise_image(target_config) != _compose_without_flowise_image(
+        expected["hardened_config"]
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TARGET_NON_IMAGE_DRIFT")
+    if (
+        sha256_bytes(_target_compose)
+        != source_bundle.file_entries["production_compose"]["digest"]
+        or sha256_bytes(target_seccomp)
+        != source_bundle.file_entries["chromium_seccomp"]["digest"]
+        or render_env(expected["legacy_env"], source_bundle.image_tag) != target_env
+        or compose_service_hash(
+            target_root / ".env.production",
+            target_root / "docker-compose.prod.yml",
+            target_root,
+        )
+        != prepare_receipt["target_bundle"]["compose_config_hash"]
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_SOURCE_STAGED_BINDING_MISMATCH")
+    # Bind the original permit's active legacy authority to the frozen receipt.
+    active_permit = permit.document["active_legacy"]
+    legacy = prepare_receipt["legacy"]
+    baseline = prepare_receipt["baseline"]
+    if any(
+        active_permit.get(name) != legacy.get(name)
+        for name in (
+            "image_tag",
+            "revision",
+            "release_id",
+            "repository_url",
+            "created_at",
+            "image_config_digest",
+            "runtime_label_config_hash",
+            "live_computed_config_hash",
+            "runtime_projection_digest",
+            "runtime_environment_keys",
+            "runtime_environment_hmac_sha256",
+        )
+    ) or permit.document.get("containers") != {
+        name: baseline["containers"][name]["id"]
+        for name in MANAGED_CONTAINERS
+    } or permit.document.get("live") != {
+        "env_sha256": legacy["files"]["env"],
+        "compose_sha256": legacy["files"]["compose"],
+        "seccomp": legacy["files"]["seccomp"],
+    } or permit.document.get("database") != {
+        "migration_count": baseline["database"]["migration_count"],
+        "migration_name_sha256": baseline["database"]["migration_name_sha256"],
+    } or permit.document.get("network_identity") != baseline["network_identity"] or permit.document.get(
+        "legacy_journal_inventory"
+    ) != baseline["legacy_journal_inventory"]:
+        raise DeployError("BOOTSTRAP_RECOVERY_PERMIT_PREPARE_BINDING_MISMATCH")
+    return {
+        "recovery_bundle": recovery_bundle,
+        "source_bundle": source_bundle,
+        "permit": permit,
+        "run_dir": run_dir,
+        "prepare_receipt": prepare_receipt,
+        "prepare_digest": bootstrap_prepare_receipt_sha256,
+        "journal": journal,
+        "journal_data": journal_data,
+        "journal_pre_sha256": journal_pre_sha256,
+        "complete_path": complete_path,
+        "complete_receipt_present": complete_receipt_present,
+        "key": key,
+        "expected": expected,
+    }
+
+
+def _bootstrap_recovery_observation(
+    context: dict[str, Any],
+    *,
+    expected_current_flowise_container_id: str,
+    expected_observed_runtime_config_hash: str,
+    require_interrupted_journal: bool,
+) -> dict[str, Any]:
+    run_dir: Path = context["run_dir"]
+    receipt = context["prepare_receipt"]
+    permit: TransitionPermit = context["permit"]
+    topology_receipt_present = _validate_bootstrap_recovery_run_topology(
+        run_dir,
+        complete_receipt=(
+            "present" if context.get("complete_receipt_present") is True else "absent"
+        ),
+    )
+    if topology_receipt_present is not bool(context.get("complete_receipt_present")):
+        raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_CAS_MISMATCH")
+    if require_interrupted_journal:
+        journal, journal_data, journal_digest = _read_canonical_run_journal(run_dir)
+        _validate_bootstrap_recovery_interrupted_journal(
+            journal,
+            run_id=receipt["run_id"],
+            permit_digest=permit.digest,
+            source_bundle_digest=context["source_bundle"].bundle_digest,
+            source_bundle_release_id=context["source_bundle"].release_id,
+            prepare_digest=context["prepare_digest"],
+        )
+        if (
+            journal_digest != context["journal_pre_sha256"]
+            or journal_data != context["journal_data"]
+        ):
+            raise DeployError("BOOTSTRAP_RECOVERY_JOURNAL_CAS_MISMATCH")
+    _require_control_absent(
+        _receipt_path(run_dir, "bootstrap-rollback"),
+        "BOOTSTRAP_RECOVERY_ROLLBACK_RECEIPT",
+    )
+    live_env, env_metadata = live_file(LIVE_ENV, 0o600)
+    live_compose, compose_metadata = live_file(LIVE_COMPOSE, 0o644)
+    live_seccomp, seccomp_metadata = live_file(LIVE_SECCOMP, 0o644)
+    if {
+        "env": list(env_metadata),
+        "compose": list(compose_metadata),
+        "seccomp": list(seccomp_metadata),
+    } != receipt["live_metadata"]:
+        raise DeployError("BOOTSTRAP_RECOVERY_LIVE_FILE_METADATA_DRIFT")
+    live_hashes = {
+        "env": sha256_bytes(live_env),
+        "compose": sha256_bytes(live_compose),
+        "seccomp": {"present": True, "digest": sha256_bytes(live_seccomp)},
+    }
+    if live_hashes != receipt["hardened_active"]["files"]:
+        raise DeployError("BOOTSTRAP_RECOVERY_LIVE_FILES_NOT_HHH")
+    seccomp_digest = _seccomp_canonical_digest_bytes(
+        live_seccomp,
+        "BOOTSTRAP_RECOVERY_LIVE_SECCOMP",
+    )
+    documents = inspect_containers()
+    validate_container_health(documents)
+    snapshot = container_snapshot(documents)
+    flowise = documents[FLOWISE_CONTAINER]
+    current_id = snapshot[FLOWISE_CONTAINER]["id"]
+    baseline_id = receipt["baseline"]["containers"][FLOWISE_CONTAINER]["id"]
+    if (
+        current_id != expected_current_flowise_container_id
+        or current_id == baseline_id
+        or not isinstance(current_id, str)
+        or not DOCKER_ID_RE.fullmatch(current_id)
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_FLOWISE_CONTAINER_ID_MISMATCH")
+    observed_hash = _observed_runtime_config_hash(flowise)
+    if observed_hash != expected_observed_runtime_config_hash:
+        raise DeployError("BOOTSTRAP_RECOVERY_OBSERVED_CONFIG_HASH_MISMATCH")
+    legacy = receipt["legacy"]
+    image = inspect_image(
+        legacy["image_tag"],
+        legacy["image_config_digest"],
+        legacy["revision"],
+        legacy["repository_url"],
+    )
+    if (
+        image.get("release_id") != legacy["release_id"]
+        or image.get("created_at") != legacy["created_at"]
+        or snapshot[FLOWISE_CONTAINER]["image_ref"] != legacy["image_tag"]
+        or snapshot[FLOWISE_CONTAINER]["image_id"] != legacy["image_config_digest"]
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_ACTIVE_IMAGE_MISMATCH")
+    authorized_sidecar_ids = {
+        POSTGRES_CONTAINER: BOOTSTRAP_RECOVERY_POSTGRES_CONTAINER_ID,
+        NGINX_CONTAINER: BOOTSTRAP_RECOVERY_NGINX_CONTAINER_ID,
+    }
+    for name in (POSTGRES_CONTAINER, NGINX_CONTAINER):
+        if (
+            snapshot[name] != receipt["baseline"]["containers"][name]
+            or snapshot[name]["id"] != authorized_sidecar_ids[name]
+        ):
+            raise DeployError(f"BOOTSTRAP_RECOVERY_SIDECAR_DRIFT_{name}")
+    network_identity = validate_runtime_network_identity(
+        documents,
+        receipt["baseline"]["network_identity"],
+    )
+    key = persistent_key()
+    if not hmac.compare_digest(key, context["key"]):
+        raise DeployError("BOOTSTRAP_RECOVERY_KEY_CAS_MISMATCH")
+    resolved_hardened, requested_hash, compose_environment = _resolved_live(
+        legacy["image_tag"],
+        key,
+    )
+    if (
+        requested_hash != receipt["hardened_active"]["compose_config_hash"]
+        or requested_hash != BOOTSTRAP_RECOVERY_REQUESTED_CONFIG_HASH
+        or resolved_hardened != context["expected"]["hardened_config"]
+        or compose_environment != service_environment(context["expected"]["hardened_config"])
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_REQUESTED_CONFIG_MISMATCH")
+    expected_environment = expected_container_environment(
+        image["image_environment"],
+        compose_environment,
+    )
+    if expected_environment != context["expected"]["hardened_environment"]:
+        raise DeployError("BOOTSTRAP_RECOVERY_EXPECTED_ENVIRONMENT_MISMATCH")
+    _validate_runtime_environment_binding(
+        receipt["hardened_active"],
+        expected_environment,
+        key,
+        "BOOTSTRAP_RECOVERY_HARDENED_ACTIVE",
+    )
+    runtime = validate_bootstrap_hardened_runtime(
+        documents,
+        image_tag=legacy["image_tag"],
+        image_digest=legacy["image_config_digest"],
+        expected_config_hash=requested_hash,
+        expected_environment=expected_environment,
+        expected_compose=resolved_hardened,
+        expected_network_identity=receipt["baseline"]["network_identity"],
+        expected_image=image,
+        expected_replaced_container_id=baseline_id,
+        allow_opaque_config_hash=True,
+        expected_seccomp_digest=seccomp_digest,
+    )
+    if runtime["observed_runtime_config_hash"] != observed_hash:
+        raise DeployError("BOOTSTRAP_RECOVERY_RUNTIME_HASH_OBSERVATION_MISMATCH")
+    validate_database_runtime_identity(resolved_hardened, documents)
+    validate_key_continuity(documents, expected_environment, key)
+    database = database_state(include_name_digest=True)
+    if (
+        database != receipt["baseline"]["database"]
+        or database.get("migration_count") != BOOTSTRAP_RECOVERY_MIGRATION_COUNT
+        or database.get("migration_name_sha256") != BOOTSTRAP_RECOVERY_MIGRATION_NAME_DIGEST
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_DATABASE_DRIFT")
+    legacy_inventory = legacy_journal_inventory()
+    if legacy_inventory != receipt["baseline"]["legacy_journal_inventory"]:
+        raise DeployError("BOOTSTRAP_RECOVERY_LEGACY_JOURNAL_DRIFT")
+    current_inventory = current_journal_inventory(exclude_run_id=receipt["run_id"])
+    baseline_current_inventory = receipt["baseline"]["current_journal_inventory"]
+    stable_current_inventory_fields = (
+        "root",
+        "control_json_count",
+        "control_json_sha256",
+        "unresolved_rollback_count",
+    )
+    if (
+        not isinstance(baseline_current_inventory, dict)
+        or any(
+            current_inventory.get(name) != baseline_current_inventory.get(name)
+            for name in stable_current_inventory_fields
+        )
+        or current_inventory.get("unresolved_rollback_count") != 0
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_CURRENT_JOURNAL_DRIFT")
+    full_projection_digest = recovery_runtime_projection_digest(flowise, seccomp_digest)
+    if seccomp_digest != BOOTSTRAP_RECOVERY_SECCOMP_CANONICAL_DIGEST:
+        raise DeployError("BOOTSTRAP_RECOVERY_SECCOMP_NOT_AUTHORIZED")
+    if full_projection_digest != BOOTSTRAP_RECOVERY_FULL_RUNTIME_PROJECTION_DIGEST:
+        raise DeployError("BOOTSTRAP_RECOVERY_FULL_RUNTIME_NOT_AUTHORIZED")
+    runtime_pings()
+    sidecar_identity = {
+        name: {
+            "id": snapshot[name]["id"],
+            "image_id": snapshot[name]["image_id"],
+            "state": snapshot[name]["state"],
+            "health": snapshot[name]["health"],
+            "restart_count": snapshot[name]["restart_count"],
+        }
+        for name in (POSTGRES_CONTAINER, NGINX_CONTAINER)
+    }
+    material = {
+        "schema_version": 1,
+        "completion_mode": BOOTSTRAP_RECOVERY_COMPLETION_MODE,
+        "run_id": receipt["run_id"],
+        "recovery_bundle": _bundle_identity(context["recovery_bundle"]),
+        "source_bundle": _bundle_identity(context["source_bundle"]),
+        "authority": {
+            "transition_permit_path": str(permit.path),
+            "transition_permit_sha256": permit.digest,
+            "bootstrap_prepare_receipt_sha256": context["prepare_digest"],
+            "journal_pre_sha256": context["journal_pre_sha256"],
+        },
+        "runtime": {
+            "baseline_flowise_container_id": baseline_id,
+            "current_flowise_container_id": current_id,
+            "image_tag": legacy["image_tag"],
+            "image_config_digest": legacy["image_config_digest"],
+            "requested_compose_config_hash": requested_hash,
+            "observed_runtime_config_hash": observed_hash,
+            "seccomp_canonical_sha256": seccomp_digest,
+            "semantic_runtime_projection_sha256": runtime["runtime_projection_digest"],
+            "full_runtime_projection_sha256": full_projection_digest,
+        },
+        "live_files": copy.deepcopy(live_hashes),
+        "sidecars": sidecar_identity,
+        "network_identity": copy.deepcopy(network_identity),
+        "database": copy.deepcopy(database),
+        "legacy_journal_inventory_sha256": legacy_inventory["canonical_inventory_sha256"],
+        "current_journal_inventory_sha256": current_inventory["control_json_sha256"],
+        "key_continuity_verified": True,
+        "runtime_pings_verified": True,
+        "production_runtime_write": False,
+        "database_write": False,
+        "provider_call": False,
+        "secret_value_output": False,
+    }
+    return {
+        "material": material,
+        "snapshot": snapshot,
+        "runtime": runtime,
+        "database": database,
+    }
+
+
+def _capture_stable_bootstrap_recovery(
+    context: dict[str, Any],
+    *,
+    expected_current_flowise_container_id: str,
+    expected_observed_runtime_config_hash: str,
+    require_interrupted_journal: bool,
+) -> tuple[dict[str, Any], str]:
+    initial = _bootstrap_recovery_observation(
+        context,
+        expected_current_flowise_container_id=expected_current_flowise_container_id,
+        expected_observed_runtime_config_hash=expected_observed_runtime_config_hash,
+        require_interrupted_journal=require_interrupted_journal,
+    )
+    current = _bootstrap_recovery_observation(
+        context,
+        expected_current_flowise_container_id=expected_current_flowise_container_id,
+        expected_observed_runtime_config_hash=expected_observed_runtime_config_hash,
+        require_interrupted_journal=require_interrupted_journal,
+    )
+    if canonical_json(initial) != canonical_json(current):
+        raise DeployError("BOOTSTRAP_RECOVERY_OBSERVATION_CAS_MISMATCH")
+    digest = sha256_bytes(canonical_json(current["material"]))
+    return current, digest
+
+
+def _bootstrap_recovery_snapshot_result(
+    observation: dict[str, Any],
+    snapshot_digest: str,
+) -> dict[str, Any]:
+    material = observation["material"]
+    runtime = material["runtime"]
+    return {
+        "status": "bootstrap_recovery_snapshot_verified",
+        "run_id": material["run_id"],
+        "recovery_snapshot_sha256": snapshot_digest,
+        "recovery_bundle_sha256": material["recovery_bundle"]["bundle_digest"],
+        "source_bundle_sha256": material["source_bundle"]["bundle_digest"],
+        "journal_pre_sha256": material["authority"]["journal_pre_sha256"],
+        "requested_compose_config_hash": runtime["requested_compose_config_hash"],
+        "observed_runtime_config_hash": runtime["observed_runtime_config_hash"],
+        "semantic_runtime_projection_sha256": runtime["semantic_runtime_projection_sha256"],
+        "full_runtime_projection_sha256": runtime["full_runtime_projection_sha256"],
+        "production_runtime_write": False,
+        "control_artifact_write": False,
+        "database_write": False,
+        "provider_call": False,
+        "secret_value_output": False,
+    }
+
+
+def _validate_bootstrap_recovery_scope(
+    run_id: str,
+    transition_permit_sha256: str,
+    bootstrap_prepare_receipt_sha256: str,
+    expected_current_flowise_container_id: str,
+    expected_observed_runtime_config_hash: str,
+) -> None:
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise DeployError("RUN_ID_INVALID")
+    if run_id != BOOTSTRAP_RECOVERY_RUN_ID:
+        raise DeployError("BOOTSTRAP_RECOVERY_RUN_NOT_AUTHORIZED")
+    if (
+        not isinstance(transition_permit_sha256, str)
+        or not DIGEST_RE.fullmatch(transition_permit_sha256)
+        or not isinstance(bootstrap_prepare_receipt_sha256, str)
+        or not DIGEST_RE.fullmatch(bootstrap_prepare_receipt_sha256)
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_AUTHORITY_DIGEST_INVALID")
+    if (
+        transition_permit_sha256 != BOOTSTRAP_RECOVERY_PERMIT_DIGEST
+        or bootstrap_prepare_receipt_sha256 != BOOTSTRAP_RECOVERY_PREPARE_DIGEST
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_AUTHORITY_NOT_AUTHORIZED")
+    if (
+        not isinstance(expected_current_flowise_container_id, str)
+        or not DOCKER_ID_RE.fullmatch(expected_current_flowise_container_id)
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_EXPECTED_CONTAINER_ID_INVALID")
+    if expected_current_flowise_container_id != BOOTSTRAP_RECOVERY_FLOWISE_CONTAINER_ID:
+        raise DeployError("BOOTSTRAP_RECOVERY_CONTAINER_NOT_AUTHORIZED")
+    if (
+        not isinstance(expected_observed_runtime_config_hash, str)
+        or not CONFIG_HASH_RE.fullmatch(expected_observed_runtime_config_hash)
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_EXPECTED_CONFIG_HASH_INVALID")
+    if expected_observed_runtime_config_hash != BOOTSTRAP_RECOVERY_OBSERVED_CONFIG_HASH:
+        raise DeployError("BOOTSTRAP_RECOVERY_CONFIG_HASH_NOT_AUTHORIZED")
+
+
+def snapshot_bootstrap_recovery(
+    bundle_dir: Path,
+    source_bundle_dir: Path,
+    run_id: str,
+    transition_permit_path: Path,
+    transition_permit_sha256: str,
+    bootstrap_prepare_receipt_sha256: str,
+    expected_current_flowise_container_id: str,
+    expected_observed_runtime_config_hash: str,
+) -> dict[str, Any]:
+    require_root()
+    _validate_bootstrap_recovery_scope(
+        run_id,
+        transition_permit_sha256,
+        bootstrap_prepare_receipt_sha256,
+        expected_current_flowise_container_id,
+        expected_observed_runtime_config_hash,
+    )
+    lock = acquire_existing_lock()
+    try:
+        context = _bootstrap_recovery_static_context(
+            bundle_dir,
+            source_bundle_dir,
+            run_id,
+            transition_permit_path,
+            transition_permit_sha256,
+            bootstrap_prepare_receipt_sha256,
+            require_interrupted_journal=True,
+            allow_existing_complete_receipt=False,
+        )
+        observation, snapshot_digest = _capture_stable_bootstrap_recovery(
+            context,
+            expected_current_flowise_container_id=expected_current_flowise_container_id,
+            expected_observed_runtime_config_hash=expected_observed_runtime_config_hash,
+            require_interrupted_journal=True,
+        )
+        return _bootstrap_recovery_snapshot_result(observation, snapshot_digest)
+    finally:
+        os.close(lock)
+
+
+def _build_bootstrap_recovery_complete_receipt(
+    context: dict[str, Any],
+    observation: dict[str, Any],
+    snapshot_digest: str,
+    created_at: str,
+) -> dict[str, Any]:
+    if not _valid_timestamp(created_at):
+        raise DeployError("BOOTSTRAP_RECOVERY_COMPLETE_TIMESTAMP_INVALID")
+    receipt = context["prepare_receipt"]
+    material = observation["material"]
+    return {
+        "schema_version": 1,
+        "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+        "operation": "bootstrap",
+        "state": "complete_hardened_baseline",
+        "run_id": receipt["run_id"],
+        "completion_mode": BOOTSTRAP_RECOVERY_COMPLETION_MODE,
+        "bootstrap_prepare_receipt_sha256": context["prepare_digest"],
+        "permit_digest": context["permit"].digest,
+        "target_bundle": receipt["target_bundle"],
+        "hardened_active": receipt["hardened_active"],
+        "runtime": {"containers": observation["snapshot"], **observation["runtime"]},
+        "database": observation["database"],
+        "recovery": {
+            **copy.deepcopy(material),
+            "recovery_snapshot_sha256": snapshot_digest,
+        },
+        "key_continuity_verified": True,
+        "database_unchanged": True,
+        "sidecars_unchanged": True,
+        "provider_call": False,
+        "created_at": created_at,
+    }
+
+
+def _recovery_authority_from_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    recovery = receipt.get("recovery") or {}
+    runtime = recovery.get("runtime") or {}
+    authority = recovery.get("authority") or {}
+    recovery_bundle = recovery.get("recovery_bundle") or {}
+    source_bundle = recovery.get("source_bundle") or {}
+    live_files = recovery.get("live_files") or {}
+    sidecars = recovery.get("sidecars") or {}
+    network_identity = recovery.get("network_identity") or {}
+    database = recovery.get("database") or {}
+    return {
+        "completion_mode": BOOTSTRAP_RECOVERY_COMPLETION_MODE,
+        "recovery_bundle_digest": recovery_bundle.get("bundle_digest"),
+        "source_bundle_digest": source_bundle.get("bundle_digest"),
+        "journal_pre_sha256": authority.get("journal_pre_sha256"),
+        "bootstrap_prepare_receipt_sha256": authority.get("bootstrap_prepare_receipt_sha256"),
+        "transition_permit_path": authority.get("transition_permit_path"),
+        "permit_digest": authority.get("transition_permit_sha256"),
+        "recovery_snapshot_sha256": recovery.get("recovery_snapshot_sha256"),
+        "baseline_flowise_container_id": runtime.get("baseline_flowise_container_id"),
+        "current_flowise_container_id": runtime.get("current_flowise_container_id"),
+        "requested_compose_config_hash": runtime.get("requested_compose_config_hash"),
+        "observed_runtime_config_hash": runtime.get("observed_runtime_config_hash"),
+        "semantic_runtime_projection_sha256": runtime.get("semantic_runtime_projection_sha256"),
+        "full_runtime_projection_sha256": runtime.get("full_runtime_projection_sha256"),
+        "live_files_sha256": sha256_bytes(canonical_json(live_files)),
+        "sidecars_sha256": sha256_bytes(canonical_json(sidecars)),
+        "network_identity_sha256": sha256_bytes(canonical_json(network_identity)),
+        "database_sha256": sha256_bytes(canonical_json(database)),
+        "legacy_journal_inventory_sha256": recovery.get("legacy_journal_inventory_sha256"),
+        "current_journal_inventory_sha256": recovery.get("current_journal_inventory_sha256"),
+    }
+
+
+def _complete_bootstrap_recovery_journal(
+    run_dir: Path,
+    journal: dict[str, Any],
+    complete_receipt: dict[str, Any],
+    complete_digest: str,
+) -> dict[str, Any]:
+    _validate_bootstrap_recovery_run_topology(run_dir, complete_receipt="present")
+    observed_preimage, observed_preimage_data, _observed_preimage_digest = (
+        _read_canonical_run_journal(run_dir)
+    )
+    if observed_preimage != journal or observed_preimage_data != canonical_json(journal):
+        raise DeployError("BOOTSTRAP_RECOVERY_JOURNAL_PREIMAGE_CAS_MISMATCH")
+    completed = copy.deepcopy(journal)
+    completed.update(
+        {
+            "policy": _policy_copy(LEGACY_BOOTSTRAP_POLICY),
+            "state": "complete_hardened_baseline",
+            "phase": "complete",
+            "completion_mode": BOOTSTRAP_RECOVERY_COMPLETION_MODE,
+            "bootstrap_complete_receipt_sha256": complete_digest,
+            "recovery_authority": _recovery_authority_from_receipt(complete_receipt),
+            "updated_at": utc_now(),
+        }
+    )
+    _journal(run_dir, completed)
+    observed, observed_data, _observed_digest = _read_canonical_run_journal(run_dir)
+    if observed != completed or observed_data != canonical_json(completed):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_JOURNAL_ROUNDTRIP_MISMATCH")
+    _validate_terminal_bootstrap_recovery_journal(
+        observed,
+        complete_receipt,
+        complete_digest,
+    )
+    return completed
+
+
+def _validate_terminal_bootstrap_recovery_journal(
+    journal: dict[str, Any],
+    receipt: dict[str, Any],
+    receipt_digest: str,
+) -> None:
+    _validate_policy(journal.get("policy"), LEGACY_BOOTSTRAP_POLICY, "BOOTSTRAP_RECOVERY_TERMINAL_JOURNAL")
+    exact_keys(
+        journal,
+        (
+            "schema_version",
+            "policy",
+            "operation",
+            "state",
+            "phase",
+            "run_id",
+            "permit_digest",
+            "target_bundle_digest",
+            "target_bundle_release_id",
+            "active_legacy_release_id",
+            "live_write_started",
+            "hardened_recreate_started",
+            "rollback_attempted",
+            "bootstrap_prepare_receipt_sha256",
+            "bootstrap_complete_receipt_sha256",
+            "completion_mode",
+            "recovery_authority",
+            "updated_at",
+        ),
+        "BOOTSTRAP_RECOVERY_TERMINAL_JOURNAL",
+    )
+    target = receipt.get("target_bundle") or {}
+    hardened = receipt.get("hardened_active") or {}
+    if (
+        journal.get("schema_version") != 1
+        or journal.get("operation") != "bootstrap"
+        or journal.get("state") != "complete_hardened_baseline"
+        or journal.get("phase") != "complete"
+        or journal.get("run_id") != receipt.get("run_id")
+        or journal.get("completion_mode") != BOOTSTRAP_RECOVERY_COMPLETION_MODE
+        or journal.get("bootstrap_complete_receipt_sha256") != receipt_digest
+        or journal.get("permit_digest") != receipt.get("permit_digest")
+        or journal.get("target_bundle_digest") != target.get("bundle_digest")
+        or journal.get("target_bundle_release_id") != target.get("release_id")
+        or journal.get("active_legacy_release_id") != hardened.get("release_id")
+        or journal.get("bootstrap_prepare_receipt_sha256")
+        != receipt.get("bootstrap_prepare_receipt_sha256")
+        or journal.get("live_write_started") is not True
+        or journal.get("hardened_recreate_started") is not True
+        or journal.get("rollback_attempted") is not False
+        or journal.get("recovery_authority") != _recovery_authority_from_receipt(receipt)
+        or not _valid_timestamp(journal.get("updated_at"))
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_JOURNAL_MISMATCH")
+
+
+def _validate_bootstrap_recovery_terminal_receipt_authority(receipt: dict[str, Any]) -> None:
+    """Bind a terminal receipt to the one approved incident, not to itself."""
+
+    exact_keys(
+        receipt,
+        (
+            "schema_version",
+            "policy",
+            "operation",
+            "state",
+            "run_id",
+            "completion_mode",
+            "bootstrap_prepare_receipt_sha256",
+            "permit_digest",
+            "target_bundle",
+            "hardened_active",
+            "runtime",
+            "database",
+            "recovery",
+            "key_continuity_verified",
+            "database_unchanged",
+            "sidecars_unchanged",
+            "provider_call",
+            "created_at",
+        ),
+        "BOOTSTRAP_RECOVERY_TERMINAL_RECEIPT",
+    )
+    _validate_policy(
+        receipt.get("policy"),
+        LEGACY_BOOTSTRAP_POLICY,
+        "BOOTSTRAP_RECOVERY_TERMINAL_RECEIPT",
+    )
+    if (
+        receipt.get("schema_version") != 1
+        or receipt.get("operation") != "bootstrap"
+        or receipt.get("state") != "complete_hardened_baseline"
+        or receipt.get("run_id") != BOOTSTRAP_RECOVERY_RUN_ID
+        or receipt.get("completion_mode") != BOOTSTRAP_RECOVERY_COMPLETION_MODE
+        or receipt.get("bootstrap_prepare_receipt_sha256") != BOOTSTRAP_RECOVERY_PREPARE_DIGEST
+        or receipt.get("permit_digest") != BOOTSTRAP_RECOVERY_PERMIT_DIGEST
+        or receipt.get("key_continuity_verified") is not True
+        or receipt.get("database_unchanged") is not True
+        or receipt.get("sidecars_unchanged") is not True
+        or receipt.get("provider_call") is not False
+        or not _valid_timestamp(receipt.get("created_at"))
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_RECEIPT_AUTHORITY_INVALID")
+
+    target = receipt.get("target_bundle")
+    hardened = receipt.get("hardened_active")
+    exact_keys(
+        target,
+        (
+            "bundle_digest",
+            "release_id",
+            "revision",
+            "image_tag",
+            "image_config_digest",
+            "files",
+            "compose_config_hash",
+        ),
+        "BOOTSTRAP_RECOVERY_TERMINAL_TARGET",
+    )
+    exact_keys(
+        hardened,
+        (
+            "release_id",
+            "revision",
+            "image_tag",
+            "image_config_digest",
+            "repository_url",
+            "created_at",
+            "files",
+            "compose_config_hash",
+            "runtime_environment_keys",
+            "runtime_environment_hmac_sha256",
+        ),
+        "BOOTSTRAP_RECOVERY_TERMINAL_HARDENED",
+    )
+    if not isinstance(target, dict) or not isinstance(hardened, dict):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_ACTIVE_INVALID")
+    source_revision = BOOTSTRAP_RECOVERY_SOURCE_RELEASE_ID.removeprefix("git-")
+    legacy_tag = f"flowise-chinese:git-{LEGACY_BOOTSTRAP_REVISION}"
+    if (
+        target.get("bundle_digest") != BOOTSTRAP_RECOVERY_SOURCE_BUNDLE_DIGEST
+        or target.get("release_id") != BOOTSTRAP_RECOVERY_SOURCE_RELEASE_ID
+        or target.get("revision") != source_revision
+        or target.get("image_tag") != f"flowise-chinese:git-{source_revision}"
+        or not isinstance(target.get("image_config_digest"), str)
+        or not DIGEST_RE.fullmatch(target["image_config_digest"])
+        or not isinstance(target.get("compose_config_hash"), str)
+        or not CONFIG_HASH_RE.fullmatch(target["compose_config_hash"])
+        or hardened.get("release_id") != f"git-{LEGACY_BOOTSTRAP_REVISION}"
+        or hardened.get("revision") != LEGACY_BOOTSTRAP_REVISION
+        or hardened.get("image_tag") != legacy_tag
+        or hardened.get("image_config_digest") != BOOTSTRAP_RECOVERY_LEGACY_IMAGE_CONFIG_DIGEST
+        or hardened.get("compose_config_hash") != BOOTSTRAP_RECOVERY_REQUESTED_CONFIG_HASH
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_ACTIVE_AUTHORITY_INVALID")
+    for label, files, seccomp_present in (
+        ("TARGET", target.get("files"), True),
+        ("HARDENED", hardened.get("files"), True),
+    ):
+        exact_keys(files, ("env", "compose", "seccomp"), f"BOOTSTRAP_RECOVERY_TERMINAL_{label}_FILES")
+        if not isinstance(files, dict):
+            raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_FILES_INVALID")
+        seccomp = files.get("seccomp")
+        exact_keys(seccomp, ("present", "digest"), f"BOOTSTRAP_RECOVERY_TERMINAL_{label}_SECCOMP")
+        if (
+            not isinstance(files.get("env"), str)
+            or not DIGEST_RE.fullmatch(files["env"])
+            or not isinstance(files.get("compose"), str)
+            or not DIGEST_RE.fullmatch(files["compose"])
+            or not isinstance(seccomp, dict)
+            or seccomp.get("present") is not seccomp_present
+            or not isinstance(seccomp.get("digest"), str)
+            or not DIGEST_RE.fullmatch(seccomp["digest"])
+        ):
+            raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_FILES_INVALID")
+    if (
+        target["files"]["compose"] != hardened["files"]["compose"]
+        or target["files"]["seccomp"] != hardened["files"]["seccomp"]
+        or not isinstance(hardened.get("runtime_environment_keys"), list)
+        or any(not isinstance(name, str) or not ENV_KEY_RE.fullmatch(name) for name in hardened["runtime_environment_keys"])
+        or hardened["runtime_environment_keys"] != sorted(set(hardened["runtime_environment_keys"]))
+        or not isinstance(hardened.get("runtime_environment_hmac_sha256"), str)
+        or not DIGEST_RE.fullmatch(hardened["runtime_environment_hmac_sha256"])
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_HARDENED_AUTHORITY_INVALID")
+
+    runtime = receipt.get("runtime")
+    exact_keys(
+        runtime,
+        (
+            "containers",
+            "runtime_image_verified",
+            "runtime_config_hash",
+            "requested_compose_config_hash",
+            "observed_runtime_config_hash",
+            "runtime_environment_verified",
+            "runtime_environment_key_count",
+            "runtime_hardening_verified",
+            "opaque_config_hash_semantic_contract_verified",
+            "runtime_projection_digest",
+            "runtime_network_identity",
+        ),
+        "BOOTSTRAP_RECOVERY_TERMINAL_RUNTIME",
+    )
+    recovery = receipt.get("recovery")
+    exact_keys(
+        recovery,
+        (
+            "schema_version",
+            "completion_mode",
+            "run_id",
+            "recovery_bundle",
+            "source_bundle",
+            "authority",
+            "runtime",
+            "live_files",
+            "sidecars",
+            "network_identity",
+            "database",
+            "legacy_journal_inventory_sha256",
+            "current_journal_inventory_sha256",
+            "key_continuity_verified",
+            "runtime_pings_verified",
+            "production_runtime_write",
+            "database_write",
+            "provider_call",
+            "secret_value_output",
+            "recovery_snapshot_sha256",
+        ),
+        "BOOTSTRAP_RECOVERY_TERMINAL_RECOVERY",
+    )
+    if not isinstance(runtime, dict) or not isinstance(recovery, dict):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_RUNTIME_INVALID")
+    authority = recovery.get("authority")
+    recovery_runtime = recovery.get("runtime")
+    recovery_bundle = recovery.get("recovery_bundle")
+    source_bundle = recovery.get("source_bundle")
+    exact_keys(
+        authority,
+        (
+            "transition_permit_path",
+            "transition_permit_sha256",
+            "bootstrap_prepare_receipt_sha256",
+            "journal_pre_sha256",
+        ),
+        "BOOTSTRAP_RECOVERY_TERMINAL_AUTHORITY",
+    )
+    exact_keys(
+        recovery_runtime,
+        (
+            "baseline_flowise_container_id",
+            "current_flowise_container_id",
+            "image_tag",
+            "image_config_digest",
+            "requested_compose_config_hash",
+            "observed_runtime_config_hash",
+            "seccomp_canonical_sha256",
+            "semantic_runtime_projection_sha256",
+            "full_runtime_projection_sha256",
+        ),
+        "BOOTSTRAP_RECOVERY_TERMINAL_RECOVERY_RUNTIME",
+    )
+    for label, bundle in (
+        ("RECOVERY", recovery_bundle),
+        ("SOURCE", source_bundle),
+    ):
+        exact_keys(
+            bundle,
+            ("bundle_digest", "release_id", "revision", "image_tag", "image_config_digest"),
+            f"BOOTSTRAP_RECOVERY_TERMINAL_{label}_BUNDLE",
+        )
+    if (
+        not isinstance(authority, dict)
+        or not isinstance(recovery_runtime, dict)
+        or not isinstance(recovery_bundle, dict)
+        or not isinstance(source_bundle, dict)
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_RECOVERY_AUTHORITY_INVALID")
+    expected_permit_path = str(
+        (TRANSITION_PERMITS_DIR / f"{BOOTSTRAP_RECOVERY_RUN_ID}.json").absolute()
+    )
+    if (
+        recovery.get("schema_version") != 1
+        or recovery.get("completion_mode") != BOOTSTRAP_RECOVERY_COMPLETION_MODE
+        or recovery.get("run_id") != BOOTSTRAP_RECOVERY_RUN_ID
+        or authority.get("transition_permit_path") != expected_permit_path
+        or authority.get("transition_permit_sha256") != BOOTSTRAP_RECOVERY_PERMIT_DIGEST
+        or authority.get("bootstrap_prepare_receipt_sha256") != BOOTSTRAP_RECOVERY_PREPARE_DIGEST
+        or not isinstance(authority.get("journal_pre_sha256"), str)
+        or not DIGEST_RE.fullmatch(authority["journal_pre_sha256"])
+        or source_bundle.get("bundle_digest") != BOOTSTRAP_RECOVERY_SOURCE_BUNDLE_DIGEST
+        or source_bundle.get("release_id") != BOOTSTRAP_RECOVERY_SOURCE_RELEASE_ID
+        or source_bundle.get("revision") != source_revision
+        or source_bundle.get("image_tag") != f"flowise-chinese:git-{source_revision}"
+        or any(source_bundle.get(name) != target.get(name) for name in source_bundle)
+        or not isinstance(recovery_bundle.get("bundle_digest"), str)
+        or not DIGEST_RE.fullmatch(recovery_bundle["bundle_digest"])
+        or not isinstance(recovery_bundle.get("revision"), str)
+        or not REVISION_RE.fullmatch(recovery_bundle["revision"])
+        or recovery_bundle.get("release_id") != f"git-{recovery_bundle['revision']}"
+        or recovery_bundle.get("image_tag")
+        != f"flowise-chinese:git-{recovery_bundle['revision']}"
+        or not isinstance(recovery_bundle.get("image_config_digest"), str)
+        or not DIGEST_RE.fullmatch(recovery_bundle["image_config_digest"])
+        or recovery_bundle.get("bundle_digest") == source_bundle.get("bundle_digest")
+        or recovery_runtime.get("current_flowise_container_id")
+        != BOOTSTRAP_RECOVERY_FLOWISE_CONTAINER_ID
+        or recovery_runtime.get("image_tag") != legacy_tag
+        or recovery_runtime.get("image_config_digest")
+        != BOOTSTRAP_RECOVERY_LEGACY_IMAGE_CONFIG_DIGEST
+        or recovery_runtime.get("requested_compose_config_hash")
+        != BOOTSTRAP_RECOVERY_REQUESTED_CONFIG_HASH
+        or recovery_runtime.get("observed_runtime_config_hash")
+        != BOOTSTRAP_RECOVERY_OBSERVED_CONFIG_HASH
+        or recovery_runtime.get("seccomp_canonical_sha256")
+        != BOOTSTRAP_RECOVERY_SECCOMP_CANONICAL_DIGEST
+        or recovery_runtime.get("full_runtime_projection_sha256")
+        != BOOTSTRAP_RECOVERY_FULL_RUNTIME_PROJECTION_DIGEST
+        or not isinstance(recovery_runtime.get("semantic_runtime_projection_sha256"), str)
+        or not DIGEST_RE.fullmatch(recovery_runtime["semantic_runtime_projection_sha256"])
+        or runtime.get("runtime_config_hash") != BOOTSTRAP_RECOVERY_OBSERVED_CONFIG_HASH
+        or runtime.get("requested_compose_config_hash")
+        != BOOTSTRAP_RECOVERY_REQUESTED_CONFIG_HASH
+        or runtime.get("observed_runtime_config_hash")
+        != BOOTSTRAP_RECOVERY_OBSERVED_CONFIG_HASH
+        or runtime.get("runtime_projection_digest")
+        != recovery_runtime.get("semantic_runtime_projection_sha256")
+        or runtime.get("runtime_network_identity") != recovery.get("network_identity")
+        or runtime.get("runtime_image_verified") is not True
+        or runtime.get("runtime_environment_verified") is not True
+        or runtime.get("runtime_hardening_verified") is not True
+        or runtime.get("opaque_config_hash_semantic_contract_verified") is not True
+        or not isinstance(runtime.get("runtime_environment_key_count"), int)
+        or isinstance(runtime.get("runtime_environment_key_count"), bool)
+        or runtime["runtime_environment_key_count"] <= 0
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_RECOVERY_AUTHORITY_INVALID")
+
+    containers = runtime.get("containers")
+    sidecars = recovery.get("sidecars")
+    database = recovery.get("database")
+    exact_keys(containers, MANAGED_CONTAINERS, "BOOTSTRAP_RECOVERY_TERMINAL_CONTAINERS")
+    exact_keys(sidecars, (POSTGRES_CONTAINER, NGINX_CONTAINER), "BOOTSTRAP_RECOVERY_TERMINAL_SIDECARS")
+    exact_keys(
+        database,
+        ("transaction_read_only", "migration_count", "migration_sha256", "migration_name_sha256"),
+        "BOOTSTRAP_RECOVERY_TERMINAL_DATABASE",
+    )
+    if not isinstance(containers, dict) or not isinstance(sidecars, dict) or not isinstance(database, dict):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_EVIDENCE_INVALID")
+    expected_ids = {
+        FLOWISE_CONTAINER: BOOTSTRAP_RECOVERY_FLOWISE_CONTAINER_ID,
+        POSTGRES_CONTAINER: BOOTSTRAP_RECOVERY_POSTGRES_CONTAINER_ID,
+        NGINX_CONTAINER: BOOTSTRAP_RECOVERY_NGINX_CONTAINER_ID,
+    }
+    for name, identifier in expected_ids.items():
+        snapshot = containers.get(name)
+        exact_keys(
+            snapshot,
+            (
+                "id",
+                "image_id",
+                "image_ref",
+                "state",
+                "health",
+                "restart_count",
+                "compose_config_hash",
+                "runtime",
+            ),
+            "BOOTSTRAP_RECOVERY_TERMINAL_CONTAINER",
+        )
+        if (
+            not isinstance(snapshot, dict)
+            or snapshot.get("id") != identifier
+            or snapshot.get("state") != "running"
+            or snapshot.get("health") != "healthy"
+        ):
+            raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_CONTAINER_AUTHORITY_INVALID")
+    for name in (POSTGRES_CONTAINER, NGINX_CONTAINER):
+        sidecar = sidecars.get(name)
+        exact_keys(
+            sidecar,
+            ("id", "image_id", "state", "health", "restart_count"),
+            "BOOTSTRAP_RECOVERY_TERMINAL_SIDECAR",
+        )
+        if (
+            not isinstance(sidecar, dict)
+            or sidecar.get("id") != expected_ids[name]
+            or sidecar.get("state") != "running"
+            or sidecar.get("health") != "healthy"
+            or any(sidecar.get(field) != containers[name].get(field) for field in sidecar)
+        ):
+            raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_SIDECAR_AUTHORITY_INVALID")
+    live_files = recovery.get("live_files")
+    exact_keys(live_files, ("env", "compose", "seccomp"), "BOOTSTRAP_RECOVERY_TERMINAL_LIVE_FILES")
+    if not isinstance(live_files, dict):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_LIVE_FILES_INVALID")
+    exact_keys(
+        live_files.get("seccomp"),
+        ("present", "digest"),
+        "BOOTSTRAP_RECOVERY_TERMINAL_LIVE_SECCOMP",
+    )
+    if (
+        live_files != hardened.get("files")
+        or recovery_runtime.get("current_flowise_container_id")
+        != containers[FLOWISE_CONTAINER].get("id")
+        or containers[FLOWISE_CONTAINER].get("image_ref") != legacy_tag
+        or containers[FLOWISE_CONTAINER].get("image_id")
+        != BOOTSTRAP_RECOVERY_LEGACY_IMAGE_CONFIG_DIGEST
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_LIVE_AUTHORITY_INVALID")
+    network_identity = recovery.get("network_identity")
+    exact_keys(
+        network_identity,
+        ("flowise_internal", "reverse_proxy"),
+        "BOOTSTRAP_RECOVERY_TERMINAL_NETWORK_IDENTITY",
+    )
+    if not isinstance(network_identity, dict):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_NETWORK_IDENTITY_INVALID")
+    expected_network_names = {
+        "flowise_internal": EXPECTED_TOP_LEVEL_NETWORKS["flowise_network"]["name"],
+        "reverse_proxy": EXPECTED_TOP_LEVEL_NETWORKS["reverse_proxy_network"]["name"],
+    }
+    for role, expected_name in expected_network_names.items():
+        identity = network_identity.get(role)
+        exact_keys(identity, ("name", "network_id"), "BOOTSTRAP_RECOVERY_TERMINAL_NETWORK")
+        if (
+            not isinstance(identity, dict)
+            or identity.get("name") != expected_name
+            or not isinstance(identity.get("network_id"), str)
+            or not DOCKER_ID_RE.fullmatch(identity["network_id"])
+        ):
+            raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_NETWORK_IDENTITY_INVALID")
+    if (
+        receipt.get("database") != database
+        or database.get("transaction_read_only") is not True
+        or database.get("migration_count") != BOOTSTRAP_RECOVERY_MIGRATION_COUNT
+        or database.get("migration_name_sha256") != BOOTSTRAP_RECOVERY_MIGRATION_NAME_DIGEST
+        or not isinstance(database.get("migration_sha256"), str)
+        or not DIGEST_RE.fullmatch(database["migration_sha256"])
+        or recovery.get("key_continuity_verified") is not True
+        or recovery.get("runtime_pings_verified") is not True
+        or recovery.get("production_runtime_write") is not False
+        or recovery.get("database_write") is not False
+        or recovery.get("provider_call") is not False
+        or recovery.get("secret_value_output") is not False
+        or not isinstance(recovery.get("recovery_snapshot_sha256"), str)
+        or not DIGEST_RE.fullmatch(recovery["recovery_snapshot_sha256"])
+        or not isinstance(recovery.get("legacy_journal_inventory_sha256"), str)
+        or not DIGEST_RE.fullmatch(recovery["legacy_journal_inventory_sha256"])
+        or not isinstance(recovery.get("current_journal_inventory_sha256"), str)
+        or not DIGEST_RE.fullmatch(recovery["current_journal_inventory_sha256"])
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_EVIDENCE_AUTHORITY_INVALID")
+
+
+def _read_existing_bootstrap_recovery_receipt(run_id: str) -> tuple[Path, dict[str, Any], bytes, str]:
+    run_dir = RUNS_DIR / run_id
+    path = _receipt_path(run_dir, "bootstrap-complete")
+    data = read_regular(
+        path,
+        maximum=2 * 1024 * 1024,
+        expected_uid=0,
+        expected_gid=0,
+        expected_mode=0o600,
+    )
+    receipt = parse_canonical_json(data, "BOOTSTRAP_RECOVERY_COMPLETE_RECEIPT")
+    _validate_receipt_policy(receipt, "bootstrap-complete")
+    if (
+        receipt.get("run_id") != run_id
+        or receipt.get("operation") != "bootstrap"
+        or receipt.get("state") != "complete_hardened_baseline"
+        or receipt.get("completion_mode") != BOOTSTRAP_RECOVERY_COMPLETION_MODE
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_COMPLETE_RECEIPT_INVALID")
+    _validate_bootstrap_recovery_terminal_receipt_authority(receipt)
+    return run_dir, receipt, data, sha256_bytes(data)
+
+
+def complete_bootstrap_recovery(
+    bundle_dir: Path,
+    source_bundle_dir: Path,
+    run_id: str,
+    transition_permit_path: Path,
+    transition_permit_sha256: str,
+    bootstrap_prepare_receipt_sha256: str,
+    expected_current_flowise_container_id: str,
+    expected_observed_runtime_config_hash: str,
+    expected_recovery_snapshot_sha256: str,
+) -> dict[str, Any]:
+    require_root()
+    _validate_bootstrap_recovery_scope(
+        run_id,
+        transition_permit_sha256,
+        bootstrap_prepare_receipt_sha256,
+        expected_current_flowise_container_id,
+        expected_observed_runtime_config_hash,
+    )
+    if not isinstance(expected_recovery_snapshot_sha256, str) or not DIGEST_RE.fullmatch(
+        expected_recovery_snapshot_sha256
+    ):
+        raise DeployError("BOOTSTRAP_RECOVERY_SNAPSHOT_DIGEST_INVALID")
+    lock = acquire_existing_lock()
+    try:
+        run_dir = RUNS_DIR / run_id
+        complete_exists = _validate_bootstrap_recovery_run_topology(
+            run_dir,
+            complete_receipt="either",
+        )
+        journal, journal_data, journal_digest = _read_canonical_run_journal(run_dir)
+        terminal = journal.get("state") == "complete_hardened_baseline"
+        existing_receipt: dict[str, Any] | None = None
+        existing_receipt_data: bytes | None = None
+        existing_receipt_digest: str | None = None
+        if complete_exists:
+            _, existing_receipt, existing_receipt_data, existing_receipt_digest = (
+                _read_existing_bootstrap_recovery_receipt(run_id)
+            )
+        if terminal and existing_receipt is None:
+            raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_RECEIPT_MISSING")
+        if terminal:
+            recovery = existing_receipt.get("recovery") if existing_receipt is not None else None
+            authority = recovery.get("authority") if isinstance(recovery, dict) else None
+            journal_pre_sha256 = authority.get("journal_pre_sha256") if isinstance(authority, dict) else None
+            context = _bootstrap_recovery_static_context(
+                bundle_dir,
+                source_bundle_dir,
+                run_id,
+                transition_permit_path,
+                transition_permit_sha256,
+                bootstrap_prepare_receipt_sha256,
+                require_interrupted_journal=False,
+                allow_existing_complete_receipt=True,
+                journal_pre_sha256=journal_pre_sha256,
+            )
+        else:
+            context = _bootstrap_recovery_static_context(
+                bundle_dir,
+                source_bundle_dir,
+                run_id,
+                transition_permit_path,
+                transition_permit_sha256,
+                bootstrap_prepare_receipt_sha256,
+                require_interrupted_journal=True,
+                allow_existing_complete_receipt=True,
+            )
+        if context.get("complete_receipt_present") is not complete_exists:
+            raise DeployError("BOOTSTRAP_RECOVERY_TOPOLOGY_CAS_MISMATCH")
+        observation, snapshot_digest = _capture_stable_bootstrap_recovery(
+            context,
+            expected_current_flowise_container_id=expected_current_flowise_container_id,
+            expected_observed_runtime_config_hash=expected_observed_runtime_config_hash,
+            require_interrupted_journal=not terminal,
+        )
+        if not hmac.compare_digest(snapshot_digest, expected_recovery_snapshot_sha256):
+            raise DeployError("BOOTSTRAP_RECOVERY_SNAPSHOT_DIGEST_MISMATCH")
+
+        if existing_receipt is not None:
+            (
+                latest_receipt_run_dir,
+                latest_receipt,
+                latest_receipt_data,
+                latest_receipt_digest,
+            ) = _read_existing_bootstrap_recovery_receipt(run_id)
+            if (
+                latest_receipt_run_dir != run_dir
+                or latest_receipt != existing_receipt
+                or latest_receipt_data != existing_receipt_data
+                or latest_receipt_digest != existing_receipt_digest
+            ):
+                raise DeployError("BOOTSTRAP_RECOVERY_COMPLETE_RECEIPT_CAS_MISMATCH")
+            existing_receipt = latest_receipt
+            existing_receipt_data = latest_receipt_data
+            existing_receipt_digest = latest_receipt_digest
+            existing_created_at = existing_receipt.get("created_at")
+            if not isinstance(existing_created_at, str) or not _valid_timestamp(existing_created_at):
+                raise DeployError("BOOTSTRAP_RECOVERY_COMPLETE_TIMESTAMP_INVALID")
+            expected_receipt = _build_bootstrap_recovery_complete_receipt(
+                context,
+                observation,
+                snapshot_digest,
+                existing_created_at,
+            )
+            if canonical_json(expected_receipt) != existing_receipt_data:
+                raise DeployError("BOOTSTRAP_RECOVERY_COMPLETE_RECEIPT_MISMATCH")
+            if existing_receipt_digest is None:
+                raise DeployError("BOOTSTRAP_RECOVERY_COMPLETE_RECEIPT_DIGEST_MISSING")
+            if terminal:
+                latest_journal, latest_journal_data, latest_journal_digest = _read_canonical_run_journal(run_dir)
+                if (
+                    latest_journal != journal
+                    or latest_journal_data != journal_data
+                    or latest_journal_digest != journal_digest
+                ):
+                    raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_JOURNAL_CAS_MISMATCH")
+                journal = latest_journal
+                _validate_terminal_bootstrap_recovery_journal(
+                    journal,
+                    existing_receipt,
+                    existing_receipt_digest,
+                )
+                return {
+                    "status": "complete_hardened_baseline",
+                    "completion_mode": BOOTSTRAP_RECOVERY_COMPLETION_MODE,
+                    "run_id": run_id,
+                    "bootstrap_complete_receipt_sha256": existing_receipt_digest,
+                    "recovery_snapshot_sha256": snapshot_digest,
+                    "current_flowise_container_id": observation["material"]["runtime"][
+                        "current_flowise_container_id"
+                    ],
+                    "requested_compose_config_hash": observation["runtime"][
+                        "requested_compose_config_hash"
+                    ],
+                    "observed_runtime_config_hash": observation["runtime"][
+                        "observed_runtime_config_hash"
+                    ],
+                    "semantic_runtime_projection_sha256": observation["runtime"][
+                        "runtime_projection_digest"
+                    ],
+                    "full_runtime_projection_sha256": observation["material"]["runtime"][
+                        "full_runtime_projection_sha256"
+                    ],
+                    "idempotent_replay": True,
+                    "production_runtime_write": False,
+                    "control_artifact_write": False,
+                    "database_write": False,
+                    "provider_call": False,
+                    "secret_value_output": False,
+                }
+            # Crash-window recovery: the immutable receipt is already exact;
+            # commit only the terminal journal pointer.
+            _complete_bootstrap_recovery_journal(
+                run_dir,
+                context["journal"],
+                existing_receipt,
+                existing_receipt_digest,
+            )
+            complete_digest = existing_receipt_digest
+            repaired_journal = True
+        else:
+            complete_receipt = _build_bootstrap_recovery_complete_receipt(
+                context,
+                observation,
+                snapshot_digest,
+                utc_now(),
+            )
+            complete_digest = _write_receipt(
+                _receipt_path(run_dir, "bootstrap-complete"),
+                complete_receipt,
+            )
+            (
+                persisted_run_dir,
+                persisted_receipt,
+                persisted_receipt_data,
+                persisted_receipt_digest,
+            ) = _read_existing_bootstrap_recovery_receipt(run_id)
+            if (
+                persisted_run_dir != run_dir
+                or persisted_receipt != complete_receipt
+                or persisted_receipt_data != canonical_json(complete_receipt)
+                or persisted_receipt_digest != complete_digest
+            ):
+                raise DeployError("BOOTSTRAP_RECOVERY_COMPLETE_RECEIPT_ROUNDTRIP_MISMATCH")
+            _complete_bootstrap_recovery_journal(
+                run_dir,
+                context["journal"],
+                persisted_receipt,
+                complete_digest,
+            )
+            repaired_journal = False
+        return {
+            "status": "complete_hardened_baseline",
+            "completion_mode": BOOTSTRAP_RECOVERY_COMPLETION_MODE,
+            "run_id": run_id,
+            "bootstrap_complete_receipt_sha256": complete_digest,
+            "recovery_snapshot_sha256": snapshot_digest,
+            "current_flowise_container_id": observation["material"]["runtime"][
+                "current_flowise_container_id"
+            ],
+            "requested_compose_config_hash": observation["runtime"]["requested_compose_config_hash"],
+            "observed_runtime_config_hash": observation["runtime"]["observed_runtime_config_hash"],
+            "semantic_runtime_projection_sha256": observation["runtime"]["runtime_projection_digest"],
+            "full_runtime_projection_sha256": observation["material"]["runtime"][
+                "full_runtime_projection_sha256"
+            ],
+            "journal_repaired_after_receipt": repaired_journal,
+            "idempotent_replay": False,
+            "production_runtime_write": False,
+            "control_artifact_write": True,
+            "database_write": False,
+            "provider_call": False,
+            "secret_value_output": False,
+        }
+    finally:
+        os.close(lock)
+
+
 def cutover(run_id: str, prepare_receipt_sha256: str) -> dict[str, Any]:
     require_root()
     lock = acquire_lock()
@@ -5691,13 +8103,25 @@ def cutover(run_id: str, prepare_receipt_sha256: str) -> dict[str, Any]:
         install_config_set(candidate_env, candidate_compose, candidate_seccomp, receipt["live_metadata"])
         if _live_hashes() != receipt["candidate"]["files"]:
             raise DeployError("CANDIDATE_LIVE_FILE_HASH_MISMATCH")
-        resolved_candidate, expected_hash, environment = _resolved_live(receipt["release"]["image_tag"], key)
+        resolved_candidate, expected_hash, compose_environment = _resolved_live(
+            receipt["release"]["image_tag"],
+            key,
+        )
         journal["candidate_recreate_started"] = True
         journal["phase"] = "candidate_recreate_intent"
         journal["updated_at"] = utc_now()
         _journal(run_dir, journal)
         compose_recreate()
         after = inspect_containers()
+        candidate_image = inspect_image(
+            receipt["release"]["image_tag"],
+            receipt["release"]["image_config_digest"],
+            receipt["release"]["revision"],
+        )
+        environment = expected_container_environment(
+            candidate_image["image_environment"],
+            compose_environment,
+        )
         runtime = validate_runtime(
             after,
             image_tag=receipt["release"]["image_tag"],
@@ -5705,8 +8129,12 @@ def cutover(run_id: str, prepare_receipt_sha256: str) -> dict[str, Any]:
             expected_config_hash=expected_hash,
             expected_environment=environment,
             require_candidate_hardening=True,
+            require_exact_environment=True,
             expected_compose=resolved_candidate,
             expected_runtime=receipt["baseline"]["containers"][FLOWISE_CONTAINER]["runtime"],
+            allow_opaque_config_hash=True,
+            expected_image=candidate_image,
+            expected_replaced_container_id=receipt["baseline"]["containers"][FLOWISE_CONTAINER]["id"],
         )
         validate_database_runtime_identity(resolved_candidate, after)
         if container_snapshot(after)[FLOWISE_CONTAINER]["id"] == receipt["baseline"]["containers"][FLOWISE_CONTAINER]["id"]:
@@ -6204,6 +8632,44 @@ def _recover_interrupted_runs(
                 or journal.get("target_bundle_digest") != expected_target_bundle_digest
             ):
                 raise DeployError("SCOPED_BOOTSTRAP_RECOVERY_BINDING_MISMATCH")
+        if run_id == BOOTSTRAP_RECOVERY_RUN_ID and operation == "bootstrap":
+            # This one incident is governed by the approved observed-adoption
+            # amendment.  Generic prepare/cutover/bootstrap recovery must not
+            # mutate it or silently route it into the legacy rollback path.
+            if state == "in_progress":
+                _validate_bootstrap_recovery_interrupted_journal(
+                    journal,
+                    run_id=BOOTSTRAP_RECOVERY_RUN_ID,
+                    permit_digest=BOOTSTRAP_RECOVERY_PERMIT_DIGEST,
+                    source_bundle_digest=BOOTSTRAP_RECOVERY_SOURCE_BUNDLE_DIGEST,
+                    source_bundle_release_id=BOOTSTRAP_RECOVERY_SOURCE_RELEASE_ID,
+                    prepare_digest=BOOTSTRAP_RECOVERY_PREPARE_DIGEST,
+                )
+                raise DeployError("BOOTSTRAP_OBSERVED_RECOVERY_REQUIRED")
+            if state == "rolling_back":
+                raise DeployError("BOOTSTRAP_OBSERVED_RECOVERY_STATE_DRIFT")
+            if state != "complete_hardened_baseline":
+                raise DeployError("BOOTSTRAP_OBSERVED_RECOVERY_STATE_INVALID")
+            _validate_bootstrap_recovery_run_topology(
+                run_dir,
+                complete_receipt="present",
+            )
+            prepare_run_dir, _prepare_receipt = _read_receipt(
+                BOOTSTRAP_RECOVERY_RUN_ID,
+                "bootstrap-prepare",
+                BOOTSTRAP_RECOVERY_PREPARE_DIGEST,
+            )
+            receipt_run_dir, terminal_receipt, _receipt_data, receipt_digest = (
+                _read_existing_bootstrap_recovery_receipt(BOOTSTRAP_RECOVERY_RUN_ID)
+            )
+            if prepare_run_dir != run_dir or receipt_run_dir != run_dir:
+                raise DeployError("BOOTSTRAP_RECOVERY_TERMINAL_RUN_DIRECTORY_MISMATCH")
+            _validate_terminal_bootstrap_recovery_journal(
+                journal,
+                terminal_receipt,
+                receipt_digest,
+            )
+            continue
         if state in (
             "rollback_failed_manual_intervention_required",
             ROLLBACK_ATTEMPTED_STATE,
@@ -6315,6 +8781,18 @@ def _digest_argument(value: str) -> str:
     return normalized
 
 
+def _config_hash_argument(value: str) -> str:
+    if not CONFIG_HASH_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError("config hash must be 64 lowercase hexadecimal characters")
+    return value
+
+
+def _container_id_argument(value: str) -> str:
+    if not DOCKER_ID_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError("container id must be 64 lowercase hexadecimal characters")
+    return value
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -6335,6 +8813,61 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     bootstrap_parser.add_argument("--run-id", required=True)
     bootstrap_parser.add_argument("--transition-permit", required=True, type=Path)
     bootstrap_parser.add_argument("--transition-permit-sha256", required=True, type=_digest_argument)
+    snapshot_recovery_parser = commands.add_parser("snapshot-bootstrap-recovery")
+    snapshot_recovery_parser.add_argument("--bundle-dir", required=True, type=Path)
+    snapshot_recovery_parser.add_argument("--source-bundle-dir", required=True, type=Path)
+    snapshot_recovery_parser.add_argument("--run-id", required=True)
+    snapshot_recovery_parser.add_argument("--transition-permit", required=True, type=Path)
+    snapshot_recovery_parser.add_argument(
+        "--transition-permit-sha256",
+        required=True,
+        type=_digest_argument,
+    )
+    snapshot_recovery_parser.add_argument(
+        "--bootstrap-prepare-receipt-sha256",
+        required=True,
+        type=_digest_argument,
+    )
+    snapshot_recovery_parser.add_argument(
+        "--expected-current-flowise-container-id",
+        required=True,
+        type=_container_id_argument,
+    )
+    snapshot_recovery_parser.add_argument(
+        "--expected-observed-runtime-config-hash",
+        required=True,
+        type=_config_hash_argument,
+    )
+    complete_recovery_parser = commands.add_parser("complete-bootstrap-recovery")
+    complete_recovery_parser.add_argument("--bundle-dir", required=True, type=Path)
+    complete_recovery_parser.add_argument("--source-bundle-dir", required=True, type=Path)
+    complete_recovery_parser.add_argument("--run-id", required=True)
+    complete_recovery_parser.add_argument("--transition-permit", required=True, type=Path)
+    complete_recovery_parser.add_argument(
+        "--transition-permit-sha256",
+        required=True,
+        type=_digest_argument,
+    )
+    complete_recovery_parser.add_argument(
+        "--bootstrap-prepare-receipt-sha256",
+        required=True,
+        type=_digest_argument,
+    )
+    complete_recovery_parser.add_argument(
+        "--expected-current-flowise-container-id",
+        required=True,
+        type=_container_id_argument,
+    )
+    complete_recovery_parser.add_argument(
+        "--expected-observed-runtime-config-hash",
+        required=True,
+        type=_config_hash_argument,
+    )
+    complete_recovery_parser.add_argument(
+        "--expected-recovery-snapshot-sha256",
+        required=True,
+        type=_digest_argument,
+    )
     cutover_parser = commands.add_parser("cutover")
     cutover_parser.add_argument("--run-id", required=True)
     cutover_parser.add_argument("--prepare-receipt-sha256", required=True, type=_digest_argument)
@@ -6385,6 +8918,29 @@ def main(argv: list[str] | None = None) -> None:
             arguments.run_id,
             arguments.transition_permit,
             arguments.transition_permit_sha256,
+        )
+    elif arguments.command == "snapshot-bootstrap-recovery":
+        result = snapshot_bootstrap_recovery(
+            arguments.bundle_dir,
+            arguments.source_bundle_dir,
+            arguments.run_id,
+            arguments.transition_permit,
+            arguments.transition_permit_sha256,
+            arguments.bootstrap_prepare_receipt_sha256,
+            arguments.expected_current_flowise_container_id,
+            arguments.expected_observed_runtime_config_hash,
+        )
+    elif arguments.command == "complete-bootstrap-recovery":
+        result = complete_bootstrap_recovery(
+            arguments.bundle_dir,
+            arguments.source_bundle_dir,
+            arguments.run_id,
+            arguments.transition_permit,
+            arguments.transition_permit_sha256,
+            arguments.bootstrap_prepare_receipt_sha256,
+            arguments.expected_current_flowise_container_id,
+            arguments.expected_observed_runtime_config_hash,
+            arguments.expected_recovery_snapshot_sha256,
         )
     elif arguments.command == "cutover":
         result = cutover(arguments.run_id, arguments.prepare_receipt_sha256)

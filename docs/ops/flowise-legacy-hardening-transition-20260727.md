@@ -4,6 +4,20 @@ Status: implementation complete; production execution pending
 Scope: one-time transition from the verified legacy `c947339b...` runtime to
 the repository hardening contract before the next application release.
 
+Recovery amendment: the exact production run
+`20260728T171644Z-4914e862` reached `hardened_recreate_intent` with a healthy
+hardened runtime, but Docker Compose 2.27.1 produced an opaque container label
+that differs from the requested service hash. The narrowly scoped,
+recovery-only completion contract is defined in
+[`flowise-bootstrap-observed-recovery-20260728.md`](flowise-bootstrap-observed-recovery-20260728.md).
+It is the only exception to this document's post-write no-forward-resume rule;
+it does not authorize any other run, phase or general label/hash bypass.
+The recovery wrapper is frozen locally at revision `434e51c`; Node `75/75`,
+Python `133/133`, security `337/337` and Pyright `0 errors, 0 warnings` passed
+locally. Exact-SHA CI, a new self-bound artifact, production recovery, the
+new-version deployment and browser acceptance remain pending as specified by
+the amendment.
+
 ## Decision
 
 The current production runtime is healthy, but it predates the hardened
@@ -227,6 +241,13 @@ Success requires:
 The terminal receipt status is `complete_hardened_baseline`.
 
 ### Rollback and recovery
+
+For run `20260728T171644Z-4914e862` only, the observed-state recovery amendment
+linked above supersedes the automatic legacy-restoration requirement when its
+complete exact-state, double-observation and CAS gates pass. That amendment may
+write only an immutable completion receipt and the terminal journal; it may not
+change runtime, configuration, database state or provider state. Every other
+interrupted bootstrap continues to follow the rules below.
 
 Any failure or interruption after the first live write must enter one
 receipt-bound, idempotent `legacy_frozen_v1` restoration transaction. It must
