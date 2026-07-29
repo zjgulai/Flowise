@@ -297,11 +297,18 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   [x] 将 mount 校验拆成受审查的 Engine 表示 token 与独立安全合同：`RW=true`、唯一 volume、Type/Name/Source/Destination/Driver/Propagation、`HostConfig.Mounts` 及 `VolumeOptions={}` 继续精确绑定；拒绝任意解析/组合模式。
 -   [x] 增加正反回归：受审查的 writable named-volume 表示通过；`ro`、`Z`、组合字符串、非字符串、NoCopy/Subpath/DriverConfig 漂移全部 fail closed。
 -   [x] 本地 Node release `75/75`、Python `138/138`、security `337/337`、Pyright `0`、lint（0 error）、build `6/6`、真实 Docker `8/8` 与 fixture residue `0`；独立安全复审 `APPROVE`、blocker `0`。
--   [ ] 创建 amendment PR，等待新 exact-head Node/Docker CI 与代码审查全绿后合并；新 merge SHA 只触发一次 readiness 并生成新的自绑定制品。
+-   [x] amendment PR `#11` 已合并为 `394ecd43265600a899e2c626f00d428301572fb1`；自动 main Node/Docker CI 与唯一人工 readiness run `30409039738` 全绿，自绑定制品已安全安装为生产候选。
+
+## Gate R2B：数据库迁移摘要 authority 更正
+
+-   [x] 新候选 phase1 在任何写入前以 `BOOTSTRAP_RECOVERY_DATABASE_DRIFT` fail closed；失败后容器、journal、receipt、锁与旧镜像均未变化。
+-   [x] 生产只读复核确认 current database fingerprint 与 prepare baseline 四字段完全相等；误报来自 name-only 常量错误复用了 timestamp-and-name inventory digest。
+-   [x] 更正常量、测试与两份事故事实文档；本地 release/Python/security/Pyright/lint/build/真实 Docker 门禁与独立复审全部通过。
+-   [ ] 提交并走新的 exact-head PR/CI/readiness 与自绑定制品链路；旧 `394ecd43` 制品不得复用。
 
 ## Gate R3：生产恢复与新版本部署
 
--   [~] `b9070d7d` 自绑定 candidate 已安装并验证，但因上述 validator portability 缺陷被 supersede；待安装 amendment 自绑定 candidate 后重新执行 L3 只读门禁。
+-   [~] `394ecd43` 自绑定 candidate 已安装并验证，但 migration-name authority 误标导致 zero-write phase1 fail closed；待安装 R2B 自绑定 candidate 后重新执行 L3 只读门禁。
 -   [ ] 先执行 zero-write `snapshot-bootstrap-recovery`，再以精确 snapshot digest 执行 `complete-bootstrap-recovery`；验证 receipt/journal owner、mode、nlink、digest 与 terminal state。
 -   [ ] 重新准备新版本、执行受门禁保护的 Flowise-only cutover；失败立即走已验证回滚路径，PostgreSQL/nginx 身份保持不变。
 -   [ ] 完成公网 edge、容器、日志、数据库/key continuity 与 PC 优先浏览器交互验收；不调用真实 provider，不创建或污染业务数据。
