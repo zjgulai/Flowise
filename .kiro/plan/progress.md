@@ -179,3 +179,12 @@ date: 2026-07-10
 -   当前精确内容通过 Node 24 release `75/75`、Python `138/138`、security `337/337`、Pyright `0`、py_compile、lint（0 error/8 个既有 warning）、full build `6/6`、diff-check；`pnpm audit --prod --audit-level high` exit `0`，仅报告 low/moderate、无 high/critical。
 -   真实 Docker legacy bootstrap boundary 在收紧后的精确内容上 `8/8`，测试后 `flowise-bootstrap-it-` 前缀 container/volume/network/image 残留均为 `0`；独立安全复审 `APPROVE`、confidence high、blocker `0`。尚未 commit/push，未执行 amendment CI/readiness，也未再次触碰生产。
 -   提交前冻结 SHA-256：wrapper `692cfca5a81b4fff06914cc72a3d7672aa260717f5b88e181b09a683b807026c`，wrapper tests `e13610273335f5a437f251614e6c8d0bd026ea277ff42a03f7383c1f25cc8702`。
+
+# 2026-07-29 Production Recovery Migration-Digest Correction Checkpoint
+
+-   mount-mode amendment commit `d6e682f3cebf392e6946659e07efacc506e8b01f` 经 PR `#11` 合并为 `394ecd43265600a899e2c626f00d428301572fb1`；自动 main Node/Docker CI 与唯一人工 readiness run `30409039738` 全绿。
+-   release artifact `8707955998` 绑定 exact run/SHA，安全下载后通过 CRC、7-file allowlist、manifest、deployment bundle 与关键文件 byte comparison；随后以 root-only staging 安装到 `/opt/flowise/candidates/git-394ecd43265600a899e2c626f00d428301572fb1`，生产 runtime/config/database 尚未切换。
+-   fresh L3 精确确认旧 Flowise/PostgreSQL/Nginx identity、健康、restart、journal digest、completion 缺失和 lock availability 后，`snapshot-bootstrap-recovery` 在 zero-write 边界返回 `BOOTSTRAP_RECOVERY_DATABASE_DRIFT`。
+-   失败后容器、旧镜像、journal、completion 和 lock 再次只读核对均未变化。current database fingerprint 与 prepare baseline 完全相等：migration count `59`、timestamp-and-name digest `sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6`、name-only digest `sha256:2b3bbc851e962ef6a317697f851890ebe5e9b193ebfe50aacf47446fcdf0cbb5`。
+-   根因是 recovery 常量把 timestamp-and-name digest 误标为 name-only digest；当前分支 `codex/flowise-recovery-migration-digest-20260729` 仅更正 authority 常量、回归断言和事实文档，不修改数据库查询、比较逻辑或任何生产状态。
+-   当前精确补丁通过 Node 24 release `75/75`、Python `138/138`、security `337/337`、Pyright `0`、lint `0 error`（8 个既有 warning）、workspace build `6/6`、production audit `0 high/critical` 与真实 Docker boundary `8/8`；fixture residue 为 `0`。独立代码追踪与最终复审均 `APPROVE`、blocker `0`。

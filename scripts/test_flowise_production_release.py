@@ -7013,9 +7013,14 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
                 ),
                 "migration_count": 59,
                 "migration_name_digest": (
-                    "sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6"
+                    "sha256:2b3bbc851e962ef6a317697f851890ebe5e9b193ebfe50aacf47446fcdf0cbb5"
                 ),
             },
+        )
+        self.assertNotEqual(
+            RELEASE.BOOTSTRAP_RECOVERY_MIGRATION_NAME_DIGEST,
+            "sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6",
+            "the name-only digest must not be confused with the timestamp-and-name inventory digest",
         )
 
     def test_bootstrap_recovery_run_topology_is_exact_no_follow_and_phase_aware(self):

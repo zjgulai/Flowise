@@ -57,8 +57,10 @@ The read-only L3 snapshot observed:
     `0f71f7b9d64eea1c53b7f71a9c468409ad451dbb4d1d37f41c1312f7774c9863`
 -   current Compose calculation:
     `d9136d2d...31512`
--   database migrations: 59, ordered-name digest
-    `sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6`
+-   database migrations: 59, ordered timestamp-and-name inventory digest
+    `sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6`,
+    ordered-name digest
+    `sha256:2b3bbc851e962ef6a317697f851890ebe5e9b193ebfe50aacf47446fcdf0cbb5`
 
 The historical candidate Compose bytes are identical to the current live
 Compose bytes. A secret-free semantic projection matches the running
