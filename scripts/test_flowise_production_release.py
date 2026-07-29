@@ -3694,27 +3694,54 @@ validateManifest(JSON.parse(fs.readFileSync(0, 'utf8')))
             captured.append(args)
             return json.dumps([{"timestamp": 1693891895163, "name": "Init1693891895163"}]).encode()
 
-        cleanup_results = [
-            types.SimpleNamespace(returncode=1),
-            types.SimpleNamespace(returncode=0, stdout=b""),
-            types.SimpleNamespace(returncode=1),
-            types.SimpleNamespace(returncode=0, stdout=b""),
-        ]
+        cleanup_results = [types.SimpleNamespace(returncode=1), types.SimpleNamespace(returncode=0, stdout=b"")]
         with mock.patch.object(RELEASE, "run_command", side_effect=run), mock.patch.object(
             RELEASE.subprocess, "run", side_effect=cleanup_results
-        ):
+        ) as cleanup:
             inventory = RELEASE.candidate_migration_inventory(CANDIDATE_TAG, Path("/safe/chromium.json"))
         args = captured[0]
-        self.assertEqual(args[:2], ["docker", "run"])
-        self.assertIn("--rm", args)
-        self.assertEqual(args[args.index("--network") + 1], "none")
-        self.assertIn("--read-only", args)
-        self.assertEqual(args[args.index("--cap-drop") + 1], "ALL")
-        self.assertEqual(args[args.index("--user") + 1], "1000:1000")
-        self.assertEqual(args[args.index("--pids-limit") + 1], "512")
-        self.assertIn("no-new-privileges:true", args)
-        self.assertIn("seccomp=/safe/chromium.json", args)
-        self.assertNotIn("--env", args)
+        name = args[args.index("--name") + 1]
+        self.assertEqual(
+            args,
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                name,
+                "--network",
+                "none",
+                "--read-only",
+                "--tmpfs",
+                "/home/node/.flowise/storage:rw,noexec,nosuid,nodev,size=8m,nr_inodes=2048,uid=1000,gid=1000,mode=0700",
+                "--tmpfs",
+                "/usr/src/flowise/packages/server/logs:rw,noexec,nosuid,nodev,size=8m,nr_inodes=2048,uid=1000,gid=1000,mode=0700",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--security-opt",
+                "seccomp=/safe/chromium.json",
+                "--user",
+                "1000:1000",
+                "--pids-limit",
+                "512",
+                "--log-driver",
+                "none",
+                "--entrypoint",
+                "node",
+                CANDIDATE_TAG,
+                "-e",
+                RELEASE.MIGRATION_INVENTORY_SCRIPT,
+            ],
+        )
+        self.assertEqual(
+            [call.args[0] for call in cleanup.call_args_list],
+            [
+                ["docker", "rm", "-f", name],
+                ["docker", "container", "ls", "-aq", "--filter", f"name=^/{name}$"],
+            ],
+        )
         self.assertEqual(inventory["migration_count"], 1)
         self.assertNotIn("migration_name_sha256", inventory)
 
