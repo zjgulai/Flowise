@@ -188,3 +188,16 @@ date: 2026-07-10
 -   失败后容器、旧镜像、journal、completion 和 lock 再次只读核对均未变化。current database fingerprint 与 prepare baseline 完全相等：migration count `59`、timestamp-and-name digest `sha256:a30f16eb1af7cb810e97cd45df464e97255d9bc8a2d9aaabbac8787b4396b5b6`、name-only digest `sha256:2b3bbc851e962ef6a317697f851890ebe5e9b193ebfe50aacf47446fcdf0cbb5`。
 -   根因是 recovery 常量把 timestamp-and-name digest 误标为 name-only digest；当前分支 `codex/flowise-recovery-migration-digest-20260729` 仅更正 authority 常量、回归断言和事实文档，不修改数据库查询、比较逻辑或任何生产状态。
 -   当前精确补丁通过 Node 24 release `75/75`、Python `138/138`、security `337/337`、Pyright `0`、lint `0 error`（8 个既有 warning）、workspace build `6/6`、production audit `0 high/critical` 与真实 Docker boundary `8/8`；fixture residue 为 `0`。独立代码追踪与最终复审均 `APPROVE`、blocker `0`。
+
+# 2026-08-01 G1 静态中文壳层候选闭环
+
+-   在独立 worktree `/Users/pray/project/FlowAgentic/flowise-g1-zh` 与分支 `codex/flowise-g1-zh-20260801` 执行，base 为 `70d8040e5ead30a7a51e2231a6a156d5632e6e25`；原主工作区未纳入本批操作。
+-   第一笔原子提交 `5e0771cf775ddd1c047fd76a50a0943619230ca1` 只收口 server 声明类型直接依赖及 lock importer；第二笔 `9e17eb6afd8cc4a4bca868e8073dcec81583ed72` 收口 170 个 UI／安全／回归路径。
+-   第二笔提交前二进制 diff SHA-256 为 `22fce841b286beb25df349ce36c4fb6669974b61d581f9de0f129c06f6dc7c04`；pre-commit 的 pretty-quick 和 lint-staged 均通过，提交后 commit diff 哈希不变。
+-   安全闭环包含：公开执行 API 仅接受 `/:id` 并在查库前校验 UUID；公开 404／500 使用固定文案；执行错误字段与 SourceDoc JSON 递归脱敏；OAuth popup 校验 origin、source、credential ID 与 schema；SSE／TTS 终止及资源所有权 fail-closed。
+-   自动化证据：UI Jest `14/14` suites、`221/221` tests；server OAuth／public execution `11/11`；E2E runner `18/18`；静态安全 `341/341`；全量 ESLint exit `0`（`0` error，`8` 个候选外既有 warning）；UI/server production build 均 exit `0`。
+-   隔离 Chrome run `251b11e5-6e52-4234-9afc-c834e24a0d37` 在 Chrome 150／Node 24.18.0 上通过 4 specs、5/5 tests：API Key `1/1`、Variable `1/1`、Chatflow `1/1`、PC core `2/2`；runner 最终 `phase=cleanup status=complete`。截图仅作临时运行证据并随隔离目录清理，不是 Playbook 正式截图基线。
+-   代码复审、候选验证与安全终审三条独立 lane 均同意 exact L2 候选 GO；安全终审结论为候选风险 LOW、Critical/High/Medium 阻断为 `0`。
+-   动态 metadata 审计仍是完整 G1 阻断：311/311 `INode` 节点可实例化且 name 唯一，但 311/311 节点和 114/114 credential 类含英文；6,517 个可见 metadata occurrence 中 6,417 个为英文，且 71 个节点存在 91 个未在本审计调用的 dynamic `loadMethods`。
+-   独立安全扫描确认当前树与本候选已知 token 格式命中为 `0`；同时发现早期上游版本标签可达的 2023 年历史提交含疑似真实 Provider 凭据。本批未打印或调用该值、未调用 Provider、未改写历史；待凭据所有者提供吊销／轮换和账单核查回执。
+-   本批边界：`production_write=false`、`provider_call=false`、`production_secrets_read=false`、`push=false`、`merge=false`、`image_build=false`、`deploy=false`。未完成动态 metadata 中文化、Firefox／10 主页面验收、远端 CI、不可变镜像、历史凭据吊销回执前，完整 G1 与 production promotion 均为 NO-GO。

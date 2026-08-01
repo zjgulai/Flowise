@@ -313,3 +313,32 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   [ ] 重新准备新版本、执行受门禁保护的 Flowise-only cutover；失败立即走已验证回滚路径，PostgreSQL/nginx 身份保持不变。
 -   [ ] 完成公网 edge、容器、日志、数据库/key continuity 与 PC 优先浏览器交互验收；不调用真实 provider，不创建或污染业务数据。
 -   [ ] 稳定观察后清理本批次临时 artifact/candidate/fixture，并保留必要审计 receipt 与回滚材料。
+
+# 2026-08-01 G1 静态中文壳层候选冻结（非完整全中文、非生产）
+
+## Gate G1-A：所有权与原子边界
+
+-   [x] 在独立 worktree `flowise-g1-zh` 盘点全部 tracked/untracked 差异、忽略产物与 staged 状态；原主工作区保持不变。
+-   [x] 将候选拆为三个可独立回退的提交：服务端声明类型依赖、G1 中文 UI 与安全契约、计划与验证证据。
+-   [x] 对共享 `pnpm-lock.yaml` 使用精确 hunk 暂存，不把两个依赖 concern 混入同一提交。
+-   [x] 对全部候选执行当前树／暂存区秘密扫描、生成物检查、cached allowlist、diff-check 与三条独立复审；候选级结论为 GO。
+
+## Gate G1-B：本地候选提交
+
+-   [x] 原子提交服务端 `express-serve-static-core` 直接类型依赖及对应 lock importer：`5e0771cf775ddd1c047fd76a50a0943619230ca1`。
+-   [x] 原子提交 10 个主模块、共享登录后壳层、关键弹窗的静态中文化，以及错误脱敏、OAuth 消息来源校验、MCP 风险提示和回归门禁：`9e17eb6afd8cc4a4bca868e8073dcec81583ed72`。
+-   [x] 本计划与执行日志通过第三笔原子提交收口；提交后 staged 为空，分支仍不 push、不 merge、不生成或部署生产镜像。
+
+## Gate G1-C：精确本地验证
+
+-   [x] UI Jest `14/14` suites、`221/221` tests；OAuth／公开执行服务端定向 `11/11`；E2E runner 合约 `18/18`；静态安全 `341/341`。
+-   [x] 全量 ESLint exit `0`（`0` error，`8` 个既有非候选 warning）；UI 与 server production build 均 exit `0`。
+-   [x] 隔离 Chrome 150／Node 24.18.0 的 4 个 specs、5 个 tests 全部通过；API Key、Variable、Chatflow 与 PC core 操作全部清理，runner 回执 `status=complete`。
+-   [x] 最终提交前 cached 候选为 `170` paths，二进制 diff SHA-256 `22fce841b286beb25df349ce36c4fb6669974b61d581f9de0f129c06f6dc7c04`，三条独立复审均同意 L2 候选 GO。
+
+## Gate G1-D：后续生产边界
+
+-   [!] 动态节点／凭据 metadata 仍未中文化：311/311 节点与 114/114 凭据类均含英文；因此不得标记为“完整全中文”，不得开始 Playbook 正式截图。
+-   [!] 早期上游版本标签可达的 2023 年历史提交含疑似真实 Provider 凭据；当前树与候选命中为 `0`，但在凭据所有者提供已吊销／轮换和账单核查回执前，production promotion 保持 NO-GO；本批未调用 Provider、未改写 Git 历史。
+-   [ ] 新 exact SHA 的远端 CI、不可变 `linux/amd64` candidate image、同版本隔离培训环境与 10 个主页面 Chrome/Firefox PC 验收均属于后续独立门禁。
+-   [ ] 管理员凭据轮换不得写入 Git、日志或截图，必须通过受保护的生产运行时流程单独执行并保留脱敏回执。
