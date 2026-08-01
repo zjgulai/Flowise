@@ -60,8 +60,8 @@ const OpenAIAssistantLayout = () => {
         const dialogProp = {
             title: '添加新助手',
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加',
             selectedOpenAIAssistantId,
             credential
         }
@@ -71,10 +71,10 @@ const OpenAIAssistantLayout = () => {
 
     const edit = (selectedAssistant) => {
         const dialogProp = {
-            title: 'Edit Assistant',
+            title: '编辑助手',
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             data: selectedAssistant
         }
         setDialogProps(dialogProp)
@@ -118,9 +118,9 @@ const OpenAIAssistantLayout = () => {
                             isBackButton={true}
                             onSearchChange={onSearchChange}
                             search={true}
-                            searchPlaceholder='Search Assistants'
+                            searchPlaceholder='搜索助手'
                             title='OpenAI 助手'
-                            description='Create assistants using OpenAI Assistant API'
+                            description='使用 OpenAI 助手 API 创建助手'
                             onBack={() => navigate(-1)}
                         >
                             <PermissionButton
@@ -130,7 +130,7 @@ const OpenAIAssistantLayout = () => {
                                 startIcon={<IconFileUpload />}
                                 sx={{ borderRadius: 2, height: 40 }}
                             >
-                                Load
+                                加载
                             </PermissionButton>
                             <StyledPermissionButton
                                 permissionId={'assistants:create'}
@@ -139,7 +139,7 @@ const OpenAIAssistantLayout = () => {
                                 onClick={addNew}
                                 startIcon={<IconPlus />}
                             >
-                                Add
+                                添加
                             </StyledPermissionButton>
                         </ViewHeader>
                         {isLoading ? (
@@ -170,10 +170,10 @@ const OpenAIAssistantLayout = () => {
                                     <img
                                         style={{ objectFit: 'cover', height: '20vh', width: 'auto' }}
                                         src={AssistantEmptySVG}
-                                        alt='AssistantEmptySVG'
+                                        alt='暂无 OpenAI 助手'
                                     />
                                 </Box>
-                                <div>No OpenAI Assistants Added Yet</div>
+                                <div>尚未添加 OpenAI 助手</div>
                             </Stack>
                         )}
                     </Stack>

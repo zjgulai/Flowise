@@ -105,8 +105,9 @@ const Tools = () => {
             }
             setDialogProps(dialogProp)
             setShowDialog(true)
-        } catch (e) {
-            console.error(e)
+        } catch {
+            setDialogProps({})
+            setShowDialog(false)
         }
     }
 
@@ -285,7 +286,7 @@ const Tools = () => {
                 </PermissionButton>
                 <input style={{ display: 'none' }} ref={inputRef} type='file' hidden accept='.json' onChange={(e) => handleFileUpload(e)} />
             </Box>
-            <ButtonGroup disableElevation aria-label='outlined primary button group'>
+            <ButtonGroup disableElevation aria-label='工具操作按钮组'>
                 <StyledPermissionButton
                     permissionId={'tools:create'}
                     variant='contained'
@@ -302,7 +303,7 @@ const Tools = () => {
     const renderMcpServersToolbar = () => (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             {viewToggle(mcpTotal === 0)}
-            <ButtonGroup disableElevation aria-label='outlined primary button group'>
+            <ButtonGroup disableElevation aria-label='MCP 服务器操作按钮组'>
                 <StyledPermissionButton
                     permissionId={'tools:create'}
                     variant='contained'
@@ -413,7 +414,7 @@ const Tools = () => {
                                 borderColor: 'divider'
                             }}
                         >
-                            <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)} aria-label='tools tabs'>
+                            <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)} aria-label='工具分类标签页'>
                                 <Tab label='自定义工具' />
                                 <Tab label='自定义 MCP 服务器' />
                             </Tabs>

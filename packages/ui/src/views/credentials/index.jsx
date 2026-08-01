@@ -39,6 +39,7 @@ import useConfirm from '@/hooks/useConfirm'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // Icons
 import { IconTrash, IconEdit, IconX, IconPlus, IconShare } from '@tabler/icons-react'
@@ -119,8 +120,8 @@ const Credentials = () => {
     const addNew = (credentialComponent) => {
         const dialogProp = {
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加',
             credentialComponent
         }
         setSpecificCredentialDialogProps(dialogProp)
@@ -130,8 +131,8 @@ const Credentials = () => {
     const edit = (credential) => {
         const dialogProp = {
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             data: credential
         }
         setSpecificCredentialDialogProps(dialogProp)
@@ -141,8 +142,8 @@ const Credentials = () => {
     const share = (credential) => {
         const dialogProps = {
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Share',
+            cancelButtonName: '取消',
+            confirmButtonName: '分享',
             data: {
                 id: credential.id,
                 name: credential.name,
@@ -156,10 +157,10 @@ const Credentials = () => {
 
     const deleteCredential = async (credential) => {
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete credential ${credential.name}?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除凭据',
+            description: `确定删除凭据“${credential.name}”吗？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -168,7 +169,7 @@ const Credentials = () => {
                 const deleteResp = await credentialsApi.deleteCredential(credential.id)
                 if (deleteResp.data) {
                     enqueueSnackbar({
-                        message: 'Credential deleted',
+                        message: '凭据已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -183,9 +184,7 @@ const Credentials = () => {
                 }
             } catch (error) {
                 enqueueSnackbar({
-                    message: `Failed to delete Credential: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `删除凭据失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -245,9 +244,9 @@ const Credentials = () => {
                         <ViewHeader
                             onSearchChange={onSearchChange}
                             search={true}
-                            searchPlaceholder='Search Credentials'
+                            searchPlaceholder='搜索凭据'
                             title='凭据'
-                            description='API keys, tokens, and secrets for 3rd party integrations'
+                            description='管理第三方集成使用的 API 密钥、令牌和机密信息'
                         >
                             <StyledPermissionButton
                                 permissionId='credentials:create'
@@ -256,7 +255,7 @@ const Credentials = () => {
                                 onClick={listCredential}
                                 startIcon={<IconPlus />}
                             >
-                                Add Credential
+                                添加凭据
                             </StyledPermissionButton>
                         </ViewHeader>
                         {!isLoading && credentials.length <= 0 ? (
@@ -265,7 +264,7 @@ const Credentials = () => {
                                     <img
                                         style={{ objectFit: 'cover', height: '16vh', width: 'auto' }}
                                         src={CredentialEmptySVG}
-                                        alt='CredentialEmptySVG'
+                                        alt='暂无凭据'
                                     />
                                 </Box>
                                 <div>暂无凭据</div>
@@ -275,7 +274,7 @@ const Credentials = () => {
                                 sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }}
                                 component={Paper}
                             >
-                                <Table sx={{ minWidth: 650 }} aria-label='simple table'>
+                                <Table sx={{ minWidth: 650 }} aria-label='凭据列表'>
                                     <TableHead
                                         sx={{
                                             backgroundColor: customization.isDarkMode
@@ -286,8 +285,8 @@ const Credentials = () => {
                                     >
                                         <TableRow>
                                             <StyledTableCell>名称</StyledTableCell>
-                                            <StyledTableCell>Last Updated</StyledTableCell>
-                                            <StyledTableCell>已创建</StyledTableCell>
+                                            <StyledTableCell>最近更新</StyledTableCell>
+                                            <StyledTableCell>创建时间</StyledTableCell>
                                             <StyledTableCell style={{ width: '5%' }}> </StyledTableCell>
                                             <StyledTableCell style={{ width: '5%' }}> </StyledTableCell>
                                             <StyledTableCell style={{ width: '5%' }}> </StyledTableCell>
@@ -380,10 +379,10 @@ const Credentials = () => {
                                                             </Box>
                                                         </StyledTableCell>
                                                         <StyledTableCell>
-                                                            {moment(credential.updatedDate).format('MMMM Do, YYYY HH:mm:ss')}
+                                                            {moment(credential.updatedDate).format('YYYY-MM-DD HH:mm:ss')}
                                                         </StyledTableCell>
                                                         <StyledTableCell>
-                                                            {moment(credential.createdDate).format('MMMM Do, YYYY HH:mm:ss')}
+                                                            {moment(credential.createdDate).format('YYYY-MM-DD HH:mm:ss')}
                                                         </StyledTableCell>
                                                         {!credential.shared && (
                                                             <>
@@ -422,7 +421,7 @@ const Credentials = () => {
                                                         )}
                                                         {credential.shared && (
                                                             <>
-                                                                <StyledTableCell colSpan={'3'}>Shared Credential</StyledTableCell>
+                                                                <StyledTableCell colSpan={'3'}>共享凭据</StyledTableCell>
                                                             </>
                                                         )}
                                                     </StyledTableRow>

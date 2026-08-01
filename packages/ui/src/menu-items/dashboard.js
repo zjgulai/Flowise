@@ -140,7 +140,7 @@ const dashboard = {
                 },
                 {
                     id: 'apikey',
-                    title: 'API密钥',
+                    title: 'API 密钥',
                     type: 'item',
                     url: '/apikey',
                     icon: icons.IconKey,
@@ -202,7 +202,7 @@ const dashboard = {
             children: [
                 {
                     id: 'sso',
-                    title: 'SSO配置',
+                    title: 'SSO 配置',
                     type: 'item',
                     url: '/sso-config',
                     icon: icons.IconShieldLock,

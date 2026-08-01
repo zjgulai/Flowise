@@ -193,7 +193,7 @@ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
                                                 fontWeight: 200
                                             }}
                                         >
-                                            + {(images?.length || 0) + (icons?.length || 0) - 3} More
+                                            + {(images?.length || 0) + (icons?.length || 0) - 3} 个更多项
                                         </Typography>
                                     </MoreItemsTooltip>
                                 )}

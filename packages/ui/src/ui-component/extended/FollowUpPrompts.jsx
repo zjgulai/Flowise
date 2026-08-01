@@ -10,6 +10,7 @@ import { SwitchInput } from '@/ui-component/switch/Switch'
 import chatflowsApi from '@/api/chatflows'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction, SET_CHATFLOW } from '@/store/actions'
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import anthropicIcon from '@/assets/images/anthropic.svg'
 import azureOpenAiIcon from '@/assets/images/azure_openai.svg'
 import mistralAiIcon from '@/assets/images/mistralai.svg'
@@ -26,8 +27,7 @@ import { AsyncDropdown } from '@/ui-component/dropdown/AsyncDropdown'
 import { IconX } from '@tabler/icons-react'
 import { Dropdown } from '@/ui-component/dropdown/Dropdown'
 
-const promptDescription =
-    'Prompt to generate questions based on the conversation history. You can use variable {history} to refer to the conversation history.'
+const promptDescription = '用于根据对话历史生成问题的提示词。可使用变量 {history} 引用对话历史。'
 const defaultPrompt =
     'Given the following conversations: {history}. Please help me predict the three most likely questions that human would ask and keeping each question short and concise.'
 
@@ -269,7 +269,7 @@ const followUpPromptsOptions = {
                 name: 'baseUrl',
                 type: 'string',
                 placeholder: 'http://127.0.0.1:11434',
-                description: 'Base URL of your Ollama instance',
+                description: 'Ollama 实例的基础 URL',
                 default: 'http://127.0.0.1:11434'
             },
             {
@@ -277,7 +277,7 @@ const followUpPromptsOptions = {
                 name: 'modelName',
                 type: 'string',
                 placeholder: 'llama2',
-                description: 'Name of the Ollama model to use',
+                description: '要使用的 Ollama 模型名称',
                 default: 'llama3.2-vision:latest'
             },
             {
@@ -380,7 +380,7 @@ const FollowUpPrompts = ({ dialogProps }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Follow-up Prompts configuration saved',
+                    message: '后续问题提示词配置已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -394,9 +394,8 @@ const FollowUpPrompts = ({ dialogProps }) => {
                 dispatch({ type: SET_CHATFLOW, chatflow: saveResp.data })
             }
         } catch (error) {
-            const errorData = error.response.data || `${error.response.status}: ${error.response.statusText}`
             enqueueSnackbar({
-                message: `Failed to save follow-up prompts configuration: ${errorData}`,
+                message: `保存后续问题提示词配置失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -473,7 +472,7 @@ const FollowUpPrompts = ({ dialogProps }) => {
                 }}
             >
                 <SwitchInput
-                    label='Enable Follow-up Prompts'
+                    label='启用后续问题提示词'
                     onChange={(value) => handleChange('status', value)}
                     value={followUpPromptsConfig.status}
                 />
@@ -615,7 +614,7 @@ const FollowUpPrompts = ({ dialogProps }) => {
             </Box>
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
                 <StyledButton disabled={checkDisabled()} variant='contained' onClick={onSave} sx={{ minWidth: 100 }}>
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </>

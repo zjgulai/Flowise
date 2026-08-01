@@ -34,6 +34,7 @@ import elevenLabsSVG from '@/assets/images/elevenlabs.svg'
 
 // store
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // API
 import chatflowsApi from '@/api/chatflows'
@@ -62,7 +63,7 @@ const textToSpeechProviders = {
                 label: '语音',
                 name: 'voice',
                 type: 'voice_select',
-                description: 'The voice to use when generating the audio',
+                description: '生成音频时使用的语音',
                 default: 'alloy',
                 optional: true
             }
@@ -84,7 +85,7 @@ const textToSpeechProviders = {
                 label: '语音',
                 name: 'voice',
                 type: 'voice_select',
-                description: 'The voice to use for text-to-speech',
+                description: '文本转语音时使用的语音',
                 default: '21m00Tcm4TlvDq8ikWAM',
                 optional: true
             }
@@ -129,7 +130,7 @@ const TextToSpeech = ({ dialogProps }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Text To Speech Configuration Saved',
+                    message: '文本转语音配置已保存',
                     options: {
                         key: Date.now() + Math.random(),
                         variant: 'success',
@@ -144,9 +145,7 @@ const TextToSpeech = ({ dialogProps }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to save Text To Speech Configuration: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存文本转语音配置失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: Date.now() + Math.random(),
                     variant: 'error',
@@ -223,8 +222,11 @@ const TextToSpeech = ({ dialogProps }) => {
                 setVoices([])
             }
         } catch (error) {
-            console.error('Error loading voices:', error)
             setVoices([])
+            enqueueSnackbar({
+                message: `加载语音列表失败：${getErrorMessage(error, '网络或服务错误')}`,
+                options: { variant: 'warning' }
+            })
         } finally {
             setLoadingVoices(false)
         }
@@ -233,7 +235,7 @@ const TextToSpeech = ({ dialogProps }) => {
     const testTTS = async () => {
         if (selectedProvider === 'none' || !textToSpeech?.[selectedProvider]?.credentialId) {
             enqueueSnackbar({
-                message: 'Please select a provider and configure credentials first',
+                message: '请先选择提供商并配置凭据',
                 options: { variant: 'warning' }
             })
             return
@@ -244,7 +246,7 @@ const TextToSpeech = ({ dialogProps }) => {
         try {
             const providerConfig = textToSpeech?.[selectedProvider] || {}
             const body = {
-                text: 'Today is a wonderful day to build something with Flowise!',
+                text: '今天是使用 Flowise 构建智能应用的美好一天！',
                 provider: selectedProvider,
                 credentialId: providerConfig.credentialId,
                 voice: providerConfig.voice,
@@ -262,7 +264,11 @@ const TextToSpeech = ({ dialogProps }) => {
             })
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`)
+                enqueueSnackbar({
+                    message: `语音测试失败：HTTP 请求状态码 ${response.status}`,
+                    options: { variant: 'error' }
+                })
+                return
             }
 
             const audioChunks = []
@@ -312,12 +318,15 @@ const TextToSpeech = ({ dialogProps }) => {
 
                 setTestAudioSrc(audioUrl)
             } else {
-                throw new Error('No audio data received')
+                enqueueSnackbar({
+                    message: '语音测试失败：未收到音频数据',
+                    options: { variant: 'error' }
+                })
+                return
             }
         } catch (error) {
-            console.error('Error testing TTS:', error)
             enqueueSnackbar({
-                message: `TTS test failed: ${error.message}`,
+                message: `语音测试失败：${getErrorMessage(error, '网络或浏览器错误')}`,
                 options: { variant: 'error' }
             })
         } finally {
@@ -339,8 +348,8 @@ const TextToSpeech = ({ dialogProps }) => {
                     if (parsed.data) {
                         event.data = parsed.data
                     }
-                } catch (e) {
-                    console.error('Error parsing SSE data:', e)
+                } catch {
+                    // Ignore malformed stream events without exposing provider data.
                 }
             }
         }
@@ -463,7 +472,7 @@ const TextToSpeech = ({ dialogProps }) => {
                                         padding: 10,
                                         objectFit: 'contain'
                                     }}
-                                    alt='TTS Provider'
+                                    alt='语音服务商'
                                     src={textToSpeechProviders[selectedProvider].icon}
                                 />
                             </div>
@@ -567,7 +576,7 @@ const TextToSpeech = ({ dialogProps }) => {
                                     renderInput={(params) => (
                                         <TextField
                                             {...params}
-                                            placeholder={loadingVoices ? 'Loading voices...' : 'Choose a voice'}
+                                            placeholder={loadingVoices ? '正在加载语音…' : '请选择语音'}
                                             InputProps={{
                                                 ...params.InputProps,
                                                 endAdornment: (
@@ -585,11 +594,11 @@ const TextToSpeech = ({ dialogProps }) => {
                         </Box>
                     ))}
 
-                    {/* Auto-play Toggle */}
+                    {/* 自动播放开关 */}
                     <Box sx={{ p: 2 }}>
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <Typography>
-                                Automatically play audio
+                                自动播放音频
                                 <TooltipWithParser style={{ marginLeft: 10 }} title='启用后，机器人回复将自动转换为语音并播放' />
                             </Typography>
                         </div>
@@ -599,15 +608,15 @@ const TextToSpeech = ({ dialogProps }) => {
                         />
                     </Box>
 
-                    {/* Test Voice Section */}
+                    {/* 语音测试区域 */}
                     <Box sx={{ p: 2 }}>
                         <Typography variant='h6' sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
                             <IconVolume size={20} />
-                            Test Voice
+                            测试语音
                         </Typography>
 
                         <Typography variant='body2' color='textSecondary' sx={{ mb: 2 }}>
-                            Test text: &quot;Today is a wonderful day to build something with Flowise!&quot;
+                            测试文本：系统预设的中文示例文本
                         </Typography>
 
                         <AudioWaveform
@@ -645,7 +654,7 @@ const TextToSpeech = ({ dialogProps }) => {
                     onClick={onSave}
                     sx={{ minWidth: 100 }}
                 >
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </>

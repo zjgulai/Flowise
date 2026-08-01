@@ -30,8 +30,8 @@ const CredentialInputHandler = ({ inputParam, data, onSelect, disabled = false }
     const editCredential = (credentialId) => {
         const dialogProp = {
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             credentialId
         }
         setSpecificCredentialDialogProps(dialogProp)
@@ -66,8 +66,9 @@ const CredentialInputHandler = ({ inputParam, data, onSelect, disabled = false }
                     setShowSpecificCredentialDialog(true)
                 }
             }
-        } catch (error) {
-            console.error(error)
+        } catch {
+            setSpecificCredentialDialogProps({})
+            setShowSpecificCredentialDialog(false)
         }
     }
 
@@ -83,8 +84,8 @@ const CredentialInputHandler = ({ inputParam, data, onSelect, disabled = false }
         setShowCredentialListDialog(false)
         const dialogProp = {
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加',
             credentialComponent
         }
         setSpecificCredentialDialogProps(dialogProp)

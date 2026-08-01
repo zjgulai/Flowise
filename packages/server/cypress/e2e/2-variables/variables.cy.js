@@ -46,7 +46,7 @@ describe('authenticated variable management', () => {
         cy.get('[role="dialog"]')
             .should('be.visible')
             .within(() => {
-                cy.contains('button', 'Delete').click()
+                cy.contains('button', '删除').click()
             })
         cy.wait('@deleteVariable').its('response.statusCode').should('eq', 200)
         cy.contains('暂无变量').should('be.visible')

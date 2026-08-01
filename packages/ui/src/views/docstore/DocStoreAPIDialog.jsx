@@ -357,7 +357,7 @@ curl -X POST ${baseURL}/api/v1/document-store/upsert/${dialogProps.storeId} \\
 
                 <MemoizedReactMarkdown>{values}</MemoizedReactMarkdown>
 
-                <Typography sx={{ mt: 3, mb: 1 }}>You can override existing configurations:</Typography>
+                <Typography sx={{ mt: 3, mb: 1 }}>可以覆盖以下现有配置：</Typography>
 
                 <Stack direction='column' spacing={2} sx={{ width: '100%', my: 2 }}>
                     <Card sx={{ borderColor: theme.palette.primary[200] + 75, p: 2 }} variant='outlined'>

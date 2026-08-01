@@ -18,6 +18,7 @@ import axios from 'axios'
 import PropTypes from 'prop-types'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
     const portalElement = document.getElementById('portal')
@@ -46,7 +47,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
     const [showContainerConfirm, setShowContainerConfirm] = useState(false)
     const [existingContainer, setExistingContainer] = useState(null)
 
-    const steps = ['Download Installer', 'Pull Image', 'Start Container']
+    const steps = ['下载安装程序', '拉取镜像', '启动容器']
 
     const handleDownloadInstaller = async () => {
         try {
@@ -54,13 +55,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
             await axios.get('/api/v1/nvidia-nim/download-installer')
             setLoading(false)
         } catch (err) {
-            let errorData = err.message
-            if (typeof err === 'string') {
-                errorData = err
-            } else if (err.response?.data) {
-                errorData = err.response.data.message
-            }
-            alert('Failed to download installer: ' + errorData)
+            alert(getErrorMessage(err, '下载安装程序失败，请稍后重试'))
             setLoading(false)
         }
     }
@@ -72,13 +67,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
             setLoading(false)
             setActiveStep(1)
         } catch (err) {
-            let errorData = err.message
-            if (typeof err === 'string') {
-                errorData = err
-            } else if (err.response?.data) {
-                errorData = err.response.data.message
-            }
-            alert('Failed to preload: ' + errorData)
+            alert(getErrorMessage(err, '预加载失败，请稍后重试'))
             setLoading(false)
         }
     }
@@ -123,7 +112,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                     // Continue polling if image not found
                     if (err.response?.status !== 404) {
                         clearInterval(interval)
-                        alert('Failed to check image status: ' + err.message)
+                        alert(getErrorMessage(err, '检查镜像状态失败，请稍后重试'))
                         setLoading(false)
                     }
                 }
@@ -131,13 +120,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
 
             setPollInterval(interval)
         } catch (err) {
-            let errorData = err.message
-            if (typeof err === 'string') {
-                errorData = err
-            } else if (err.response?.data) {
-                errorData = err.response.data.message
-            }
-            alert('Failed to pull image: ' + errorData)
+            alert(getErrorMessage(err, '拉取镜像失败，请稍后重试'))
             setLoading(false)
         }
     }
@@ -159,7 +142,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
             } catch (err) {
                 // Handle port in use by non-model container
                 if (err.response?.status === 409) {
-                    alert(`Port ${hostPort} is already in use by another container. Please choose a different port.`)
+                    alert(`端口 ${hostPort} 已被其他容器占用，请选择其他端口。`)
                     setLoading(false)
                     return
                 }
@@ -172,13 +155,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
             // No container found with this port, proceed with starting new container
             await startNewContainer()
         } catch (err) {
-            let errorData = err.message
-            if (typeof err === 'string') {
-                errorData = err
-            } else if (err.response?.data) {
-                errorData = err.response.data.message
-            }
-            alert('Failed to check container status: ' + errorData)
+            alert(getErrorMessage(err, '检查容器状态失败，请稍后重试'))
             setLoading(false)
         }
     }
@@ -213,7 +190,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                     // Continue polling if container not found
                     if (err.response?.status !== 404) {
                         clearInterval(interval)
-                        alert('Failed to check container status: ' + err.message)
+                        alert(getErrorMessage(err, '检查容器状态失败，请稍后重试'))
                         setLoading(false)
                     }
                 }
@@ -221,13 +198,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
 
             setPollInterval(interval)
         } catch (err) {
-            let errorData = err.message
-            if (typeof err === 'string') {
-                errorData = err
-            } else if (err.response?.data) {
-                errorData = err.response.data.message
-            }
-            alert('Failed to start container: ' + errorData)
+            alert(getErrorMessage(err, '启动容器失败，请稍后重试'))
             setLoading(false)
         }
     }
@@ -252,7 +223,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                     // Continue polling if container not found
                     if (err.response?.status !== 404) {
                         clearInterval(interval)
-                        alert('Failed to check container status: ' + err.message)
+                        alert(getErrorMessage(err, '检查容器状态失败，请稍后重试'))
                         setLoading(false)
                     }
                 }
@@ -260,27 +231,21 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
 
             setPollInterval(interval)
         } catch (err) {
-            let errorData = err.message
-            if (typeof err === 'string') {
-                errorData = err
-            } else if (err.response?.data) {
-                errorData = err.response.data.message
-            }
-            alert('Failed to check container status: ' + errorData)
+            alert(getErrorMessage(err, '检查容器状态失败，请稍后重试'))
             setLoading(false)
         }
     }
 
     const handleNext = () => {
         if (activeStep === 1 && !imageTag) {
-            alert('Please enter an image tag')
+            alert('请选择镜像')
             return
         }
 
         if (activeStep === 2) {
             const port = parseInt(hostPort)
             if (isNaN(port) || port < 1 || port > 65535) {
-                alert('Please enter a valid port number between 1 and 65535')
+                alert('请输入 1 到 65535 之间的有效端口号')
                 return
             }
         }
@@ -321,7 +286,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
     const component = open ? (
         <>
             <Dialog open={open}>
-                <DialogTitle>NIM Setup</DialogTitle>
+                <DialogTitle>NIM 配置</DialogTitle>
                 <DialogContent>
                     <Stepper activeStep={activeStep}>
                         {steps.map((label) => (
@@ -333,9 +298,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
 
                     {activeStep === 0 && (
                         <div style={{ marginTop: 20 }}>
-                            <p style={{ marginBottom: 20 }}>
-                                Would you like to download the NIM installer? Click Next if it has been installed
-                            </p>
+                            <p style={{ marginBottom: 20 }}>是否需要下载 NIM 安装程序？若已安装，请点击“下一步”。</p>
                             {loading && <CircularProgress />}
                         </div>
                     )}
@@ -359,14 +322,14 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                                     sx={{ mt: 1 }}
                                     onClick={() => window.open(modelOptions[imageTag].licenseUrl, '_blank')}
                                 >
-                                    View License
+                                    查看许可证
                                 </Button>
                             )}
                             {loading && (
                                 <div>
                                     <div style={{ marginBottom: 20 }} />
                                     <CircularProgress />
-                                    <p>Pulling image...</p>
+                                    <p>正在拉取镜像……</p>
                                 </div>
                             )}
                         </div>
@@ -378,12 +341,12 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                                 <>
                                     <div style={{ marginBottom: 20 }} />
                                     <CircularProgress />
-                                    <p>Starting container...</p>
+                                    <p>正在启动容器……</p>
                                 </>
                             ) : (
                                 <>
                                     <FormControl fullWidth sx={{ mt: 2 }}>
-                                        <InputLabel>Relax Memory Constraints</InputLabel>
+                                        <InputLabel>放宽内存限制</InputLabel>
                                         <Select
                                             label='放宽内存限制'
                                             value={nimRelaxMemConstraints}
@@ -402,7 +365,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                                         inputProps={{ min: 1, max: 65535 }}
                                         sx={{ mt: 2 }}
                                     />
-                                    <p style={{ marginTop: 20 }}>Click Next to start the container.</p>
+                                    <p style={{ marginTop: 20 }}>点击“下一步”启动容器。</p>
                                 </>
                             )}
                         </div>
@@ -410,37 +373,37 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={onClose} variant='outline'>
-                        Cancel
+                        取消
                     </Button>
                     {activeStep === 0 && (
                         <Button onClick={handleNext} variant='outline' color='secondary'>
-                            Next
+                            下一步
                         </Button>
                     )}
                     <Button
                         onClick={activeStep === 0 ? handleDownloadInstaller : handleNext}
                         disabled={loading || (activeStep === 2 && (!nimRelaxMemConstraints || !hostPort))}
                     >
-                        {activeStep === 0 ? 'Download' : 'Next'}
+                        {activeStep === 0 ? '下载' : '下一步'}
                     </Button>
                 </DialogActions>
             </Dialog>
             <Dialog open={showContainerConfirm} onClose={() => setShowContainerConfirm(false)}>
-                <DialogTitle>Container Already Exists</DialogTitle>
+                <DialogTitle>容器已存在</DialogTitle>
                 <DialogContent>
-                    <p>A container for this image already exists:</p>
+                    <p>此镜像已有对应容器：</p>
                     <div>
                         <p>
-                            <strong>名称：</strong> {existingContainer?.name || 'N/A'}
+                            <strong>名称：</strong> {existingContainer?.name || '未知'}
                         </p>
                         <p>
-                            <strong>状态：</strong> {existingContainer?.status || 'N/A'}
+                            <strong>状态：</strong> {existingContainer?.status || '未知'}
                         </p>
                     </div>
-                    <p>You can:</p>
+                    <p>您可以：</p>
                     <ul>
-                        <li>Use the existing container (recommended)</li>
-                        <li>Change the port and try again</li>
+                        <li>使用现有容器（推荐）</li>
+                        <li>更换端口后重试</li>
                     </ul>
                 </DialogContent>
                 <DialogActions>
@@ -450,7 +413,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                             setExistingContainer(null)
                         }}
                     >
-                        Cancel
+                        取消
                     </Button>
                     <Button
                         onClick={() => {
@@ -458,7 +421,7 @@ const NvidiaNIMDialog = ({ open, onClose, onComplete }) => {
                             handleUseExistingContainer()
                         }}
                     >
-                        Use Existing
+                        使用现有容器
                     </Button>
                 </DialogActions>
             </Dialog>

@@ -62,7 +62,7 @@ const StickyNote = ({ data }) => {
     return (
         <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
             <StyledNodeToolbar>
-                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
+                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='基础操作按钮组'>
                     <IconButton
                         size={'small'}
                         title='复制'

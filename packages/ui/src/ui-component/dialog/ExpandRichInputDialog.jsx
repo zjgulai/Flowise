@@ -308,11 +308,11 @@ const ExpandRichInputDialog = ({ show, dialogProps, onCancel, onInputHintDialogC
                                 >
                                     <ToggleButton value='preview' sx={{ px: 1.5, py: 0.5, textTransform: 'none' }}>
                                         <IconPencil size={16} style={{ marginRight: 4 }} />
-                                        Edit
+                                        编辑
                                     </ToggleButton>
                                     <ToggleButton value='raw' sx={{ px: 1.5, py: 0.5, textTransform: 'none' }}>
                                         <IconCode size={16} style={{ marginRight: 4 }} />
-                                        Source
+                                        源码
                                     </ToggleButton>
                                 </ToggleButtonGroup>
                                 {inputParam.hint && (

@@ -36,7 +36,7 @@ const CloudMenuList = () => {
     const signOutClicked = () => {
         logoutApi.request()
         enqueueSnackbar({
-            message: 'Logging out...',
+            message: '正在退出登录…',
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'success',
@@ -55,8 +55,8 @@ const CloudMenuList = () => {
                 store.dispatch(logoutSuccess())
                 window.location.href = logoutApi.data.redirectTo
             }
-        } catch (e) {
-            console.error(e)
+        } catch {
+            // Keep the current session state when a malformed logout response is received.
         }
     }, [logoutApi.data])
 
@@ -66,24 +66,27 @@ const CloudMenuList = () => {
                 <Box>
                     <Divider sx={{ height: '1px', borderColor: theme.palette.grey[900] + 25, my: 0 }} />
                     <List sx={{ p: '16px', py: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <a href='https://docs.flowiseai.com' target='_blank' rel='noreferrer' style={{ textDecoration: 'none' }}>
-                            <ListItemButton
-                                sx={{
-                                    borderRadius: `${customization.borderRadius}px`,
-                                    alignItems: 'flex-start',
-                                    backgroundColor: 'inherit',
-                                    py: 1.25,
-                                    pl: '24px'
-                                }}
-                            >
-                                <ListItemIcon sx={{ my: 'auto', minWidth: 36 }}>
-                                    <IconFileText size='1.3rem' strokeWidth='1.5' />
-                                </ListItemIcon>
-                                <Typography variant='body1' color='inherit' sx={{ my: 0.5 }}>
-                                    Documentation
-                                </Typography>
-                            </ListItemButton>
-                        </a>
+                        <ListItemButton
+                            component='a'
+                            href='https://docs.flowiseai.com'
+                            target='_blank'
+                            rel='noreferrer'
+                            sx={{
+                                borderRadius: `${customization.borderRadius}px`,
+                                alignItems: 'flex-start',
+                                backgroundColor: 'inherit',
+                                py: 1.25,
+                                pl: '24px',
+                                textDecoration: 'none'
+                            }}
+                        >
+                            <ListItemIcon sx={{ my: 'auto', minWidth: 36 }}>
+                                <IconFileText size='1.3rem' strokeWidth='1.5' />
+                            </ListItemIcon>
+                            <Typography variant='body1' color='inherit' sx={{ my: 0.5 }}>
+                                使用文档
+                            </Typography>
+                        </ListItemButton>
                         <ListItemButton
                             onClick={signOutClicked}
                             sx={{
@@ -98,7 +101,7 @@ const CloudMenuList = () => {
                                 <IconLogout size='1.3rem' strokeWidth='1.5' />
                             </ListItemIcon>
                             <Typography variant='body1' color='inherit' sx={{ my: 0.5 }}>
-                                Logout
+                                退出登录
                             </Typography>
                         </ListItemButton>
                     </List>

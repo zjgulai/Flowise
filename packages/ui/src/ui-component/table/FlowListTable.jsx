@@ -113,7 +113,7 @@ export const FlowListTable = ({
     return (
         <>
             <TableContainer sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }} component={Paper}>
-                <Table sx={{ minWidth: 650 }} size='small' aria-label='a dense table'>
+                <Table sx={{ minWidth: 650 }} size='small' aria-label='流程列表'>
                     <TableHead
                         sx={{
                             backgroundColor: customization.isDarkMode ? theme.palette.common.black : theme.palette.grey[100],

@@ -1,5 +1,6 @@
 import { StatusCodes } from 'http-status-codes'
 import { In } from 'typeorm'
+import { validate as isValidUUID } from 'uuid'
 import { ChatMessage } from '../../database/entities/ChatMessage'
 import { Execution } from '../../database/entities/Execution'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
@@ -19,6 +20,20 @@ export interface ExecutionFilters {
     page?: number
     limit?: number
     workspaceId?: string
+}
+
+const redactPublicExecutionErrors = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map((item) => redactPublicExecutionErrors(item))
+    if (!value || typeof value !== 'object') return value
+
+    return Object.fromEntries(
+        Object.entries(value).map(([key, nestedValue]) => [
+            key,
+            /^(?:error|errors|exception|stack|stacktrace)$/i.test(key)
+                ? '执行失败，详细信息仅对管理员可见'
+                : redactPublicExecutionErrors(nestedValue)
+        ])
+    )
 }
 
 const getExecutionById = async (executionId: string, workspaceId?: string): Promise<Execution | null> => {
@@ -45,22 +60,25 @@ const getExecutionById = async (executionId: string, workspaceId?: string): Prom
 
 const getPublicExecutionById = async (executionId: string): Promise<Execution | null> => {
     try {
+        if (!executionId || !isValidUUID(executionId)) {
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, '公开执行记录不存在')
+        }
+
         const appServer = getRunningExpressApp()
         const executionRepository = appServer.AppDataSource.getRepository(Execution)
         const res = await executionRepository.findOne({ where: { id: executionId, isPublic: true } })
         if (!res) {
-            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Execution ${executionId} not found`)
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, '公开执行记录不存在')
         }
         const executionData = typeof res?.executionData === 'string' ? JSON.parse(res?.executionData) : res?.executionData
-        const executionDataWithoutCredentialId = executionData.map((data: IAgentflowExecutedData) => _removeCredentialId(data))
+        const executionDataWithoutCredentialId = executionData.map((data: IAgentflowExecutedData) =>
+            redactPublicExecutionErrors(_removeCredentialId(data))
+        )
         const stringifiedExecutionData = JSON.stringify(executionDataWithoutCredentialId)
         return { ...res, executionData: stringifiedExecutionData }
     } catch (error) {
         if (error instanceof InternalFlowiseError) throw error
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: executionsService.getPublicExecutionById - ${getErrorMessage(error)}`
-        )
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, '读取公开执行记录失败')
     }
 }
 

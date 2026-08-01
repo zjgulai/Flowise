@@ -27,6 +27,7 @@ import useApi from '@/hooks/useApi'
 // utils
 import useNotifier from '@/utils/useNotifier'
 import { formatBytes } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // const
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
@@ -49,7 +50,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
     const [name, setName] = useState('')
     const [isExpirationOn, setExpirationOnOff] = useState(false)
     const [expirationDays, setExpirationDays] = useState(7)
-    const [availableVectorStoreOptions, setAvailableVectorStoreOptions] = useState([{ label: '- Create New -', name: '-create-' }])
+    const [availableVectorStoreOptions, setAvailableVectorStoreOptions] = useState([{ label: '- 新建 -', name: '-create-' }])
     const [selectedVectorStore, setSelectedVectorStore] = useState('')
     const [loading, setLoading] = useState(false)
 
@@ -86,13 +87,13 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
                 vectorStores.push({
                     label: listAssistantVectorStoreApi.data[i]?.name ?? listAssistantVectorStoreApi.data[i].id,
                     name: listAssistantVectorStoreApi.data[i].id,
-                    description: `${listAssistantVectorStoreApi.data[i]?.file_counts?.total} files (${formatBytes(
+                    description: `${listAssistantVectorStoreApi.data[i]?.file_counts?.total} 个文件（${formatBytes(
                         listAssistantVectorStoreApi.data[i]?.usage_bytes
-                    )})`
+                    )}）`
                 })
             }
             vectorStores = vectorStores.filter((vs) => vs.name !== '-create-')
-            vectorStores.unshift({ label: '- Create New -', name: '-create-' })
+            vectorStores.unshift({ label: '- 新建 -', name: '-create-' })
             setAvailableVectorStoreOptions(vectorStores)
         }
 
@@ -119,7 +120,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
             setExpirationOnOff(false)
             setExpirationDays(7)
             setSelectedVectorStore('')
-            setAvailableVectorStoreOptions([{ label: '- Create New -', name: '-create-' }])
+            setAvailableVectorStoreOptions([{ label: '- 新建 -', name: '-create-' }])
             setLoading(false)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,7 +138,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
             const deleteResp = await assistantsApi.deleteAssistantVectorStore(selectedVectorStore, dialogProps.credential)
             if (deleteResp.data) {
                 enqueueSnackbar({
-                    message: 'Vector Store deleted',
+                    message: '向量库已删除',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -154,9 +155,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
         } catch (error) {
             if (setError) setError(error)
             enqueueSnackbar({
-                message: `Failed to delete Vector Store: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `删除向量库失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -183,7 +182,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
             const createResp = await assistantsApi.createAssistantVectorStore(dialogProps.credential, obj)
             if (createResp.data) {
                 enqueueSnackbar({
-                    message: 'New Vector Store added',
+                    message: '新向量库已添加',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -200,9 +199,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
         } catch (error) {
             if (setError) setError(error)
             enqueueSnackbar({
-                message: `Failed to add new Vector Store: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `添加新向量库失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -229,7 +226,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
             const saveResp = await assistantsApi.updateAssistantVectorStore(selectedVectorStoreId, dialogProps.credential, saveObj)
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Vector Store saved',
+                    message: '向量库已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -251,9 +248,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
         } catch (error) {
             if (setError) setError(error)
             enqueueSnackbar({
-                message: `Failed to save Vector Store: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存向量库失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -286,7 +281,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
                 <Box sx={{ p: 2 }}>
                     <Stack sx={{ position: 'relative' }} direction='row'>
                         <Typography variant='overline'>
-                            Select Vector Store
+                            选择向量库
                             <span style={{ color: 'red' }}>&nbsp;*</span>
                         </Typography>
                     </Stack>
@@ -312,13 +307,13 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
                     <>
                         <Box sx={{ p: 2 }}>
                             <Stack sx={{ position: 'relative' }} direction='row'>
-                                <Typography variant='overline'>Vector Store Name</Typography>
+                                <Typography variant='overline'>向量库名称</Typography>
                             </Stack>
                             <OutlinedInput
                                 id='vsName'
                                 type='string'
                                 fullWidth
-                                placeholder={'My Vector Store'}
+                                placeholder='我的向量库'
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                             />
@@ -326,7 +321,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
 
                         <Box sx={{ p: 2 }}>
                             <Stack sx={{ position: 'relative' }} direction='row'>
-                                <Typography variant='overline'>Vector Store Expiration</Typography>
+                                <Typography variant='overline'>向量库过期设置</Typography>
                             </Stack>
                             <SwitchInput onChange={(newValue) => setExpirationOnOff(newValue)} value={isExpirationOn} />
                         </Box>
@@ -335,7 +330,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
                             <Box sx={{ p: 2 }}>
                                 <Stack sx={{ position: 'relative' }} direction='row'>
                                     <Typography variant='overline'>
-                                        Expiration Days
+                                        有效天数
                                         <span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                 </Stack>
@@ -354,7 +349,7 @@ const AssistantVectorStoreDialog = ({ show, dialogProps, onCancel, onConfirm, on
             <DialogActions>
                 {dialogProps.type === 'EDIT' && (
                     <StyledButton color='error' variant='contained' onClick={() => deleteVectorStore()}>
-                        Delete
+                        删除
                     </StyledButton>
                 )}
                 <StyledButton

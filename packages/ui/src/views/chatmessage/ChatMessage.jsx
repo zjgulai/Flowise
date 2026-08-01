@@ -86,6 +86,9 @@ import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackba
 
 // Utils
 import { isValidURL, removeDuplicateURL, setLocalStorageChatflow, getLocalStorageChatflow } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
+import { createChatStreamGuard } from '@/utils/createChatStreamGuard'
+import { createTTSStreamResources, disposeTTSStreamResources, ownsTTSStream } from '@/utils/ttsStreamingLifecycle'
 import useNotifier from '@/utils/useNotifier'
 import FollowUpPromptsCard from '@/ui-component/cards/FollowUpPromptsCard'
 
@@ -114,7 +117,6 @@ const getRecordingExtensionForMime = (mime) => {
     if (extension) {
         return extension
     }
-    console.warn(`Unsupported audio MIME type: ${mime}. Defaulting to 'webm'.`)
     return 'webm'
 }
 
@@ -202,7 +204,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
     const [loading, setLoading] = useState(false)
     const [messages, setMessages] = useState([
         {
-            message: 'Hi there! How can I help?',
+            message: '你好！有什么可以帮你？',
             type: 'apiMessage'
         }
     ])
@@ -283,20 +285,13 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
     const [ttsAudio, setTtsAudio] = useState({})
     const [isTTSEnabled, setIsTTSEnabled] = useState(false)
 
-    // TTS streaming state
-    const [ttsStreamingState, setTtsStreamingState] = useState({
-        mediaSource: null,
-        sourceBuffer: null,
-        audio: null,
-        chunkQueue: [],
-        isBuffering: false,
-        audioFormat: null,
-        abortController: null
-    })
-
     // Ref to prevent auto-scroll during TTS actions (using ref to avoid re-renders)
     const isTTSActionRef = useRef(false)
     const ttsTimeoutRef = useRef(null)
+    const ttsInitializationTimeoutRef = useRef(null)
+    const ttsStreamSessionRef = useRef(0)
+    const ttsStreamingResourcesRef = useRef(createTTSStreamResources())
+    const chatStreamAbortControllerRef = useRef(null)
 
     const isFileAllowedForUpload = (file) => {
         const constraints = getAllowChatFlowUploads.data
@@ -307,7 +302,6 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
 
         // Early return if constraints are not available yet
         if (!constraints) {
-            console.warn('Upload constraints not loaded yet')
             return false
         }
 
@@ -338,7 +332,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
             }
         }
         if (!acceptFile) {
-            alert(`Cannot upload file. Kindly check the allowed file types and maximum allowed size.`)
+            alert('无法上传此文件，请检查允许的文件类型和大小上限。')
         }
         return acceptFile
     }
@@ -510,17 +504,18 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
 
     const handleAbort = async () => {
         setIsMessageStopping(true)
-        try {
-            // Stop all TTS streams first
-            await handleTTSAbortAll()
-            stopAllTTS()
+        const ttsAbortRequest = handleTTSAbortAll()
+        chatStreamAbortControllerRef.current?.abort()
+        stopAllTTS()
+        cleanupCalledTools()
+        finalizeThinking()
+        abortMessage()
+        closeResponse()
 
-            await chatmessageApi.abortMessage(chatflowid, chatId)
-            setIsMessageStopping(false)
-        } catch (error) {
-            setIsMessageStopping(false)
+        const [, stopMessageResult] = await Promise.allSettled([ttsAbortRequest, chatmessageApi.abortMessage(chatflowid, chatId)])
+        if (stopMessageResult.status === 'rejected') {
             enqueueSnackbar({
-                message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                message: '已停止本地生成，但服务端停止请求失败',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -618,9 +613,10 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
     }
 
     const updateErrorMessage = (errorMessage) => {
+        const safeErrorMessage = getErrorMessage({ response: { data: errorMessage } }, '生成回复失败，请稍后重试')
         setMessages((prevMessages) => {
             let allMessages = [...cloneDeep(prevMessages)]
-            allMessages.push({ message: errorMessage, type: 'apiMessage' })
+            allMessages.push({ message: safeErrorMessage, type: 'apiMessage' })
             return allMessages
         })
     }
@@ -827,7 +823,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
             inputRef.current?.focus()
         }, 100)
         enqueueSnackbar({
-            message: 'Message stopped',
+            message: '已停止生成消息',
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'success',
@@ -840,7 +836,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
         })
     }
 
-    const handleError = (message = 'Oops! There seems to be an error. Please try again.') => {
+    const handleError = (message = '出现错误，请稍后重试。') => {
         message = message.replace(`Unable to parse JSON response from chat agent.\n\n`, '')
         setMessages((prevMessages) => [...prevMessages, { message, type: 'apiMessage' }])
         setLoading(false)
@@ -1046,7 +1042,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
         try {
             uploads = await handleFileUploads(uploads)
         } catch (error) {
-            handleError('Unable to upload documents')
+            handleError(getErrorMessage(error, '文档上传失败，请稍后重试'))
             return
         }
 
@@ -1069,7 +1065,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
             if (humanInput) params.humanInput = humanInput
 
             if (isChatFlowAvailableToStream) {
-                fetchResponseFromEventStream(chatflowid, params)
+                await fetchResponseFromEventStream(chatflowid, params)
             } else {
                 const response = await predictionApi.sendMessageAndGetPrediction(chatflowid, params)
                 if (response.data) {
@@ -1112,7 +1108,9 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                 }
             }
         } catch (error) {
-            handleError(error.response.data.message)
+            cleanupCalledTools()
+            finalizeThinking()
+            handleError(getErrorMessage(error, '发送消息失败，请稍后重试'))
             return
         }
     }
@@ -1121,104 +1119,115 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
         const chatId = params.chatId
         const input = params.question
         params.streaming = true
-        await fetchEventSource(`${baseURL}/api/v1/internal-prediction/${chatflowid}`, {
-            openWhenHidden: true,
-            method: 'POST',
-            body: JSON.stringify(params),
-            headers: {
-                'Content-Type': 'application/json',
-                'x-request-from': 'internal'
-            },
-            async onopen(response) {
-                if (response.ok && response.headers.get('content-type') === EventStreamContentType) {
-                    //console.log('EventSource Open')
+        const abortController = new AbortController()
+        chatStreamAbortControllerRef.current?.abort()
+        chatStreamAbortControllerRef.current = abortController
+        const streamGuard = createChatStreamGuard(EventStreamContentType)
+
+        try {
+            await fetchEventSource(`${baseURL}/api/v1/internal-prediction/${chatflowid}`, {
+                openWhenHidden: true,
+                method: 'POST',
+                body: JSON.stringify(params),
+                signal: abortController.signal,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-request-from': 'internal'
+                },
+                onopen(response) {
+                    streamGuard.assertOpenResponse(response)
+                },
+                onmessage(ev) {
+                    const payload = JSON.parse(ev.data)
+                    switch (payload.event) {
+                        case 'start':
+                            setMessages((prevMessages) => [...prevMessages, { message: '', type: 'apiMessage' }])
+                            break
+                        case 'token':
+                            updateLastMessage(payload.data)
+                            break
+                        case 'sourceDocuments':
+                            updateLastMessageSourceDocuments(payload.data)
+                            break
+                        case 'usedTools':
+                            updateLastMessageUsedTools(payload.data)
+                            break
+                        case 'calledTools':
+                            updateLastMessageCalledTools(payload.data)
+                            break
+                        case 'fileAnnotations':
+                            updateLastMessageFileAnnotations(payload.data)
+                            break
+                        case 'agentReasoning':
+                            updateLastMessageAgentReasoning(payload.data)
+                            break
+                        case 'thinking':
+                            handleThinkingEvent(payload.data, payload.duration)
+                            break
+                        case 'agentFlowEvent':
+                            updateAgentFlowEvent(payload.data)
+                            break
+                        case 'agentFlowExecutedData':
+                            updateAgentFlowExecutedData(payload.data)
+                            break
+                        case 'artifacts':
+                            updateLastMessageArtifacts(payload.data)
+                            break
+                        case 'action':
+                            updateLastMessageAction(payload.data)
+                            break
+                        case 'nextAgent':
+                            updateLastMessageNextAgent(payload.data)
+                            break
+                        case 'nextAgentFlow':
+                            updateLastMessageNextAgentFlow(payload.data)
+                            break
+                        case 'metadata':
+                            updateMetadata(payload.data, input)
+                            break
+                        case 'error':
+                            updateErrorMessage(payload.data)
+                            break
+                        case 'abort':
+                            streamGuard.markTerminal()
+                            abortMessage(payload.data)
+                            closeResponse()
+                            abortController.abort()
+                            break
+                        case 'tts_start':
+                            handleTTSStart(payload.data)
+                            break
+                        case 'tts_data':
+                            handleTTSDataChunk(payload.data.audioChunk, payload.data.chatMessageId)
+                            break
+                        case 'tts_end':
+                            handleTTSEnd(payload.data.chatMessageId)
+                            break
+                        case 'tts_abort':
+                            handleTTSAbort(payload.data)
+                            break
+                        case 'end':
+                            streamGuard.markTerminal()
+                            cleanupCalledTools()
+                            finalizeThinking()
+                            setLocalStorageChatflow(chatflowid, chatId)
+                            closeResponse()
+                            abortController.abort()
+                            break
+                    }
+                },
+                onclose() {
+                    streamGuard.assertTerminalClose()
+                },
+                onerror() {
+                    streamGuard.fail()
                 }
-            },
-            async onmessage(ev) {
-                const payload = JSON.parse(ev.data)
-                switch (payload.event) {
-                    case 'start':
-                        setMessages((prevMessages) => [...prevMessages, { message: '', type: 'apiMessage' }])
-                        break
-                    case 'token':
-                        updateLastMessage(payload.data)
-                        break
-                    case 'sourceDocuments':
-                        updateLastMessageSourceDocuments(payload.data)
-                        break
-                    case 'usedTools':
-                        updateLastMessageUsedTools(payload.data)
-                        break
-                    case 'calledTools':
-                        updateLastMessageCalledTools(payload.data)
-                        break
-                    case 'fileAnnotations':
-                        updateLastMessageFileAnnotations(payload.data)
-                        break
-                    case 'agentReasoning':
-                        updateLastMessageAgentReasoning(payload.data)
-                        break
-                    case 'thinking':
-                        handleThinkingEvent(payload.data, payload.duration)
-                        break
-                    case 'agentFlowEvent':
-                        updateAgentFlowEvent(payload.data)
-                        break
-                    case 'agentFlowExecutedData':
-                        updateAgentFlowExecutedData(payload.data)
-                        break
-                    case 'artifacts':
-                        updateLastMessageArtifacts(payload.data)
-                        break
-                    case 'action':
-                        updateLastMessageAction(payload.data)
-                        break
-                    case 'nextAgent':
-                        updateLastMessageNextAgent(payload.data)
-                        break
-                    case 'nextAgentFlow':
-                        updateLastMessageNextAgentFlow(payload.data)
-                        break
-                    case 'metadata':
-                        updateMetadata(payload.data, input)
-                        break
-                    case 'error':
-                        updateErrorMessage(payload.data)
-                        break
-                    case 'abort':
-                        abortMessage(payload.data)
-                        closeResponse()
-                        break
-                    case 'tts_start':
-                        handleTTSStart(payload.data)
-                        break
-                    case 'tts_data':
-                        handleTTSDataChunk(payload.data.audioChunk)
-                        break
-                    case 'tts_end':
-                        handleTTSEnd()
-                        break
-                    case 'tts_abort':
-                        handleTTSAbort(payload.data)
-                        break
-                    case 'end':
-                        cleanupCalledTools()
-                        finalizeThinking()
-                        setLocalStorageChatflow(chatflowid, chatId)
-                        closeResponse()
-                        break
-                }
-            },
-            async onclose() {
-                cleanupCalledTools()
-                closeResponse()
-            },
-            async onerror(err) {
-                console.error('EventSource Error: ', err)
-                closeResponse()
-                throw err
+            })
+        } finally {
+            if (chatStreamAbortControllerRef.current === abortController) {
+                chatStreamAbortControllerRef.current = null
             }
-        })
+        }
     }
 
     const closeResponse = () => {
@@ -1295,7 +1304,13 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
             link.click()
             link.remove()
         } catch (error) {
-            console.error('Download failed:', error)
+            enqueueSnackbar({
+                message: getErrorMessage(error, '文件下载失败，请稍后重试'),
+                options: {
+                    key: new Date().getTime() + Math.random(),
+                    variant: 'error'
+                }
+            })
         }
     }
 
@@ -1565,7 +1580,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
             setLoading(false)
             setMessages([
                 {
-                    message: 'Hi there! How can I help?',
+                    message: '你好！有什么可以帮你？',
                     type: 'apiMessage'
                 }
             ])
@@ -1606,7 +1621,13 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
         try {
             await navigator.clipboard.writeText(text || '')
         } catch (error) {
-            console.error('Error copying to clipboard:', error)
+            enqueueSnackbar({
+                message: getErrorMessage(error, '复制消息失败，请稍后重试'),
+                options: {
+                    key: new Date().getTime() + Math.random(),
+                    variant: 'error'
+                }
+            })
         }
     }
 
@@ -1701,8 +1722,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
             setMessages((prevMessages) => {
                 let allMessages = [...cloneDeep(prevMessages)]
                 if (allMessages[allMessages.length - 1].type !== 'leadCaptureMessage') return allMessages
-                allMessages[allMessages.length - 1].message =
-                    leadsConfig.successMessage || 'Thank you for submitting your contact information.'
+                allMessages[allMessages.length - 1].message = leadsConfig.successMessage || '感谢您提交联系信息。'
                 return allMessages
             })
         }
@@ -1710,22 +1730,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
         setIsLeadSaving(false)
     }
 
-    const cleanupTTSForMessage = (messageId) => {
-        if (ttsAudio[messageId]) {
-            ttsAudio[messageId].pause()
-            ttsAudio[messageId].currentTime = 0
-            setTtsAudio((prev) => {
-                const newState = { ...prev }
-                delete newState[messageId]
-                return newState
-            })
-        }
-
-        if (ttsStreamingState.audio) {
-            ttsStreamingState.audio.pause()
-            cleanupTTSStreaming()
-        }
-
+    const clearTTSMessageState = (messageId) => {
         setIsTTSPlaying((prev) => {
             const newState = { ...prev }
             delete newState[messageId]
@@ -1739,14 +1744,38 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
         })
     }
 
+    const cleanupTTSForMessage = (messageId) => {
+        if (ttsAudio[messageId]) {
+            ttsAudio[messageId].pause()
+            ttsAudio[messageId].currentTime = 0
+            setTtsAudio((prev) => {
+                const newState = { ...prev }
+                delete newState[messageId]
+                return newState
+            })
+        }
+
+        cleanupTTSStreaming()
+        clearTTSMessageState(messageId)
+    }
+
     const handleTTSStop = async (messageId) => {
         setTTSAction(true)
-        await ttsApi.abortTTS({ chatflowId: chatflowid, chatId, chatMessageId: messageId })
         cleanupTTSForMessage(messageId)
-        setIsMessageStopping(false)
+        try {
+            await ttsApi.abortTTS({ chatflowId: chatflowid, chatId, chatMessageId: messageId })
+        } catch (error) {
+            enqueueSnackbar({
+                message: getErrorMessage(error, '已停止本地播放，但服务端停止请求失败'),
+                options: { variant: 'warning' }
+            })
+        } finally {
+            setIsMessageStopping(false)
+        }
     }
 
     const stopAllTTS = () => {
+        ttsStreamSessionRef.current += 1
         Object.keys(ttsAudio).forEach((messageId) => {
             if (ttsAudio[messageId]) {
                 ttsAudio[messageId].pause()
@@ -1755,14 +1784,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
         })
         setTtsAudio({})
 
-        if (ttsStreamingState.abortController) {
-            ttsStreamingState.abortController.abort()
-        }
-
-        if (ttsStreamingState.audio) {
-            ttsStreamingState.audio.pause()
-            cleanupTTSStreaming()
-        }
+        cleanupTTSStreaming()
 
         setIsTTSPlaying({})
         setIsTTSLoading({})
@@ -1779,13 +1801,16 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
         setTTSAction(true)
 
         // abort all ongoing streams and clear audio sources
-        await handleTTSAbortAll()
+        void handleTTSAbortAll()
         stopAllTTS()
 
-        handleTTSStart({ chatMessageId: messageId, format: 'mp3' })
+        const sessionId = handleTTSStart({ chatMessageId: messageId, format: 'mp3' })
+        const resources = ttsStreamingResourcesRef.current
+        let reader = null
+        let receivedEnd = false
         try {
             const abortController = new AbortController()
-            setTtsStreamingState((prev) => ({ ...prev, abortController }))
+            resources.abortController = abortController
 
             const response = await fetch('/api/v1/text-to-speech/generate', {
                 method: 'POST',
@@ -1804,10 +1829,32 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
             })
 
             if (!response.ok) {
-                throw new Error(`TTS request failed: ${response.status}`)
+                enqueueSnackbar({
+                    message: `语音播放失败：HTTP 请求状态码 ${response.status}`,
+                    options: { variant: 'error' }
+                })
+                return
             }
 
-            const reader = response.body.getReader()
+            if (!response.body) {
+                enqueueSnackbar({
+                    message: '语音播放失败：未收到音频数据',
+                    options: { variant: 'error' }
+                })
+                return
+            }
+
+            if (ttsStreamingResourcesRef.current !== resources || resources.disposed || resources.abortController?.signal.aborted) {
+                try {
+                    await response.body.cancel()
+                } catch {
+                    // The response may already be closed after a local stop.
+                }
+                return
+            }
+
+            reader = response.body.getReader()
+            resources.reader = reader
             const decoder = new TextDecoder()
             let buffer = ''
 
@@ -1838,13 +1885,21 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                     break
                                 case 'tts_data':
                                     if (!abortController.signal.aborted) {
-                                        handleTTSDataChunk(event.data.audioChunk)
+                                        handleTTSDataChunk(event.data.audioChunk, event.data.chatMessageId)
                                     }
                                     break
                                 case 'tts_end':
                                     if (!abortController.signal.aborted) {
-                                        handleTTSEnd()
+                                        receivedEnd = true
+                                        handleTTSEnd(event.data.chatMessageId)
                                     }
+                                    break
+                                case 'tts_error':
+                                    enqueueSnackbar({
+                                        message: '语音生成失败，请检查配置后重试',
+                                        options: { variant: 'error' }
+                                    })
+                                    abortController.abort()
                                     break
                             }
                         }
@@ -1852,21 +1907,40 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                 }
             }
         } catch (error) {
-            if (error.name === 'AbortError') {
-                console.error('TTS request was aborted')
-            } else {
-                console.error('Error with TTS:', error)
+            if (error.name !== 'AbortError' && ttsStreamingResourcesRef.current === resources && !resources.disposed) {
                 enqueueSnackbar({
-                    message: `TTS failed: ${error.message}`,
+                    message: `语音播放失败：${getErrorMessage(error, '网络或浏览器错误')}`,
                     options: { variant: 'error' }
                 })
             }
         } finally {
-            setIsTTSLoading((prev) => {
-                const newState = { ...prev }
-                delete newState[messageId]
-                return newState
-            })
+            if (reader) {
+                if (!receivedEnd && ttsStreamingResourcesRef.current === resources && !resources.disposed) {
+                    resources.abortController?.abort()
+                    try {
+                        await reader.cancel()
+                    } catch {
+                        // The stream may already be closed or aborted.
+                    }
+                }
+                try {
+                    reader.releaseLock()
+                } catch {
+                    // The reader may already have released its lock.
+                }
+                if (resources.reader === reader) resources.reader = null
+            }
+            if (!receivedEnd && ttsStreamingResourcesRef.current === resources && !resources.disposed) {
+                cleanupTTSStreaming(sessionId)
+                clearTTSMessageState(messageId)
+            }
+            if (ttsStreamingResourcesRef.current === resources && !resources.disposed) {
+                setIsTTSLoading((prev) => {
+                    const newState = { ...prev }
+                    delete newState[messageId]
+                    return newState
+                })
+            }
         }
     }
 
@@ -1884,8 +1958,8 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                     if (parsed.data) {
                         event.data = parsed.data
                     }
-                } catch (e) {
-                    console.error('Error parsing SSE data:', e, 'Raw data:', dataStr)
+                } catch {
+                    // Ignore malformed stream events without exposing raw provider data.
                 }
             }
         }
@@ -1893,116 +1967,107 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
         return event.event ? event : null
     }
 
-    const initializeTTSStreaming = (data) => {
+    const cleanupTTSStreaming = (expectedSessionId = null) => {
+        const resources = ttsStreamingResourcesRef.current
+        if (expectedSessionId !== null && !ownsTTSStream(ttsStreamingResourcesRef, resources, expectedSessionId)) return
+
+        if (ttsInitializationTimeoutRef.current) {
+            clearTimeout(ttsInitializationTimeoutRef.current)
+            ttsInitializationTimeoutRef.current = null
+        }
+        if (!disposeTTSStreamResources(resources)) return
+
+        if (ttsStreamingResourcesRef.current === resources) {
+            ttsStreamingResourcesRef.current = createTTSStreamResources(ttsStreamSessionRef.current)
+        }
+    }
+
+    const processChunkQueue = (sessionId) => {
+        const resources = ttsStreamingResourcesRef.current
+        if (resources.sessionId !== sessionId || resources.disposed || !resources.sourceBuffer || resources.sourceBuffer.updating) return
+
+        if (resources.chunkQueue.length > 0) {
+            const chunk = resources.chunkQueue.shift()
+            try {
+                resources.sourceBuffer.appendBuffer(chunk)
+            } catch {
+                enqueueSnackbar({ message: '语音数据写入失败，请重试', options: { variant: 'error' } })
+                clearTTSMessageState(resources.chatMessageId)
+                cleanupTTSStreaming(sessionId)
+            }
+            return
+        }
+
+        if (resources.ended && resources.mediaSource?.readyState === 'open') {
+            try {
+                resources.mediaSource.endOfStream()
+            } catch {
+                // The browser may have already closed the stream.
+            }
+        }
+    }
+
+    const initializeTTSStreaming = (data, sessionId) => {
+        const resources = ttsStreamingResourcesRef.current
+        if (resources.sessionId !== sessionId || resources.disposed) return
+
+        const failPlayback = (message, variant = 'error') => {
+            if (ttsStreamingResourcesRef.current !== resources || resources.disposed) return
+            enqueueSnackbar({ message, options: { variant } })
+            clearTTSMessageState(data.chatMessageId)
+            cleanupTTSStreaming(sessionId)
+        }
+
         try {
-            const mediaSource = new MediaSource()
-            const audio = new Audio()
-            audio.src = URL.createObjectURL(mediaSource)
+            resources.mediaSource = new MediaSource()
+            resources.audio = new Audio()
+            resources.objectUrl = URL.createObjectURL(resources.mediaSource)
+            resources.audio.src = resources.objectUrl
 
-            mediaSource.addEventListener('sourceopen', () => {
-                try {
-                    const mimeType = data.format === 'mp3' ? 'audio/mpeg' : 'audio/mpeg'
-                    const sourceBuffer = mediaSource.addSourceBuffer(mimeType)
-
-                    setTtsStreamingState((prevState) => ({
-                        ...prevState,
-                        mediaSource,
-                        sourceBuffer,
-                        audio
-                    }))
-
-                    audio.play().catch((playError) => {
-                        console.error('Error starting audio playback:', playError)
-                    })
-                } catch (error) {
-                    console.error('Error setting up source buffer:', error)
-                    console.error('MediaSource readyState:', mediaSource.readyState)
-                    console.error('Requested MIME type:', mimeType)
+            resources.sourceOpenHandler = () => {
+                if (ttsStreamingResourcesRef.current !== resources || resources.disposed) return
+                if (resources.initializationWatchdog) {
+                    clearTimeout(resources.initializationWatchdog)
+                    resources.initializationWatchdog = null
                 }
-            })
+                try {
+                    resources.sourceBuffer = resources.mediaSource.addSourceBuffer('audio/mpeg')
+                    resources.sourceBufferUpdateHandler = () => {
+                        if (ttsStreamingResourcesRef.current !== resources || resources.disposed) return
+                        processChunkQueue(sessionId)
+                    }
+                    resources.sourceBuffer.addEventListener('updateend', resources.sourceBufferUpdateHandler)
+                    processChunkQueue(sessionId)
+                    resources.audio.play().catch(() => failPlayback('无法自动播放语音，请重试', 'warning'))
+                } catch {
+                    failPlayback('语音流初始化失败，请稍后重试')
+                }
+            }
 
-            audio.addEventListener('playing', () => {
+            resources.audioPlayingHandler = () => {
+                if (ttsStreamingResourcesRef.current !== resources || resources.disposed) return
                 setIsTTSLoading((prevState) => {
                     const newState = { ...prevState }
                     delete newState[data.chatMessageId]
                     return newState
                 })
-                setIsTTSPlaying((prevState) => ({
-                    ...prevState,
-                    [data.chatMessageId]: true
-                }))
-            })
+                setIsTTSPlaying((prevState) => ({ ...prevState, [data.chatMessageId]: true }))
+            }
+            resources.audioEndedHandler = () => {
+                if (ttsStreamingResourcesRef.current !== resources || resources.disposed) return
+                clearTTSMessageState(data.chatMessageId)
+                cleanupTTSStreaming(sessionId)
+            }
+            resources.audioErrorHandler = () => failPlayback('语音播放失败，请稍后重试')
 
-            audio.addEventListener('ended', () => {
-                setIsTTSPlaying((prevState) => {
-                    const newState = { ...prevState }
-                    delete newState[data.chatMessageId]
-                    return newState
-                })
-                cleanupTTSStreaming()
-            })
-        } catch (error) {
-            console.error('Error initializing TTS streaming:', error)
+            resources.mediaSource.addEventListener('sourceopen', resources.sourceOpenHandler, { once: true })
+            resources.audio.addEventListener('playing', resources.audioPlayingHandler)
+            resources.audio.addEventListener('ended', resources.audioEndedHandler, { once: true })
+            resources.audio.addEventListener('error', resources.audioErrorHandler, { once: true })
+            resources.initializationWatchdog = setTimeout(() => failPlayback('语音流初始化超时，请重试'), 8000)
+        } catch {
+            failPlayback('浏览器无法初始化语音播放')
         }
-    }
-
-    const cleanupTTSStreaming = () => {
-        setTtsStreamingState((prevState) => {
-            if (prevState.abortController) {
-                prevState.abortController.abort()
-            }
-
-            if (prevState.audio) {
-                prevState.audio.pause()
-                prevState.audio.removeAttribute('src')
-                if (prevState.audio.src) {
-                    URL.revokeObjectURL(prevState.audio.src)
-                }
-            }
-
-            if (prevState.mediaSource) {
-                if (prevState.mediaSource.readyState === 'open') {
-                    try {
-                        prevState.mediaSource.endOfStream()
-                    } catch (e) {
-                        // Ignore errors during cleanup
-                    }
-                }
-                prevState.mediaSource.removeEventListener('sourceopen', () => {})
-            }
-
-            return {
-                mediaSource: null,
-                sourceBuffer: null,
-                audio: null,
-                chunkQueue: [],
-                isBuffering: false,
-                audioFormat: null,
-                abortController: null
-            }
-        })
-    }
-
-    const processChunkQueue = () => {
-        setTtsStreamingState((prevState) => {
-            if (!prevState.sourceBuffer || prevState.sourceBuffer.updating || prevState.chunkQueue.length === 0) {
-                return prevState
-            }
-
-            const chunk = prevState.chunkQueue.shift()
-
-            try {
-                prevState.sourceBuffer.appendBuffer(chunk)
-                return {
-                    ...prevState,
-                    chunkQueue: [...prevState.chunkQueue],
-                    isBuffering: true
-                }
-            } catch (error) {
-                console.error('Error appending chunk to buffer:', error)
-                return prevState
-            }
-        })
     }
 
     const handleTTSStart = (data) => {
@@ -2010,6 +2075,9 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
 
         // Stop all existing TTS audio before starting new stream
         stopAllTTS()
+        const sessionId = ttsStreamSessionRef.current + 1
+        ttsStreamSessionRef.current = sessionId
+        ttsStreamingResourcesRef.current = createTTSStreamResources(sessionId, data.chatMessageId)
 
         setIsTTSLoading((prevState) => ({
             ...prevState,
@@ -2023,125 +2091,51 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
             allMessages[allMessages.length - 1].id = data.chatMessageId
             return allMessages
         })
-        setTtsStreamingState({
-            mediaSource: null,
-            sourceBuffer: null,
-            audio: null,
-            chunkQueue: [],
-            isBuffering: false,
-            audioFormat: data.format,
-            abortController: null
-        })
-
-        setTimeout(() => initializeTTSStreaming(data), 0)
+        ttsInitializationTimeoutRef.current = setTimeout(() => {
+            ttsInitializationTimeoutRef.current = null
+            initializeTTSStreaming(data, sessionId)
+        }, 0)
+        return sessionId
     }
 
-    const handleTTSDataChunk = (base64Data) => {
+    const handleTTSDataChunk = (base64Data, messageId) => {
         try {
             const audioBuffer = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0))
-
-            setTtsStreamingState((prevState) => {
-                const newState = {
-                    ...prevState,
-                    chunkQueue: [...prevState.chunkQueue, audioBuffer]
-                }
-
-                if (prevState.sourceBuffer && !prevState.sourceBuffer.updating) {
-                    setTimeout(() => processChunkQueue(), 0)
-                }
-
-                return newState
+            const resources = ttsStreamingResourcesRef.current
+            if (resources.disposed || !resources.sessionId || resources.chatMessageId !== messageId) return
+            resources.chunkQueue.push(audioBuffer)
+            processChunkQueue(resources.sessionId)
+        } catch {
+            enqueueSnackbar({
+                message: '语音数据解析失败，请重试',
+                options: { variant: 'error' }
             })
-        } catch (error) {
-            console.error('Error handling TTS data chunk:', error)
         }
     }
 
-    const handleTTSEnd = () => {
-        setTtsStreamingState((prevState) => {
-            if (prevState.mediaSource && prevState.mediaSource.readyState === 'open') {
-                try {
-                    if (prevState.sourceBuffer && prevState.chunkQueue.length > 0 && !prevState.sourceBuffer.updating) {
-                        const remainingChunks = [...prevState.chunkQueue]
-                        remainingChunks.forEach((chunk, index) => {
-                            setTimeout(() => {
-                                if (prevState.sourceBuffer && !prevState.sourceBuffer.updating) {
-                                    try {
-                                        prevState.sourceBuffer.appendBuffer(chunk)
-                                        if (index === remainingChunks.length - 1) {
-                                            setTimeout(() => {
-                                                if (prevState.mediaSource && prevState.mediaSource.readyState === 'open') {
-                                                    prevState.mediaSource.endOfStream()
-                                                }
-                                            }, 100)
-                                        }
-                                    } catch (error) {
-                                        console.error('Error appending remaining chunk:', error)
-                                    }
-                                }
-                            }, index * 50)
-                        })
-                        return {
-                            ...prevState,
-                            chunkQueue: []
-                        }
-                    }
-
-                    if (prevState.sourceBuffer && !prevState.sourceBuffer.updating) {
-                        prevState.mediaSource.endOfStream()
-                    } else if (prevState.sourceBuffer) {
-                        prevState.sourceBuffer.addEventListener(
-                            'updateend',
-                            () => {
-                                if (prevState.mediaSource && prevState.mediaSource.readyState === 'open') {
-                                    prevState.mediaSource.endOfStream()
-                                }
-                            },
-                            { once: true }
-                        )
-                    }
-                } catch (error) {
-                    console.error('Error ending TTS stream:', error)
-                }
-            }
-            return prevState
-        })
+    const handleTTSEnd = (messageId) => {
+        const resources = ttsStreamingResourcesRef.current
+        if (resources.disposed || !resources.sessionId || resources.chatMessageId !== messageId) return
+        resources.ended = true
+        processChunkQueue(resources.sessionId)
     }
 
     const handleTTSAbort = (data) => {
         const messageId = data.chatMessageId
-        cleanupTTSForMessage(messageId)
+        if (ttsStreamingResourcesRef.current.chatMessageId === messageId) cleanupTTSForMessage(messageId)
+        else clearTTSMessageState(messageId)
     }
 
     const handleTTSAbortAll = async () => {
-        const activeTTSMessages = Object.keys(isTTSLoading).concat(Object.keys(isTTSPlaying))
-        for (const messageId of activeTTSMessages) {
-            await ttsApi.abortTTS({ chatflowId: chatflowid, chatId, chatMessageId: messageId })
-        }
+        const activeTTSMessages = [...new Set(Object.keys(isTTSLoading).concat(Object.keys(isTTSPlaying)))]
+        await Promise.allSettled(
+            activeTTSMessages.map((messageId) => ttsApi.abortTTS({ chatflowId: chatflowid, chatId, chatMessageId: messageId }))
+        )
     }
 
     useEffect(() => {
-        if (ttsStreamingState.sourceBuffer) {
-            const sourceBuffer = ttsStreamingState.sourceBuffer
-
-            const handleUpdateEnd = () => {
-                setTtsStreamingState((prevState) => ({
-                    ...prevState,
-                    isBuffering: false
-                }))
-                setTimeout(() => processChunkQueue(), 0)
-            }
-
-            sourceBuffer.addEventListener('updateend', handleUpdateEnd)
-
-            return () => {
-                sourceBuffer.removeEventListener('updateend', handleUpdateEnd)
-            }
-        }
-    }, [ttsStreamingState.sourceBuffer])
-
-    useEffect(() => {
         return () => {
+            chatStreamAbortControllerRef.current?.abort()
             cleanupTTSStreaming()
             // Cleanup TTS timeout on unmount
             if (ttsTimeoutRef.current) {
@@ -2227,14 +2221,14 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                         flex: '0 0 auto'
                     }}
                 >
-                    <CardMedia component='img' image={item.data} sx={{ height: 64 }} alt={'preview'} style={messageImageStyle} />
+                    <CardMedia component='img' image={item.data} sx={{ height: 64 }} alt='上传内容预览' style={messageImageStyle} />
                 </Card>
             )
         } else if (item?.mime?.startsWith('audio/')) {
             return (
                 /* eslint-disable jsx-a11y/media-has-caption */
                 <audio controls='controls'>
-                    Your browser does not support the &lt;audio&gt; tag.
+                    当前浏览器不支持 &lt;audio&gt; 标签。
                     <source src={item.data} type={item.mime} />
                 </audio>
             )
@@ -2299,7 +2293,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                         component='img'
                         image={item.data}
                         sx={{ height: 'auto' }}
-                        alt={'artifact'}
+                        alt='生成内容'
                         style={{
                             width: isAgentReasoning ? '200px' : '100%',
                             height: isAgentReasoning ? '200px' : 'auto',
@@ -2386,10 +2380,10 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                         }}
                     >
                         <Typography variant='h4' sx={{ mb: 1, textAlign: 'center' }}>
-                            {formTitle || 'Please Fill Out The Form'}
+                            {formTitle || '请填写表单'}
                         </Typography>
                         <Typography variant='body1' sx={{ mb: 3, textAlign: 'center', color: theme.palette.text.secondary }}>
-                            {formDescription || 'Complete all fields below to continue'}
+                            {formDescription || '请填写下方全部字段后继续'}
                         </Typography>
 
                         {/* Form inputs */}
@@ -2426,7 +2420,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                 background: 'linear-gradient(45deg, #673ab7 30%, #1e88e5 90%)'
                             }}
                         >
-                            {loading ? 'Submitting...' : 'Submit'}
+                            {loading ? '正在提交……' : '提交'}
                         </Button>
                     </Box>
                 </Box>
@@ -2448,7 +2442,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
             {isDragActive &&
                 (getAllowChatFlowUploads.data?.isImageUploadAllowed || getAllowChatFlowUploads.data?.isRAGFileUploadAllowed) && (
                     <Box className='drop-overlay'>
-                        <Typography variant='h2'>Drop here to upload</Typography>
+                        <Typography variant='h2'>拖放到此处上传</Typography>
                         {[
                             ...getAllowChatFlowUploads.data.imgUploadSizeAndTypes,
                             ...getAllowChatFlowUploads.data.fileUploadSizeAndTypes
@@ -2457,7 +2451,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                 <>
                                     <Typography variant='subtitle1'>{allowed.fileTypes?.join(', ')}</Typography>
                                     {allowed.maxUploadSize && (
-                                        <Typography variant='subtitle1'>Max Allowed Size: {allowed.maxUploadSize} MB</Typography>
+                                        <Typography variant='subtitle1'>最大允许大小：{allowed.maxUploadSize} MB</Typography>
                                     )}
                                 </>
                             )
@@ -2491,9 +2485,9 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                 >
                                     {/* Display the correct icon depending on the message type */}
                                     {message.type === 'apiMessage' || message.type === 'leadCaptureMessage' ? (
-                                        <img src={robotPNG} alt='AI' width='30' height='30' className='boticon' />
+                                        <img src={robotPNG} alt='AI 助手' width='30' height='30' className='boticon' />
                                     ) : (
-                                        <img src={userPNG} alt='Me' width='30' height='30' className='usericon' />
+                                        <img src={userPNG} alt='用户' width='30' height='30' className='usericon' />
                                     )}
                                     <div
                                         style={{
@@ -2587,7 +2581,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                             variant='outlined'
                                                             clickable
                                                             icon={<CircularProgress size={15} color='primary' />}
-                                                            onClick={() => onSourceDialogClick(tool, 'Called Tools')}
+                                                            onClick={() => onSourceDialogClick(tool, '调用中的工具')}
                                                         />
                                                     ) : null
                                                 })}
@@ -2622,7 +2616,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                                     color={tool.error ? theme.palette.error.main : undefined}
                                                                 />
                                                             }
-                                                            onClick={() => onSourceDialogClick(tool, 'Used Tools')}
+                                                            onClick={() => onSourceDialogClick(tool, '已用工具')}
                                                         />
                                                     ) : null
                                                 })}
@@ -2655,7 +2649,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                     }}
                                                 >
                                                     <Typography sx={{ lineHeight: '1.5rem', whiteSpace: 'pre-line' }}>
-                                                        {leadsConfig.title || 'Let us know where we can reach you:'}
+                                                        {leadsConfig.title || '请留下您的联系方式：'}
                                                     </Typography>
                                                     <form
                                                         style={{
@@ -2713,7 +2707,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                                 type='submit'
                                                                 sx={{ borderRadius: '20px' }}
                                                             >
-                                                                {isLeadSaving ? 'Saving...' : 'Save'}
+                                                                {isLeadSaving ? '正在保存……' : '保存'}
                                                             </Button>
                                                         </Box>
                                                     </form>
@@ -2813,7 +2807,11 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                                     startIcon={<IconCheck />}
                                                                     onClick={() => handleActionClick(elem, message.action)}
                                                                 >
-                                                                    {elem.label}
+                                                                    {elem.type === 'agentflowv2-approve-button'
+                                                                        ? '继续'
+                                                                        : elem.label === 'Yes'
+                                                                        ? '是'
+                                                                        : elem.label}
                                                                 </Button>
                                                             ) : (elem.type === 'reject-button' && elem.label === 'No') ||
                                                               elem.type === 'agentflowv2-reject-button' ? (
@@ -2829,7 +2827,11 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                                     startIcon={<IconX />}
                                                                     onClick={() => handleActionClick(elem, message.action)}
                                                                 >
-                                                                    {elem.label}
+                                                                    {elem.type === 'agentflowv2-reject-button'
+                                                                        ? '拒绝'
+                                                                        : elem.label === 'No'
+                                                                        ? '否'
+                                                                        : elem.label}
                                                                 </Button>
                                                             ) : (
                                                                 <Button
@@ -2940,7 +2942,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                         <Stack sx={{ flexDirection: 'row', alignItems: 'center', px: 1.5, gap: 0.5 }}>
                             <IconSparkles size={12} />
                             <Typography sx={{ fontSize: '0.75rem' }} variant='body2'>
-                                Try these prompts
+                                试试这些提示词
                             </Typography>
                         </Stack>
                         <FollowUpPromptsCard
@@ -2968,9 +2970,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                         {recordingNotSupported ? (
                             <div className='overlay'>
                                 <div className='browser-not-supporting-audio-recording-box'>
-                                    <Typography variant='body1'>
-                                        To record audio, use modern browsers like Chrome or Firefox that support audio recording.
-                                    </Typography>
+                                    <Typography variant='body1'>录音需要使用支持此功能的现代浏览器，例如 Chrome 或 Firefox。</Typography>
                                     <Button
                                         variant='contained'
                                         color='error'
@@ -2978,7 +2978,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                         type='button'
                                         onClick={() => onRecordingCancelled()}
                                     >
-                                        Okay
+                                        知道了
                                     </Button>
                                 </div>
                             </div>
@@ -3002,7 +3002,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                         <IconCircleDot />
                                     </span>
                                     <Typography id='elapsed-time'>00:00</Typography>
-                                    {isLoadingRecording && <Typography ml={1.5}>发送中...</Typography>}
+                                    {isLoadingRecording && <Typography ml={1.5}>发送中……</Typography>}
                                 </div>
                                 <div className='recording-control-buttons-container'>
                                     <IconButton onClick={onRecordingCancelled} size='small'>
@@ -3030,7 +3030,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                             onKeyDown={handleEnter}
                             id='userInput'
                             name='userInput'
-                            placeholder={loading ? 'Waiting for response...' : 'Type your question...'}
+                            placeholder={loading ? '正在等待回复……' : '请输入您的问题……'}
                             value={userInput}
                             onChange={onChange}
                             multiline={true}
@@ -3149,7 +3149,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                                                 <InputAdornment position='end' sx={{ padding: '15px', mr: 1 }}>
                                                     <IconButton
                                                         edge='end'
-                                                        title={isMessageStopping ? 'Stopping...' : 'Stop'}
+                                                        title={isMessageStopping ? '正在停止……' : '停止'}
                                                         style={{ border: !isMessageStopping ? '2px solid red' : 'none' }}
                                                         onClick={() => handleAbort()}
                                                         disabled={isMessageStopping}
@@ -3208,13 +3208,13 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                     setFeedback('')
                 }}
             >
-                <DialogTitle variant='h5'>Provide Feedback</DialogTitle>
+                <DialogTitle variant='h5'>提供反馈</DialogTitle>
                 <DialogContent>
                     <TextField
                         // eslint-disable-next-line
                         autoFocus
                         margin='dense'
-                        label='Feedback'
+                        label='反馈内容'
                         fullWidth
                         multiline
                         rows={4}
@@ -3225,7 +3225,7 @@ const ChatMessage = ({ open, chatflowid, isAgentCanvas, isDialog, previews, setP
                 <DialogActions>
                     <Button onClick={handleSubmitFeedback}>取消</Button>
                     <Button onClick={handleSubmitFeedback} variant='contained'>
-                        Submit
+                        提交
                     </Button>
                 </DialogActions>
             </Dialog>

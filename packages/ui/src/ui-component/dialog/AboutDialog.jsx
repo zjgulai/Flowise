@@ -27,9 +27,7 @@ const AboutDialog = ({ show, onCancel }) => {
                     }
                     setData(finalData)
                 })
-                .catch((error) => {
-                    console.error('Error fetching data:', error)
-                })
+                .catch(() => setData({}))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -45,17 +43,17 @@ const AboutDialog = ({ show, onCancel }) => {
             aria-describedby='alert-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
-                Flowise Version
+                Flowise 版本
             </DialogTitle>
             <DialogContent>
                 {data && (
                     <TableContainer component={Paper}>
-                        <Table aria-label='simple table'>
+                        <Table aria-label='Flowise 版本信息表'>
                             <TableHead>
                                 <TableRow>
-                                    <TableCell>Current Version</TableCell>
-                                    <TableCell>Latest Version</TableCell>
-                                    <TableCell>Published At</TableCell>
+                                    <TableCell>当前版本</TableCell>
+                                    <TableCell>最新版本</TableCell>
+                                    <TableCell>发布时间</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>

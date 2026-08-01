@@ -32,6 +32,7 @@ import { DocumentStoreTable } from '@/ui-component/table/DocumentStoreTable'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
 
 // utils
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 
 // ==============================|| DOCUMENTS ||============================== //
@@ -91,28 +92,6 @@ const Documents = () => {
     const onSearchChange = (event) => {
         setSearch(event.target.value)
         setCurrentPage(1)
-    }
-
-    const getDeleteErrorMessage = (error) => {
-        const responseData = error?.response?.data
-
-        if (typeof responseData === 'string' && responseData.trim()) {
-            return responseData
-        }
-
-        const responseMessage = responseData && typeof responseData === 'object' ? responseData.message || responseData.error : undefined
-        if (typeof responseMessage === 'string' && responseMessage.trim()) {
-            return responseMessage
-        }
-
-        const status = error?.response?.status
-        if (status) return `服务请求失败（${status}）`
-
-        if (typeof error?.message === 'string' && error.message.trim()) {
-            return error.message
-        }
-
-        return '未知错误'
     }
 
     const goToDocumentStore = (id) => {
@@ -240,7 +219,7 @@ const Documents = () => {
                 setTotal((prev) => Math.max(0, prev - 1))
             }
         } catch (error) {
-            const errorMessage = getDeleteErrorMessage(error)
+            const errorMessage = getErrorMessage(error, '未知错误')
 
             enqueueSnackbar({
                 message: `删除文档库失败：${errorMessage}`,
@@ -321,8 +300,10 @@ const Documents = () => {
                 setDocStores(data)
                 setTotal(total)
                 setImages(loaderImages)
-            } catch (e) {
-                console.error(e)
+            } catch {
+                setDocStores([])
+                setTotal(0)
+                setImages({})
             }
         }
     }, [getAllDocumentStores.data])
@@ -394,11 +375,7 @@ const Documents = () => {
                     {!hasDocStores ? (
                         <Stack sx={{ alignItems: 'center', justifyContent: 'center' }} flexDirection='column'>
                             <Box sx={{ p: 2, height: 'auto' }}>
-                                <img
-                                    style={{ objectFit: 'cover', height: '20vh', width: 'auto' }}
-                                    src={doc_store_empty}
-                                    alt='doc_store_empty'
-                                />
+                                <img style={{ objectFit: 'cover', height: '20vh', width: 'auto' }} src={doc_store_empty} alt='暂无文档库' />
                             </Box>
                             <div>暂无文档库</div>
                         </Stack>

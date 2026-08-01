@@ -42,6 +42,7 @@ import useApi from '@/hooks/useApi'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 import { maxScroll } from '@/store/constant'
 
@@ -200,11 +201,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
 
     useEffect(() => {
         if (getAssistantObjApi.error) {
-            let errMsg = '内部服务器错误'
-            let error = getAssistantObjApi.error
-            if (error?.response?.data) {
-                errMsg = typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-            }
+            const errMsg = getErrorMessage(getAssistantObjApi.error, '内部服务器错误')
             enqueueSnackbar({
                 message: `获取助手失败：${errMsg}`,
                 options: {
@@ -224,11 +221,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
 
     useEffect(() => {
         if (getSpecificAssistantApi.error) {
-            const error = getSpecificAssistantApi.error
-            let errMsg = ''
-            if (error?.response?.data) {
-                errMsg = typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-            }
+            const errMsg = getErrorMessage(getSpecificAssistantApi.error, '未知错误')
             enqueueSnackbar({
                 message: `获取助手失败：${errMsg}`,
                 options: {
@@ -397,7 +390,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
             setLoading(false)
         } catch (error) {
             enqueueSnackbar({
-                message: `添加新助手失败：${typeof error.response.data === 'object' ? error.response.data.message : error.response.data}`,
+                message: `添加新助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -450,7 +443,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
             setLoading(false)
         } catch (error) {
             enqueueSnackbar({
-                message: `保存助手失败：${typeof error.response.data === 'object' ? error.response.data.message : error.response.data}`,
+                message: `保存助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -488,7 +481,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
             setLoading(false)
         } catch (error) {
             enqueueSnackbar({
-                message: `同步助手失败：${typeof error.response.data === 'object' ? error.response.data.message : error.response.data}`,
+                message: `同步助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -537,7 +530,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
             setLoading(false)
         } catch (error) {
             enqueueSnackbar({
-                message: `上传文件失败：${typeof error.response.data === 'object' ? error.response.data.message : error.response.data}`,
+                message: `上传文件失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -587,7 +580,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
             setLoading(false)
         } catch (error) {
             enqueueSnackbar({
-                message: `上传文件失败：${typeof error.response.data === 'object' ? error.response.data.message : error.response.data}`,
+                message: `上传文件失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -644,7 +637,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `删除助手失败：${typeof error.response.data === 'object' ? error.response.data.message : error.response.data}`,
+                message: `删除助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -686,7 +679,10 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                     : ''
                 await assistantsApi.deleteFilesFromAssistantVectorStore(vectorStoreId, assistantCredential, { file_ids: [fileId] })
             } catch (error) {
-                console.error(error)
+                enqueueSnackbar({
+                    message: `删除向量库文件失败：${getErrorMessage(error, '未知错误')}`,
+                    options: { variant: 'error' }
+                })
             }
         }
     }
@@ -711,7 +707,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                     <Box>
                         <Stack sx={{ position: 'relative' }} direction='row'>
                             <Typography variant='overline'>
-                                OpenAI Credential
+                                OpenAI 凭据
                                 <span style={{ color: 'red' }}>&nbsp;*</span>
                             </Typography>
                         </Stack>
@@ -821,7 +817,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                             type='string'
                             size='small'
                             fullWidth
-                            placeholder='你是一位个人数学家教。当被问到问题时，编写并运行 Python 代码来回答。'
+                            placeholder='你是一位个人数学家教。当被问到问题时，编写并运行代码来回答。'
                             multiline={true}
                             rows={3}
                             value={assistantInstructions}
@@ -846,7 +842,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                     </Box>
                     <Box>
                         <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                            <Typography variant='overline'>助手 Top P</Typography>
+                            <Typography variant='overline'>助手核采样概率</Typography>
                             <TooltipWithParser title={'通过核采样控制多样性：0.5 表示考虑所有按可能性加权选项的一半。'} />
                         </Stack>
                         <OutlinedInput
@@ -936,7 +932,9 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                                                 key={uploadCodeInterpreterFiles}
                                                 fileType='*'
                                                 formDataUpload={true}
-                                                value={uploadCodeInterpreterFiles ?? '选择要上传的文件'}
+                                                value={uploadCodeInterpreterFiles ?? ''}
+                                                placeholder='选择要上传的文件'
+                                                buttonText='上传文件'
                                                 onChange={(newValue) => setUploadCodeInterpreterFiles(newValue)}
                                                 onFormDataChange={(formData) => uploadFormDataToCodeInterpreter(formData)}
                                             />
@@ -1018,7 +1016,9 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                                                     key={uploadVectorStoreFiles}
                                                     fileType='*'
                                                     formDataUpload={true}
-                                                    value={uploadVectorStoreFiles ?? '选择要上传的文件'}
+                                                    value={uploadVectorStoreFiles ?? ''}
+                                                    placeholder='选择要上传的文件'
+                                                    buttonText='上传文件'
                                                     onChange={(newValue) => setUploadVectorStoreFiles(newValue)}
                                                     onFormDataChange={(formData) => uploadFormDataToVectorStore(formData)}
                                                 />

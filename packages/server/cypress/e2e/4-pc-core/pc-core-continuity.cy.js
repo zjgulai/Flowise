@@ -276,10 +276,8 @@ describe('authenticated PC core continuity', () => {
         cy.wait('@missingDocumentStore').its('response.statusCode').should('eq', 404)
         cy.contains('页面加载失败').should('be.visible')
         cy.then(() => {
-            const expectedMissingStoreErrors = consoleErrors.splice(consoleErrorCountBeforeMissingStore)
-            expect(expectedMissingStoreErrors, 'exact missing document store console output').to.deep.eq([
-                'AxiosError: Request failed with status code 404'
-            ])
+            const missingStoreErrors = consoleErrors.splice(consoleErrorCountBeforeMissingStore)
+            expect(missingStoreErrors, 'missing document store console output').to.deep.eq([])
         })
         cy.contains('button', '返回文档库列表').click()
         cy.location('pathname').should('eq', '/document-stores')

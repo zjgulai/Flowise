@@ -157,8 +157,8 @@ const OrgWorkspaceBreadcrumbs = () => {
             const sortedWorkspaces = [...formattedAssignedWorkspaces].sort((a, b) => a.name.localeCompare(b.name))
 
             setAssignedWorkspaces(sortedWorkspaces)
-        } catch (error) {
-            console.error('Error fetching workspaces:', error)
+        } catch {
+            setAssignedWorkspaces([])
         }
     }
 
@@ -223,7 +223,7 @@ const OrgWorkspaceBreadcrumbs = () => {
         if (getOrganizationsByUserIdApi.data) {
             const formattedAssignedOrgs = getOrganizationsByUserIdApi.data.map((organization) => ({
                 id: organization.organizationId,
-                name: `${organization.user.name || organization.user.email}'s Organization`
+                name: `${organization.user.name || organization.user.email}的组织`
             }))
 
             const sortedOrgs = [...formattedAssignedOrgs].sort((a, b) => a.name.localeCompare(b.name))
@@ -305,17 +305,17 @@ const OrgWorkspaceBreadcrumbs = () => {
                             </MenuItem>
                         ))}
                     </StyledMenu>
-                    <Breadcrumbs aria-label='breadcrumb'>
+                    <Breadcrumbs aria-label='组织与工作区导航'>
                         <StyledBreadcrumb
                             isDarkMode={customization.isDarkMode}
-                            label={assignedOrganizations.find((org) => org.id === activeOrganizationId)?.name || 'Organization'}
+                            label={assignedOrganizations.find((org) => org.id === activeOrganizationId)?.name || '组织'}
                             deleteIcon={<IconChevronDown size={16} />}
                             onDelete={handleOrgClick}
                             onClick={handleOrgClick}
                         />
                         <StyledBreadcrumb
                             isDarkMode={customization.isDarkMode}
-                            label={assignedWorkspaces.find((ws) => ws.id === activeWorkspaceId)?.name || 'Workspace'}
+                            label={assignedWorkspaces.find((ws) => ws.id === activeWorkspaceId)?.name || '工作区'}
                             deleteIcon={<IconChevronDown size={16} />}
                             onDelete={handleWorkspaceClick}
                             onClick={handleWorkspaceClick}
@@ -328,7 +328,7 @@ const OrgWorkspaceBreadcrumbs = () => {
                     <Stack spacing={2} alignItems='center'>
                         <CircularProgress />
                         <Typography variant='body1' style={{ color: 'white' }}>
-                            Switching organization...
+                            正在切换组织…
                         </Typography>
                     </Stack>
                 </DialogContent>
@@ -338,7 +338,7 @@ const OrgWorkspaceBreadcrumbs = () => {
                     <Stack spacing={2} alignItems='center'>
                         <CircularProgress />
                         <Typography variant='body1' style={{ color: 'white' }}>
-                            Switching workspace...
+                            正在切换工作区…
                         </Typography>
                     </Stack>
                 </DialogContent>
@@ -356,12 +356,10 @@ const OrgWorkspaceBreadcrumbs = () => {
             >
                 <DialogContent>
                     <Stack spacing={3}>
-                        <Typography variant='h5'>Workspace Unavailable</Typography>
+                        <Typography variant='h5'>工作区不可用</Typography>
                         {assignedWorkspaces.length > 0 && !activeOrganizationId ? (
                             <>
-                                <Typography variant='body1'>
-                                    Your current workspace is no longer available. Please select another workspace to continue.
-                                </Typography>
+                                <Typography variant='body1'>当前工作区已不可用，请选择其他工作区后继续。</Typography>
                                 <Select
                                     fullWidth
                                     value=''
@@ -372,7 +370,7 @@ const OrgWorkspaceBreadcrumbs = () => {
                                     displayEmpty
                                 >
                                     <MenuItem disabled value=''>
-                                        <em>Select Workspace</em>
+                                        <em>选择工作区</em>
                                     </MenuItem>
                                     {assignedWorkspaces.map((workspace, index) => (
                                         <MenuItem key={index} value={workspace.id}>
@@ -383,9 +381,7 @@ const OrgWorkspaceBreadcrumbs = () => {
                             </>
                         ) : (
                             <>
-                                <Typography variant='body1'>
-                                    Workspace is no longer available. Please select a different organization/workspace to continue.
-                                </Typography>
+                                <Typography variant='body1'>该工作区已不可用，请选择其他组织或工作区后继续。</Typography>
                                 <Select
                                     fullWidth
                                     value={activeOrganizationId || ''}
@@ -395,7 +391,7 @@ const OrgWorkspaceBreadcrumbs = () => {
                                     displayEmpty
                                 >
                                     <MenuItem disabled value=''>
-                                        <em>Select Organization</em>
+                                        <em>选择组织</em>
                                     </MenuItem>
                                     {assignedOrganizations.map((org, index) => (
                                         <MenuItem key={index} value={org.id}>
@@ -415,7 +411,7 @@ const OrgWorkspaceBreadcrumbs = () => {
                                         sx={{ mt: 2 }}
                                     >
                                         <MenuItem disabled value=''>
-                                            <em>Select Workspace</em>
+                                            <em>选择工作区</em>
                                         </MenuItem>
                                         {assignedWorkspaces.map((workspace, index) => (
                                             <MenuItem key={index} value={workspace.id}>

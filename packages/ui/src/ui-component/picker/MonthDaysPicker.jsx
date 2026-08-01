@@ -80,7 +80,7 @@ export const MonthDaysPicker = ({ value, onChange, disabled = false }) => {
             return (
                 <Tooltip
                     key={valueToken}
-                    title='Always runs on the last day of every month — automatically resolves to 28, 29, 30, or 31 (handles short months and leap years). Unlike picking 31, this fires every month.'
+                    title='始终在每月最后一天运行；系统会自动适配 28、29、30 或 31 日，包括大小月和闰年。与固定选择 31 日不同，此选项每月都会触发。'
                     placement='top'
                     arrow
                 >
@@ -100,7 +100,7 @@ export const MonthDaysPicker = ({ value, onChange, disabled = false }) => {
                 gap: 0.5
             }}
         >
-            {DAYS_OF_MONTH.map((day) => renderChip(day, day === LAST_DAY_TOKEN ? 'Last Day' : day))}
+            {DAYS_OF_MONTH.map((day) => renderChip(day, day === LAST_DAY_TOKEN ? '每月最后一天' : day))}
         </Box>
     )
 }

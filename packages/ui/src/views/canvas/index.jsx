@@ -51,6 +51,7 @@ import {
 } from '@/utils/genericHelper'
 import useNotifier from '@/utils/useNotifier'
 import { usePrompt } from '@/utils/usePrompt'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // const
 import { FLOWISE_CREDENTIAL_ID } from '@/store/constant'
@@ -72,7 +73,7 @@ const Canvas = () => {
     const chatflowId =
         URLpath[URLpath.length - 1] === 'canvas' || URLpath[URLpath.length - 1] === 'agentcanvas' ? '' : URLpath[URLpath.length - 1]
     const isAgentCanvas = URLpath.includes('agentcanvas') ? true : false
-    const canvasTitle = URLpath.includes('agentcanvas') ? 'Agent' : 'Chatflow'
+    const canvasTitle = URLpath.includes('agentcanvas') ? '智能体流程' : '对话流程'
 
     const { confirm } = useConfirm()
 
@@ -171,17 +172,17 @@ const Canvas = () => {
             setNodes(nodes)
             setEdges(flowData.edges || [])
             setTimeout(() => setDirty(), 0)
-        } catch (e) {
-            console.error(e)
+        } catch {
+            errorFailed('导入流程失败：文件格式无效')
         }
     }
 
     const handleDeleteFlow = async () => {
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete ${canvasTitle} ${chatflow.name}?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: `删除${canvasTitle}`,
+            description: `确定删除${canvasTitle}“${chatflow.name}”吗？此操作无法撤销。`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -192,7 +193,7 @@ const Canvas = () => {
                 navigate(isAgentCanvas ? '/agentflows' : '/')
             } catch (error) {
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: getErrorMessage(error, `删除${canvasTitle}失败，请稍后重试`),
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -348,7 +349,7 @@ const Canvas = () => {
     const saveChatflowSuccess = () => {
         dispatch({ type: REMOVE_DIRTY })
         enqueueSnackbar({
-            message: `${canvasTitle} saved`,
+            message: `${canvasTitle}已保存`,
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'success',
@@ -419,7 +420,7 @@ const Canvas = () => {
             setEdges(initialFlow.edges || [])
             dispatch({ type: SET_CHATFLOW, chatflow })
         } else if (getSpecificChatflowApi.error) {
-            errorFailed(`Failed to retrieve ${canvasTitle}: ${getSpecificChatflowApi.error.response.data.message}`)
+            errorFailed(getErrorMessage(getSpecificChatflowApi.error, `获取${canvasTitle}失败，请稍后重试`))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -433,7 +434,7 @@ const Canvas = () => {
             saveChatflowSuccess()
             window.history.replaceState(state, null, `/${isAgentCanvas ? 'agentcanvas' : 'canvas'}/${chatflow.id}`)
         } else if (createNewChatflowApi.error) {
-            errorFailed(`Failed to retrieve ${canvasTitle}: ${createNewChatflowApi.error.response.data.message}`)
+            errorFailed(getErrorMessage(createNewChatflowApi.error, `创建${canvasTitle}失败，请稍后重试`))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -446,7 +447,7 @@ const Canvas = () => {
             setLasUpdatedDateTime(updateChatflowApi.data.updatedDate)
             saveChatflowSuccess()
         } else if (updateChatflowApi.error) {
-            errorFailed(`Failed to retrieve ${canvasTitle}: ${updateChatflowApi.error.response.data.message}`)
+            errorFailed(getErrorMessage(updateChatflowApi.error, `保存${canvasTitle}失败，请稍后重试`))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -457,10 +458,10 @@ const Canvas = () => {
         const checkIfHasChanged = async () => {
             if (getHasChatflowChangedApi.data?.hasChanged === true) {
                 const confirmPayload = {
-                    title: `Confirm Change`,
-                    description: `${canvasTitle} ${chatflow.name} has changed since you have opened, overwrite changes?`,
-                    confirmButtonName: 'Confirm',
-                    cancelButtonName: 'Cancel'
+                    title: '确认覆盖更改',
+                    description: `${canvasTitle}“${chatflow.name}”已被其他操作更新，是否覆盖现有更改？`,
+                    confirmButtonName: '确认覆盖',
+                    cancelButtonName: '取消'
                 }
                 const isConfirmed = await confirm(confirmPayload)
 
@@ -510,7 +511,7 @@ const Canvas = () => {
             dispatch({
                 type: SET_CHATFLOW,
                 chatflow: {
-                    name: `Untitled ${canvasTitle}`
+                    name: `未命名${canvasTitle}`
                 }
             })
         }
@@ -555,7 +556,7 @@ const Canvas = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [templateFlowData])
 
-    usePrompt('You have unsaved changes! Do you want to navigate away?', canvasDataStore.isDirty)
+    usePrompt('您有尚未保存的更改，确定离开当前页面吗？', canvasDataStore.isDirty)
 
     return (
         <>

@@ -214,7 +214,7 @@ const IterationNode = ({ data }) => {
                 </Box>
             </NodeToolbar>
             <StyledNodeToolbar align='end'>
-                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
+                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='基础操作按钮组'>
                     <IconButton
                         size={'small'}
                         title='复制'
@@ -283,7 +283,7 @@ const IterationNode = ({ data }) => {
                 border={false}
             >
                 {data && data.status && (
-                    <Tooltip title={data.status === 'ERROR' ? data.error || 'Error' : ''}>
+                    <Tooltip title={data.status === 'ERROR' ? data.error || '错误' : ''}>
                         <Avatar
                             variant='rounded'
                             sx={{

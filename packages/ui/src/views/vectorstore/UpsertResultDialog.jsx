@@ -29,7 +29,7 @@ const UpsertResultDialog = ({ show, dialogProps, onCancel, onGoToRetrievalQuery 
             aria-describedby='upsert-result-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='upsert-result-dialog-title'>
-                Upsert Record
+                更新插入记录
             </DialogTitle>
             <DialogContent>
                 <>
@@ -40,13 +40,13 @@ const UpsertResultDialog = ({ show, dialogProps, onCancel, onGoToRetrievalQuery 
                             gap: 5
                         }}
                     >
-                        <StatsCard title='Added' stat={dialogProps.numAdded ?? 0} />
+                        <StatsCard title='已添加' stat={dialogProps.numAdded ?? 0} />
                         <StatsCard title='已更新' stat={dialogProps.numUpdated ?? 0} />
                         <StatsCard title='已跳过' stat={dialogProps.numSkipped ?? 0} />
-                        <StatsCard title='Deleted' stat={dialogProps.numDeleted ?? 0} />
+                        <StatsCard title='已删除' stat={dialogProps.numDeleted ?? 0} />
                     </div>
                     {dialogProps.addedDocs && dialogProps.addedDocs.length > 0 && (
-                        <Typography sx={{ mt: 2, mb: 2, fontWeight: 500 }}>{dialogProps.numAdded} Added Documents</Typography>
+                        <Typography sx={{ mt: 2, mb: 2, fontWeight: 500 }}>已添加 {dialogProps.numAdded} 个文档</Typography>
                     )}
                     {dialogProps.addedDocs &&
                         dialogProps.addedDocs.length > 0 &&
@@ -94,10 +94,10 @@ const UpsertResultDialog = ({ show, dialogProps, onCancel, onGoToRetrievalQuery 
                             startIcon={<IconZoomScan />}
                             onClick={onGoToRetrievalQuery}
                         >
-                            Test Retrieval
+                            测试检索
                         </Button>
                         <Button fullWidth onClick={onCancel}>
-                            Close
+                            关闭
                         </Button>
                     </div>
                 )}

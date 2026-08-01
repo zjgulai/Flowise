@@ -156,7 +156,7 @@ const ViewLeadsDialog = ({ show, dialogProps, onCancel }) => {
                     <div style={{ flex: 1 }} />
                     {leads && leads.length > 0 && (
                         <Button variant='outlined' onClick={() => exportMessages()} startIcon={<IconFileExport />}>
-                            Export
+                            导出
                         </Button>
                     )}
                 </div>
@@ -165,20 +165,20 @@ const ViewLeadsDialog = ({ show, dialogProps, onCancel }) => {
                 {leads && leads.length == 0 && (
                     <Stack sx={{ alignItems: 'center', justifyContent: 'center', width: '100%' }} flexDirection='column'>
                         <Box sx={{ p: 5, height: 'auto' }}>
-                            <img style={{ objectFit: 'cover', height: '20vh', width: 'auto' }} src={leadsEmptySVG} alt='msgEmptySVG' />
+                            <img style={{ objectFit: 'cover', height: '20vh', width: 'auto' }} src={leadsEmptySVG} alt='暂无线索' />
                         </Box>
-                        <div>No Leads</div>
+                        <div>暂无线索</div>
                     </Stack>
                 )}
                 {leads && leads.length > 0 && (
                     <TableContainer component={Paper}>
-                        <Table sx={{ minWidth: 650 }} aria-label='simple table'>
+                        <Table sx={{ minWidth: 650 }} aria-label='线索列表'>
                             <TableHead>
                                 <TableRow>
                                     <TableCell>名称</TableCell>
-                                    <TableCell>Email Address</TableCell>
+                                    <TableCell>邮箱地址</TableCell>
                                     <TableCell>电话</TableCell>
-                                    <TableCell>Created Date</TableCell>
+                                    <TableCell>创建日期</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -187,7 +187,7 @@ const ViewLeadsDialog = ({ show, dialogProps, onCancel }) => {
                                         <TableCell>{lead.name}</TableCell>
                                         <TableCell>{lead.email}</TableCell>
                                         <TableCell>{lead.phone}</TableCell>
-                                        <TableCell>{moment(lead.createdDate).format('MMMM Do, YYYY')}</TableCell>
+                                        <TableCell>{moment(lead.createdDate).format('YYYY年M月D日')}</TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>

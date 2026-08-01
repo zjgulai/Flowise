@@ -49,16 +49,16 @@ const CanvasNode = ({ data }) => {
         else return !canvas.canvasDialogShow && open
     }
 
-    const nodeOutdatedMessage = (oldVersion, newVersion) => `Node version ${oldVersion} outdated\nUpdate to latest version ${newVersion}`
+    const nodeOutdatedMessage = (oldVersion, newVersion) => `节点版本 ${oldVersion} 已过期\n请更新至最新版本 ${newVersion}`
 
-    const nodeVersionEmptyMessage = (newVersion) => `Node outdated\nUpdate to latest version ${newVersion}`
+    const nodeVersionEmptyMessage = (newVersion) => `节点已过期\n请更新至最新版本 ${newVersion}`
 
     const onDialogClicked = () => {
         const dialogProps = {
             data,
             inputParams: data.inputParams.filter((inputParam) => !inputParam.hidden).filter((param) => param.additionalParams),
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setDialogProps(dialogProps)
         setShowDialog(true)
@@ -165,7 +165,7 @@ const CanvasNode = ({ data }) => {
                                     <img
                                         style={{ width: '100%', height: '100%', padding: 5, objectFit: 'contain' }}
                                         src={`${baseURL}/api/v1/node-icon/${data.name}`}
-                                        alt='Notification'
+                                        alt='节点图标'
                                     />
                                 </div>
                             </Box>
@@ -217,7 +217,7 @@ const CanvasNode = ({ data }) => {
                                             textAlign: 'center'
                                         }}
                                     >
-                                        Inputs
+                                        输入
                                     </Typography>
                                 </Box>
                                 <Divider />
@@ -255,7 +255,7 @@ const CanvasNode = ({ data }) => {
                                 }}
                             >
                                 <Button sx={{ borderRadius: 25, width: '90%', mb: 2 }} variant='outlined' onClick={onDialogClicked}>
-                                    Additional Parameters
+                                    其他参数
                                 </Button>
                             </div>
                         )}
@@ -268,7 +268,7 @@ const CanvasNode = ({ data }) => {
                                         textAlign: 'center'
                                     }}
                                 >
-                                    Output
+                                    输出
                                 </Typography>
                             </Box>
                         )}

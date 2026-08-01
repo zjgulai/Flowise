@@ -392,8 +392,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
         setOpenDialog(true)
         setDialogProps({
             title: '您想构建什么？',
-            description:
-                'Enter your prompt to generate an agentflow. Performance may vary with different models. Only nodes and edges are generated, you will need to fill in the input fields for each node.'
+            description: '请输入需求以生成智能体流程。不同模型的生成效果可能不同；系统只生成节点和连线，您仍需填写各节点的输入字段。'
         })
     }
 
@@ -413,7 +412,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                 ref={anchorRef}
                 size='small'
                 color='primary'
-                aria-label='add'
+                aria-label='添加节点'
                 title='添加节点'
                 onClick={handleToggle}
             >
@@ -432,8 +431,8 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                     onClick={handleOpenDialog}
                     size='small'
                     color='primary'
-                    aria-label='generate'
-                    title='生成 Agent 流程'
+                    aria-label='生成智能体流程'
+                    title='生成智能体流程'
                 >
                     <IconSparkles />
                 </StyledFab>
@@ -511,7 +510,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                             }
                                             aria-describedby='search-helper-text'
                                             inputProps={{
-                                                'aria-label': 'weight'
+                                                'aria-label': '搜索节点'
                                             }}
                                         />
                                         {!isAgentCanvas && (
@@ -567,7 +566,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                         iconPosition='start'
                                                         sx={{ minHeight: '50px', height: '50px' }}
                                                         key={index}
-                                                        label={item}
+                                                        label={item === 'Utilities' ? '工具' : item}
                                                         {...a11yProps(index)}
                                                     ></Tab>
                                                 ))}
@@ -747,7 +746,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                                                                         fontWeight: 700
                                                                                                     }}
                                                                                                 >
-                                                                                                    By {node.author}
+                                                                                                    作者：{node.author}
                                                                                                 </span>
                                                                                             )}
                                                                                         </>

@@ -1,12 +1,16 @@
+// Jest's current JSX transform requires React in this module.
+// eslint-disable-next-line unused-imports/no-unused-imports
+import React from 'react'
 import PropTypes from 'prop-types'
 
 import { Box, Button, Card, IconButton, Stack, Typography, useTheme } from '@mui/material'
 import { IconCopy } from '@tabler/icons-react'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 const ErrorBoundary = ({ error, onBack, backLabel = '返回上一页' }) => {
     const theme = useTheme()
     const status = error?.response?.status ?? '未知'
-    const message = error?.response?.data?.message ?? error?.message ?? '发生未知错误'
+    const message = getErrorMessage(error, '页面加载失败，请稍后重试')
 
     const copyToClipboard = () => {
         const errorMessage = `状态码：${status}\n${message}`

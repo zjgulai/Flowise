@@ -44,7 +44,7 @@ import { initNode, showHideInputParams, getFileName } from '@/utils/genericHelpe
 import useNotifier from '@/utils/useNotifier'
 
 // const
-const steps = ['Embeddings', 'Vector Store', 'Record Manager']
+const steps = ['向量嵌入', '向量库', '记录管理器']
 
 const VectorStoreConfigure = () => {
     const navigate = useNavigate()
@@ -187,7 +187,7 @@ const VectorStoreConfigure = () => {
 
     const onSelectHistoryDetails = (history) => {
         const props = {
-            title: moment(history.date).format('DD-MMM-YYYY, hh:mm:ss A'),
+            title: moment(history.date).format('YYYY-MM-DD HH:mm:ss'),
             numAdded: history.result.numAdded,
             numUpdated: history.result.numUpdated,
             numSkipped: history.result.numSkipped,
@@ -358,7 +358,7 @@ const VectorStoreConfigure = () => {
     const getLoaderDisplayName = (loader) => {
         if (!loader) return ''
 
-        const loaderName = loader.loaderName || 'Unknown'
+        const loaderName = loader.loaderName || '未知加载器'
         let sourceName = ''
 
         // Prefer files.name when files array exists and has items
@@ -392,7 +392,7 @@ const VectorStoreConfigure = () => {
         if (saveVectorStoreConfigApi.data) {
             setLoading(false)
             enqueueSnackbar({
-                message: 'Configuration saved successfully',
+                message: '配置已保存',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'success',
@@ -518,7 +518,7 @@ const VectorStoreConfigure = () => {
                                     isBackButton={true}
                                     search={false}
                                     title={getViewHeaderTitle()}
-                                    description='Configure Embeddings, Vector Store and Record Manager'
+                                    description='配置向量嵌入、向量库和记录管理器'
                                     onBack={() => navigate(-1)}
                                 >
                                     {(Object.keys(selectedEmbeddingsProvider).length > 0 ||
@@ -533,7 +533,7 @@ const VectorStoreConfigure = () => {
                                             startIcon={<IconRefresh />}
                                             onClick={() => resetVectorStoreConfig()}
                                         >
-                                            Reset
+                                            重置
                                         </Button>
                                     )}
                                     {(Object.keys(selectedEmbeddingsProvider).length > 0 ||
@@ -548,7 +548,7 @@ const VectorStoreConfigure = () => {
                                             startIcon={<IconDeviceFloppy />}
                                             onClick={() => saveVectorStoreConfig()}
                                         >
-                                            Save Config
+                                            保存配置
                                         </Button>
                                     )}
                                     {Object.keys(selectedEmbeddingsProvider).length > 0 &&
@@ -566,7 +566,7 @@ const VectorStoreConfigure = () => {
                                                 startIcon={<IconRowInsertTop />}
                                                 onClick={() => tryAndInsertIntoStore()}
                                             >
-                                                Upsert
+                                                更新插入
                                             </Button>
                                         )}
                                     <IconButton onClick={showUpsertHistoryDrawer} size='small' color='inherit' title='更新历史'>
@@ -596,7 +596,7 @@ const VectorStoreConfigure = () => {
                                                     }
                                                 }}
                                             >
-                                                Select Embeddings
+                                                选择嵌入模型
                                             </Button>
                                         ) : (
                                             <Box>
@@ -636,7 +636,7 @@ const VectorStoreConfigure = () => {
                                                                                 borderRadius: '50%',
                                                                                 objectFit: 'contain'
                                                                             }}
-                                                                            alt={selectedEmbeddingsProvider.label ?? 'embeddings'}
+                                                                            alt={selectedEmbeddingsProvider.label ?? '嵌入模型'}
                                                                             src={`${baseURL}/api/v1/node-icon/${selectedEmbeddingsProvider?.name}`}
                                                                         />
                                                                     ) : (
@@ -712,7 +712,7 @@ const VectorStoreConfigure = () => {
                                                 }}
                                                 disabled={isVectorStoreDisabled()}
                                             >
-                                                Select Vector Store
+                                                选择向量库
                                             </Button>
                                         ) : (
                                             <Box>
@@ -754,7 +754,7 @@ const VectorStoreConfigure = () => {
                                                                                 borderRadius: '50%',
                                                                                 objectFit: 'contain'
                                                                             }}
-                                                                            alt={selectedVectorStoreProvider.label ?? 'embeddings'}
+                                                                            alt={selectedVectorStoreProvider.label ?? '向量库'}
                                                                             src={`${baseURL}/api/v1/node-icon/${selectedVectorStoreProvider?.name}`}
                                                                         />
                                                                     ) : (
@@ -836,9 +836,7 @@ const VectorStoreConfigure = () => {
                                                 }}
                                                 disabled={isRecordManagerDisabled()}
                                             >
-                                                {isRecordManagerUnavailable
-                                                    ? 'Record Manager is not applicable for selected Vector Store'
-                                                    : 'Select Record Manager'}
+                                                {isRecordManagerUnavailable ? '所选向量库不适用记录管理器' : '选择记录管理器'}
                                             </Button>
                                         ) : (
                                             <Box>
@@ -880,7 +878,7 @@ const VectorStoreConfigure = () => {
                                                                                 borderRadius: '50%',
                                                                                 objectFit: 'contain'
                                                                             }}
-                                                                            alt={selectedRecordManagerProvider.label ?? 'embeddings'}
+                                                                            alt={selectedRecordManagerProvider.label ?? '记录管理器'}
                                                                             src={`${baseURL}/api/v1/node-icon/${selectedRecordManagerProvider?.name}`}
                                                                         />
                                                                     ) : (

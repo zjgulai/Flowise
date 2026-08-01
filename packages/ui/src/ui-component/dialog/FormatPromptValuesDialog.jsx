@@ -28,7 +28,7 @@ const FormatPromptValuesDialog = ({ show, dialogProps, onChange, onCancel }) => 
             aria-describedby='alert-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
-                {dialogProps.inputParam.label ?? 'Format Prompt Values'}
+                {dialogProps.inputParam.label ?? '设置提示词变量值'}
             </DialogTitle>
             <DialogContent>
                 <PerfectScrollbar

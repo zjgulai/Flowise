@@ -99,7 +99,7 @@ const DocumentLoaderListDialog = ({ show, dialogProps, onCancel, onDocLoaderSele
                                         color: theme.palette.grey[900]
                                     }
                                 }}
-                                title='Clear Search'
+                                title='清除搜索'
                             >
                                 <IconX
                                     stroke={1.5}
@@ -113,7 +113,7 @@ const DocumentLoaderListDialog = ({ show, dialogProps, onCancel, onDocLoaderSele
                         }
                         aria-describedby='search-helper-text'
                         inputProps={{
-                            'aria-label': 'weight'
+                            'aria-label': '搜索文档加载器'
                         }}
                     />
                 </Box>

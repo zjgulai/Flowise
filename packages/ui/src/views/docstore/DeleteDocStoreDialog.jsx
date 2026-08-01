@@ -220,7 +220,7 @@ const DeleteDocStoreDialog = ({ show, dialogProps, onCancel, onDelete }) => {
                         </Stack>
                         <Stack direction='column'>
                             <TableContainer component={Paper} sx={{ maxHeight: '400px', overflow: 'auto' }}>
-                                <Table sx={{ minWidth: 650 }} aria-label='simple table'>
+                                <Table sx={{ minWidth: 650 }} aria-label='待删除的文档库数据'>
                                     <TableBody>
                                         <TableRow sx={{ '& td': { border: 0 } }}>
                                             <TableCell sx={{ pb: 0, pt: 0 }} colSpan={6}>

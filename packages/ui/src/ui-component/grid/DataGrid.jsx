@@ -2,7 +2,7 @@ import PropTypes from 'prop-types'
 import { useState, useCallback } from 'react'
 import { DataGrid as MUIDataGrid, GridActionsCellItem } from '@mui/x-data-grid'
 import { IconPlus } from '@tabler/icons-react'
-import { Button } from '@mui/material'
+import { Button, Typography } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { cloneDeep } from 'lodash'
 import { formatDataGridRows } from '@/utils/genericHelper'
@@ -35,6 +35,7 @@ const StyledDataGrid = styled(MUIDataGrid)(({ theme }) => ({
 
 export const DataGrid = ({ columns, rows, style, disabled = false, hideFooter = false, onChange }) => {
     const [rowValues, setRowValues] = useState(formatDataGridRows(rows) ?? [])
+    const [updateError, setUpdateError] = useState('')
 
     const deleteItem = useCallback(
         (id) => () => {
@@ -68,6 +69,7 @@ export const DataGrid = ({ columns, rows, style, disabled = false, hideFooter = 
     const colValues = addCols(columns)
 
     const handleProcessRowUpdate = (newRow) => {
+        setUpdateError('')
         let updatedRows = []
         setRowValues((prevRows) => {
             let allRows = [...cloneDeep(prevRows)]
@@ -112,15 +114,20 @@ export const DataGrid = ({ columns, rows, style, disabled = false, hideFooter = 
                             return !disabled
                         }}
                         hideFooter={hideFooter}
-                        onProcessRowUpdateError={(error) => console.error(error)}
+                        onProcessRowUpdateError={() => setUpdateError('表格更新失败，请检查输入后重试')}
                         rows={rowValues}
                         columns={colValues}
                     />
                 </div>
             )}
+            {updateError && (
+                <Typography role='alert' color='error' variant='caption' sx={{ mt: 1 }}>
+                    {updateError}
+                </Typography>
+            )}
             {!disabled && (
                 <Button sx={{ mt: 1 }} variant='outlined' onClick={addNewRow} startIcon={<IconPlus />}>
-                    Add Item
+                    添加项目
                 </Button>
             )}
         </>

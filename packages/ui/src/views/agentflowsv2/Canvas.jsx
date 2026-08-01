@@ -57,6 +57,7 @@ import {
 } from '@/utils/genericHelper'
 import useNotifier from '@/utils/useNotifier'
 import { usePrompt } from '@/utils/usePrompt'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // const
 import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
@@ -77,7 +78,8 @@ const AgentflowCanvas = () => {
     const URLpath = document.location.pathname.toString().split('/')
     const chatflowId =
         URLpath[URLpath.length - 1] === 'canvas' || URLpath[URLpath.length - 1] === 'agentcanvas' ? '' : URLpath[URLpath.length - 1]
-    const canvasTitle = URLpath.includes('agentcanvas') ? 'Agent' : 'Chatflow'
+    const isAgentCanvas = URLpath.includes('agentcanvas')
+    const canvasTitle = isAgentCanvas ? '智能体流程' : '对话流程'
 
     const { confirm } = useConfirm()
 
@@ -179,15 +181,15 @@ const AgentflowCanvas = () => {
             setNodes(nodes)
             setEdges(flowData.edges || [])
             setTimeout(() => setDirty(), 0)
-        } catch (e) {
-            console.error(e)
+        } catch {
+            errorFailed('导入流程失败，请检查文件格式')
         }
     }
 
     const handleDeleteFlow = async () => {
         const confirmPayload = {
             title: `删除`,
-            description: `删除 ${canvasTitle === 'Agent' ? '智能体' : '对话流程'} ${chatflow.name}？`,
+            description: `删除${canvasTitle} ${chatflow.name}？`,
             confirmButtonName: '删除',
             cancelButtonName: '取消'
         }
@@ -200,7 +202,7 @@ const AgentflowCanvas = () => {
                 navigate('/agentflows')
             } catch (error) {
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: getErrorMessage(error, '删除流程失败，请稍后重试'),
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -319,7 +321,7 @@ const AgentflowCanvas = () => {
 
             if (nodeData.name === 'startAgentflow' && nodes.find((node) => node.data.name === 'startAgentflow')) {
                 enqueueSnackbar({
-                    message: 'Only one start node is allowed',
+                    message: '仅允许添加一个开始节点',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -373,7 +375,7 @@ const AgentflowCanvas = () => {
                     // We can't have nested iteration nodes
                     if (nodeData.name === 'iterationAgentflow') {
                         enqueueSnackbar({
-                            message: 'Nested iteration node is not supported yet',
+                            message: '暂不支持嵌套迭代节点',
                             options: {
                                 key: new Date().getTime() + Math.random(),
                                 variant: 'error',
@@ -391,7 +393,7 @@ const AgentflowCanvas = () => {
                     // We can't have human input node inside iteration node
                     if (nodeData.name === 'humanInputAgentflow') {
                         enqueueSnackbar({
-                            message: 'Human input node is not supported inside Iteration node',
+                            message: '迭代节点内暂不支持人工输入节点',
                             options: {
                                 key: new Date().getTime() + Math.random(),
                                 variant: 'error',
@@ -487,7 +489,7 @@ const AgentflowCanvas = () => {
     const saveChatflowSuccess = () => {
         dispatch({ type: REMOVE_DIRTY })
         enqueueSnackbar({
-            message: `${canvasTitle} saved`,
+            message: `${canvasTitle}已保存`,
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'success',
@@ -546,7 +548,7 @@ const AgentflowCanvas = () => {
             setEdges(initialFlow.edges || [])
             dispatch({ type: SET_CHATFLOW, chatflow })
         } else if (getSpecificChatflowApi.error) {
-            errorFailed(`Failed to retrieve ${canvasTitle}: ${getSpecificChatflowApi.error.response.data.message}`)
+            errorFailed(getErrorMessage(getSpecificChatflowApi.error, '获取流程失败，请稍后重试'))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -560,7 +562,7 @@ const AgentflowCanvas = () => {
             saveChatflowSuccess()
             window.history.replaceState(state, null, `/v2/agentcanvas/${chatflow.id}`)
         } else if (createNewChatflowApi.error) {
-            errorFailed(`Failed to save ${canvasTitle}: ${createNewChatflowApi.error.response.data.message}`)
+            errorFailed(getErrorMessage(createNewChatflowApi.error, '保存流程失败，请稍后重试'))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -572,7 +574,7 @@ const AgentflowCanvas = () => {
             dispatch({ type: SET_CHATFLOW, chatflow: updateChatflowApi.data })
             saveChatflowSuccess()
         } else if (updateChatflowApi.error) {
-            errorFailed(`Failed to save ${canvasTitle}: ${updateChatflowApi.error.response.data.message}`)
+            errorFailed(getErrorMessage(updateChatflowApi.error, '保存流程失败，请稍后重试'))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -604,7 +606,7 @@ const AgentflowCanvas = () => {
             dispatch({
                 type: SET_CHATFLOW,
                 chatflow: {
-                    name: `Untitled ${canvasTitle}`
+                    name: `未命名${canvasTitle}`
                 }
             })
         }

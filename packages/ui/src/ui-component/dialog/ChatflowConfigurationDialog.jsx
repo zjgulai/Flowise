@@ -123,10 +123,10 @@ const CONFIGURATION_GROUPS = [
                 description: '自定义 JavaScript 后处理'
             },
             {
-                label: 'MCP Server',
+                label: 'MCP 服务器',
                 id: 'mcpServer',
                 icon: IconServer,
-                description: 'Model Context Protocol server'
+                description: '模型上下文协议（MCP）服务器'
             },
             {
                 label: '覆盖配置',
@@ -442,7 +442,7 @@ const ChatflowConfigurationDialog = ({ show, isAgentCanvas, dialogProps, onCance
                                                             color: isDark ? '#4ade80' : '#16a34a'
                                                         }}
                                                     >
-                                                        ON
+                                                        开启
                                                     </Box>
                                                 )}
                                             </Box>

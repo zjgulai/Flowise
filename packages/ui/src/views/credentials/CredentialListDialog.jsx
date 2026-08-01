@@ -86,7 +86,7 @@ const CredentialListDialog = ({ show, dialogProps, onCancel, onCredentialSelecte
                                         color: theme.palette.grey[900]
                                     }
                                 }}
-                                title='Clear Search'
+                                title='清除搜索'
                             >
                                 <IconX
                                     stroke={1.5}
@@ -100,7 +100,7 @@ const CredentialListDialog = ({ show, dialogProps, onCancel, onCredentialSelecte
                         }
                         aria-describedby='search-helper-text'
                         inputProps={{
-                            'aria-label': 'weight'
+                            'aria-label': '搜索凭据'
                         }}
                     />
                 </Box>

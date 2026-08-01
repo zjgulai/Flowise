@@ -321,7 +321,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
         // Show success message
         dispatch(
             enqueueSnackbarAction({
-                message: 'ID copied to clipboard',
+                message: 'ID 已复制到剪贴板',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'success',
@@ -645,7 +645,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
             // Show success message
             dispatch(
                 enqueueSnackbarAction({
-                    message: newIsPublic ? 'Execution shared publicly' : 'Execution is no longer public',
+                    message: newIsPublic ? '执行记录已公开分享' : '执行记录已取消公开分享',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -747,7 +747,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
                                 sx={{ pl: 1 }}
                                 icon={<IconExternalLink size={15} />}
                                 variant='outlined'
-                                label={localMetadata?.agentflow?.name || localMetadata?.agentflow?.id || 'Go to AgentFlow'}
+                                label={localMetadata?.agentflow?.name || localMetadata?.agentflow?.id || '前往 Agentflow'}
                                 className={'button'}
                                 onClick={() => window.open(`/v2/agentcanvas/${localMetadata?.agentflow?.id}`, '_blank')}
                             />
@@ -755,7 +755,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
 
                         {!isPublic && (
                             <Tooltip
-                                title={`Execution ID: ${localMetadata?.id || ''}`}
+                                title={`执行 ID：${localMetadata?.id || ''}`}
                                 placement='top'
                                 disableHoverListener={!localMetadata?.id}
                             >
@@ -763,7 +763,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
                                     sx={{ ml: 1, pl: 1 }}
                                     icon={<IconCopy size={15} />}
                                     variant='outlined'
-                                    label={copied ? 'Copied!' : 'Copy ID'}
+                                    label={copied ? '已复制' : '复制 ID'}
                                     className={'button'}
                                     onClick={copyToClipboard}
                                 />
@@ -782,7 +782,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
                                         )
                                     }
                                     variant='outlined'
-                                    label={updateExecutionApi.loading ? 'Updating...' : 'Share'}
+                                    label={updateExecutionApi.loading ? '正在更新…' : '公开分享'}
                                     className={'button'}
                                     onClick={() => onSharePublicly()}
                                     disabled={updateExecutionApi.loading}
@@ -801,7 +801,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
                                     )
                                 }
                                 variant='outlined'
-                                label={updateExecutionApi.loading ? 'Updating...' : 'Public'}
+                                label={updateExecutionApi.loading ? '正在更新…' : '已公开'}
                                 className={'button'}
                                 onClick={() => setShowShareDialog(true)}
                                 disabled={updateExecutionApi.loading}
@@ -810,7 +810,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
 
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', alignContent: 'center' }}>
                             <Typography sx={{ flex: 1, mt: 1 }} color='text.primary'>
-                                {metadata?.updatedDate ? moment(metadata.updatedDate).format('MMM D, YYYY h:mm A') : 'N/A'}
+                                {metadata?.updatedDate ? moment(metadata.updatedDate).format('YYYY-MM-DD HH:mm:ss') : '暂无时间'}
                             </Typography>
                             <IconButton
                                 onClick={() => onRefresh(localMetadata?.id)}
@@ -856,7 +856,7 @@ export const ExecutionDetails = ({ open, isPublic, execution, metadata, onClose,
                         onProceedSuccess={onProceedSuccess}
                     />
                 ) : (
-                    <Typography color='text.secondary'>No data available for this item</Typography>
+                    <Typography color='text.secondary'>当前条目暂无数据</Typography>
                 )}
             </Box>
         </Box>

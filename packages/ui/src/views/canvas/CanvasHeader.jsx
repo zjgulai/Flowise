@@ -38,6 +38,7 @@ import useApi from '@/hooks/useApi'
 
 // utils
 import { generateExportFlowData } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import { uiBaseURL } from '@/store/constant'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction, SET_CHATFLOW } from '@/store/actions'
 
@@ -149,7 +150,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
 
     const [savePermission, setSavePermission] = useState(isAgentCanvas ? 'agentflows:create' : 'chatflows:create')
 
-    const title = isAgentCanvas ? 'Agents' : 'Chatflow'
+    const title = isAgentCanvas ? '智能体流程' : '对话流程'
 
     const updateChatflowApi = useApi(chatflowsApi.updateChatflow)
     const getScheduleStatusApi = useApi(chatflowsApi.getScheduleStatus)
@@ -238,8 +239,11 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                 } else {
                     window.open(`${uiBaseURL}/canvas`, '_blank')
                 }
-            } catch (e) {
-                console.error(e)
+            } catch (error) {
+                enqueueSnackbar({
+                    message: getErrorMessage(error, '复制流程失败，请检查流程数据后重试'),
+                    options: { variant: 'error' }
+                })
             }
         } else if (setting === 'exportChatflow') {
             try {
@@ -255,8 +259,11 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                 linkElement.setAttribute('href', dataUri)
                 linkElement.setAttribute('download', exportFileDefaultName)
                 linkElement.click()
-            } catch (e) {
-                console.error(e)
+            } catch (error) {
+                enqueueSnackbar({
+                    message: getErrorMessage(error, '导出流程失败，请检查流程数据后重试'),
+                    options: { variant: 'error' }
+                })
             }
         }
     }
@@ -287,8 +294,12 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                     break
                 }
             }
-        } catch (e) {
-            console.error(e)
+        } catch (error) {
+            enqueueSnackbar({
+                message: getErrorMessage(error, '无法读取流程文件配置，请检查流程数据'),
+                options: { variant: 'error' }
+            })
+            return
         }
 
         // If sessionId memory, isSessionMemory = true
@@ -302,8 +313,12 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                     break
                 }
             }
-        } catch (e) {
-            console.error(e)
+        } catch (error) {
+            enqueueSnackbar({
+                message: getErrorMessage(error, '无法读取流程会话配置，请检查流程数据'),
+                options: { variant: 'error' }
+            })
+            return
         }
 
         setAPIDialogProps({
@@ -385,7 +400,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
     useEffect(() => {
         if (toggleScheduleEnabledApi.error) {
             enqueueSnackbar({
-                message: String(toggleScheduleEnabledApi.error?.message || toggleScheduleEnabledApi.error || '切换调度失败'),
+                message: getErrorMessage(toggleScheduleEnabledApi.error, '切换调度失败，请稍后重试'),
                 options: { variant: 'error' }
             })
         }
@@ -571,7 +586,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                         </Tooltip>
                     )}
                     {chatflow?.id && (
-                        <ButtonBase title='API Endpoint' sx={{ borderRadius: '50%', mr: 2 }}>
+                        <ButtonBase title='API 端点' sx={{ borderRadius: '50%', mr: 2 }}>
                             <Avatar
                                 variant='rounded'
                                 sx={{
@@ -593,7 +608,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                         </ButtonBase>
                     )}
                     <Available permission={savePermission}>
-                        <ButtonBase title={`Save ${title}`} sx={{ borderRadius: '50%', mr: 2 }}>
+                        <ButtonBase title={`保存${title}`} sx={{ borderRadius: '50%', mr: 2 }}>
                             <Avatar
                                 variant='rounded'
                                 sx={{

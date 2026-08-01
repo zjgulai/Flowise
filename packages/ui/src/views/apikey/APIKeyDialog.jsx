@@ -33,12 +33,58 @@ import useApi from '@/hooks/useApi'
 import { useConfig } from '@/store/context/ConfigContext'
 
 // utils
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 
 // const
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 
 import './APIKeyDialog.css'
+
+const permissionCategoryLabels = {
+    chatflows: '聊天流',
+    agentflows: '智能体流',
+    tools: '工具',
+    assistants: '助手',
+    credentials: '凭据',
+    variables: '变量',
+    apikeys: 'API 密钥',
+    documentStores: '文档库',
+    datasets: '数据集',
+    executions: '执行记录',
+    evaluators: '评估器',
+    evaluations: '评估',
+    templates: '模板',
+    logs: '日志',
+    loginActivity: '登录活动'
+}
+
+const permissionValueLabels = {
+    View: '查看',
+    Create: '创建',
+    Update: '更新',
+    Duplicate: '复制',
+    Delete: '删除',
+    Export: '导出',
+    Import: '导入',
+    'Edit Configuration': '编辑配置',
+    'Allowed Domains': '允许的域名',
+    Share: '分享',
+    'Delete Document Store': '删除文档库',
+    'Add Document Loader': '添加文档加载器',
+    'Delete Document Loader': '删除文档加载器',
+    'Preview & Process Document Chunks': '预览并处理文档分块',
+    'Upsert Config': '更新配置',
+    'Run Again': '再次运行',
+    'View Marketplace Templates': '查看市场模板',
+    'View Custom Templates': '查看自定义模板',
+    'Delete Custom Template': '删除自定义模板',
+    'Export Tool as Template': '将工具导出为模板',
+    'Export Flow as Template': '将流程导出为模板',
+    'Share Custom Templates': '分享自定义模板',
+    'View Logs': '查看日志',
+    'View Login Activity': '查看登录活动'
+}
 
 const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
     const portalElement = document.getElementById('portal')
@@ -225,7 +271,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
             })
             if (createResp.data) {
                 enqueueSnackbar({
-                    message: 'New API key added',
+                    message: '已添加新 API 密钥',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -241,9 +287,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
         } catch (error) {
             if (setError) setError(error)
             enqueueSnackbar({
-                message: `Failed to add new API key: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `添加 API 密钥失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -278,7 +322,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'API Key saved',
+                    message: 'API 密钥已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -294,9 +338,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
         } catch (error) {
             if (setError) setError(error)
             enqueueSnackbar({
-                message: `Failed to save API key: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存 API 密钥失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -354,7 +396,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
             <DialogContent sx={{ backgroundColor: 'transparent' }}>
                 {dialogProps.type === 'EDIT' && (
                     <Box sx={{ p: 2 }}>
-                        <Typography variant='overline'>API Key</Typography>
+                        <Typography variant='overline'>API 密钥</Typography>
                         <Stack direction='row' sx={{ mb: 1 }}>
                             <Typography
                                 sx={{
@@ -369,7 +411,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
                                 {dialogProps.key.apiKey}
                             </Typography>
                             <IconButton
-                                title='Copy API Key'
+                                title='复制 API 密钥'
                                 color='success'
                                 onClick={(event) => {
                                     navigator.clipboard.writeText(dialogProps.key.apiKey)
@@ -395,7 +437,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
                                 }}
                             >
                                 <Typography variant='h6' sx={{ pl: 1, pr: 1, color: 'white', background: theme.palette.success.dark }}>
-                                    Copied!
+                                    已复制
                                 </Typography>
                             </Popover>
                         </Stack>
@@ -405,7 +447,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
                 <div className='apikey-editor'>
                     <Box>
                         <Typography sx={{ mb: 1 }} variant='h5'>
-                            <span style={{ color: 'red' }}>*&nbsp;&nbsp;</span>Key Name
+                            <span style={{ color: 'red' }}>*&nbsp;&nbsp;</span>密钥名称
                         </Typography>
                         <OutlinedInput
                             id='keyName'
@@ -420,21 +462,16 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
                     </Box>
                     <div className='permissions-container'>
                         <p>
-                            <span style={{ color: 'red' }}>*&nbsp;&nbsp;</span>Permissions
+                            <span style={{ color: 'red' }}>*&nbsp;&nbsp;</span>权限
                         </p>
                         <div className='permissions-list-wrapper'>
                             {permissions &&
                                 Object.keys(permissions).map((category) => (
                                     <div key={category} className='permission-category'>
                                         <div className='category-header'>
-                                            <h3>
-                                                {category
-                                                    .replace(/([A-Z])/g, ' $1')
-                                                    .trim()
-                                                    .toUpperCase()}
-                                            </h3>
+                                            <h3>{permissionCategoryLabels[category] ?? category}</h3>
                                             <button type='button' onClick={() => handleSelectAll(category)}>
-                                                Select All
+                                                全选
                                             </button>
                                         </div>
                                         <div className='permissions-list'>
@@ -450,7 +487,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
                                                             disabled={isCheckboxDisabled(selectedPermissions, category, permission.key)}
                                                             onChange={() => handlePermissionChange(category, permission.key)}
                                                         />
-                                                        {permission.value}
+                                                        {permissionValueLabels[permission.value] ?? permission.value}
                                                     </label>
                                                 </div>
                                             ))}
@@ -463,7 +500,7 @@ const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
             </DialogContent>
             <DialogActions>
                 <Button variant='outlined' onClick={onCancel}>
-                    Cancel
+                    取消
                 </Button>
                 <StyledButton
                     disabled={checkDisabled()}

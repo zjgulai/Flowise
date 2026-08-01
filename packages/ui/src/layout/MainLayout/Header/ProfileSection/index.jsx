@@ -52,28 +52,28 @@ import exportImportApi from '@/api/exportimport'
 
 // Hooks
 import useApi from '@/hooks/useApi'
-import { getErrorMessage } from '@/utils/errorHandler'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
-const dataToExport = [
-    'Agentflows',
-    'Agentflows V2',
-    'Assistants Custom',
-    'Assistants OpenAI',
-    'Assistants Azure',
-    'Chatflows',
-    'Chat Messages',
-    'Chat Feedbacks',
-    'Custom Templates',
-    'Document Stores',
-    'Executions',
-    'Tools',
-    'Variables'
+const exportOptions = [
+    { value: 'Agentflows', label: '智能体流程' },
+    { value: 'Agentflows V2', label: '智能体流程 V2' },
+    { value: 'Assistants Custom', label: '自定义助手' },
+    { value: 'Assistants OpenAI', label: 'OpenAI 助手' },
+    { value: 'Assistants Azure', label: 'Azure 助手' },
+    { value: 'Chatflows', label: '对话流程' },
+    { value: 'Chat Messages', label: '聊天消息' },
+    { value: 'Chat Feedbacks', label: '聊天反馈' },
+    { value: 'Custom Templates', label: '自定义模板' },
+    { value: 'Document Stores', label: '文档库' },
+    { value: 'Executions', label: '执行记录' },
+    { value: 'Tools', label: '工具' },
+    { value: 'Variables', label: '变量' }
 ]
 
 const ExportDialog = ({ show, onCancel, onExport }) => {
     const portalElement = document.getElementById('portal')
 
-    const [selectedData, setSelectedData] = useState(dataToExport)
+    const [selectedData, setSelectedData] = useState(exportOptions.map(({ value }) => value))
     const [isExporting, setIsExporting] = useState(false)
 
     useEffect(() => {
@@ -96,7 +96,7 @@ const ExportDialog = ({ show, onCancel, onExport }) => {
             aria-describedby='export-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='export-dialog-title'>
-                {!isExporting ? 'Select Data to Export' : 'Exporting..'}
+                {!isExporting ? '选择要导出的数据' : '正在导出…'}
             </DialogTitle>
             <DialogContent>
                 {!isExporting && (
@@ -108,24 +108,24 @@ const ExportDialog = ({ show, onCancel, onExport }) => {
                             gap: 1
                         }}
                     >
-                        {dataToExport.map((data, index) => (
+                        {exportOptions.map(({ value, label }, index) => (
                             <FormControlLabel
                                 key={index}
                                 size='small'
                                 control={
                                     <Checkbox
                                         color='success'
-                                        checked={selectedData.includes(data)}
+                                        checked={selectedData.includes(value)}
                                         onChange={(event) => {
                                             setSelectedData(
                                                 event.target.checked
-                                                    ? [...selectedData, data]
-                                                    : selectedData.filter((item) => item !== data)
+                                                    ? [...selectedData, value]
+                                                    : selectedData.filter((item) => item !== value)
                                             )
                                         }}
                                     />
                                 }
-                                label={data}
+                                label={label}
                             />
                         ))}
                     </Stack>
@@ -140,9 +140,9 @@ const ExportDialog = ({ show, onCancel, onExport }) => {
                                     width: 'auto'
                                 }}
                                 src={ExportingGIF}
-                                alt='ExportingGIF'
+                                alt='正在导出数据'
                             />
-                            <span>Exporting data might takes a while</span>
+                            <span>数据导出可能需要一些时间，请耐心等待</span>
                         </div>
                     </Box>
                 )}
@@ -158,7 +158,7 @@ const ExportDialog = ({ show, onCancel, onExport }) => {
                             onExport(selectedData)
                         }}
                     >
-                        Export
+                        导出
                     </Button>
                 </DialogActions>
             )}
@@ -180,7 +180,7 @@ const ImportDialog = ({ show }) => {
     const component = show ? (
         <Dialog open={show} fullWidth maxWidth='sm' aria-labelledby='import-dialog-title' aria-describedby='import-dialog-description'>
             <DialogTitle sx={{ fontSize: '1rem' }} id='import-dialog-title'>
-                Importing...
+                正在导入…
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ height: 'auto', display: 'flex', justifyContent: 'center', mb: 3 }}>
@@ -192,9 +192,9 @@ const ImportDialog = ({ show }) => {
                                 width: 'auto'
                             }}
                             src={ExportingGIF}
-                            alt='ImportingGIF'
+                            alt='正在导入数据'
                         />
-                        <span>Importing data might takes a while</span>
+                        <span>数据导入可能需要一些时间，请耐心等待</span>
                     </div>
                 </Box>
             </DialogContent>
@@ -287,7 +287,7 @@ const ProfileSection = ({ handleLogout }) => {
         setImportDialogOpen(false)
         dispatch({ type: REMOVE_DIRTY })
         enqueueSnackbar({
-            message: `Import All successful`,
+            message: '全部数据导入成功',
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'success',
@@ -334,12 +334,8 @@ const ProfileSection = ({ handleLogout }) => {
     useEffect(() => {
         if (importAllApi.error) {
             setImportDialogOpen(false)
-            let errMsg = 'Invalid Imported File'
-            let error = importAllApi.error
-            if (error?.response?.data) {
-                errMsg = typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-            }
-            errorFailed(`Failed to import: ${errMsg}`)
+            const errMsg = getErrorMessage(importAllApi.error, '导入文件无效')
+            errorFailed(`导入失败：${errMsg}`)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [importAllApi.error])
@@ -358,7 +354,7 @@ const ProfileSection = ({ handleLogout }) => {
                 linkElement.setAttribute('download', exportAllApi.data.FileDefaultName)
                 linkElement.click()
             } catch (error) {
-                errorFailed(`Failed to export all: ${getErrorMessage(error)}`)
+                errorFailed(`导出失败：${getErrorMessage(error)}`)
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -367,12 +363,8 @@ const ProfileSection = ({ handleLogout }) => {
     useEffect(() => {
         if (exportAllApi.error) {
             setExportDialogOpen(false)
-            let errMsg = 'Internal Server Error'
-            let error = exportAllApi.error
-            if (error?.response?.data) {
-                errMsg = typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-            }
-            errorFailed(`Failed to export: ${errMsg}`)
+            const errMsg = getErrorMessage(exportAllApi.error, '服务器内部错误')
+            errorFailed(`导出失败：${errMsg}`)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [exportAllApi.error])
@@ -386,7 +378,14 @@ const ProfileSection = ({ handleLogout }) => {
 
     return (
         <>
-            <ButtonBase ref={anchorRef} sx={{ borderRadius: '12px', overflow: 'hidden' }}>
+            <ButtonBase
+                ref={anchorRef}
+                sx={{ borderRadius: '12px', overflow: 'hidden' }}
+                onClick={handleToggle}
+                aria-label='打开账户菜单'
+                aria-haspopup='menu'
+                aria-expanded={open ? 'true' : undefined}
+            >
                 <Avatar
                     variant='rounded'
                     sx={{
@@ -400,7 +399,6 @@ const ProfileSection = ({ handleLogout }) => {
                             color: theme.palette.secondary.light
                         }
                     }}
-                    onClick={handleToggle}
                     color='inherit'
                 >
                     <IconSettings stroke={1.5} size='1.3rem' />
@@ -438,7 +436,7 @@ const ProfileSection = ({ handleLogout }) => {
                                     ) : (
                                         <Box sx={{ p: 2 }}>
                                             <Typography component='span' variant='h4'>
-                                                User
+                                                用户
                                             </Typography>
                                         </Box>
                                     )}
@@ -509,7 +507,7 @@ const ProfileSection = ({ handleLogout }) => {
                                                         <ListItemIcon>
                                                             <IconUserEdit stroke={1.5} size='1.3rem' />
                                                         </ListItemIcon>
-                                                        <ListItemText primary={<Typography variant='body2'>Account Settings</Typography>} />
+                                                        <ListItemText primary={<Typography variant='body2'>账户设置</Typography>} />
                                                     </ListItemButton>
                                                 )}
                                                 <ListItemButton

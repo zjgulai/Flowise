@@ -28,8 +28,8 @@ const CredentialInputHandler = ({ inputParam, data, disabled = false, onReveal }
             value,
             inputParam,
             disabled,
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setExpandDialogProps(dialogProp)
         setShowExpandDialog(true)

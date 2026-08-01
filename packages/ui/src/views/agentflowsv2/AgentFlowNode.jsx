@@ -208,7 +208,7 @@ const AgentFlowNode = ({ data }) => {
     return (
         <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
             <StyledNodeToolbar>
-                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
+                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='基础操作按钮组'>
                     {data.name !== 'startAgentflow' && (
                         <IconButton
                             size={'small'}
@@ -277,7 +277,7 @@ const AgentFlowNode = ({ data }) => {
                 border={false}
             >
                 {data && data.status && (
-                    <Tooltip title={data.status === 'ERROR' ? data.error || 'Error' : ''}>
+                    <Tooltip title={data.status === 'ERROR' ? data.error || '错误' : ''}>
                         <Avatar
                             variant='rounded'
                             sx={{

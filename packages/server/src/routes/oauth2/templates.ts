@@ -26,6 +26,8 @@ const serializeForInlineScript = (value: unknown): string =>
         return replacements[character]
     })
 
+const OAUTH2_ERROR_MESSAGE = '授权未完成，请返回应用后重试。'
+
 export interface OAuth2PageOptions {
     title: string
     statusIcon: string
@@ -52,7 +54,7 @@ export const generateOAuth2ResponsePage = (options: OAuth2PageOptions): string =
 
     return `
         <!DOCTYPE html>
-        <html>
+        <html lang="zh-CN">
         <head>
             <title>${safeTitle}</title>
             <style>
@@ -105,8 +107,8 @@ export const generateOAuth2ResponsePage = (options: OAuth2PageOptions): string =
                     if (window.opener) {
                         window.opener.postMessage(${postMessagePayload}, ${postMessageOrigin});
                     }
-                } catch (error) {
-                    console.log('Could not notify parent window:', error);
+                } catch {
+                    // The parent window may have closed before this callback completed.
                 }
 
                 // Close window after delay
@@ -121,34 +123,32 @@ export const generateOAuth2ResponsePage = (options: OAuth2PageOptions): string =
 
 export const generateSuccessPage = (credentialId: string): string => {
     return generateOAuth2ResponsePage({
-        title: 'OAuth2 Authorization Success',
+        title: 'OAuth2 授权成功',
         statusIcon: '✓',
-        statusText: 'Authorization Successful',
+        statusText: '授权成功',
         statusColor: '#4caf50',
-        message: 'You can close this window now.',
+        message: '授权已完成，您现在可以关闭此窗口。',
         postMessageType: 'OAUTH2_SUCCESS',
         postMessageData: {
             credentialId,
             success: true,
-            message: 'OAuth2 authorization completed successfully'
+            message: 'OAuth2 授权已成功完成'
         },
         autoCloseDelay: 1000
     })
 }
 
-export const generateErrorPage = (error: string, message: string, details?: string): string => {
+export const generateErrorPage = (_error: string, _message: string, _details?: string): string => {
     return generateOAuth2ResponsePage({
-        title: 'OAuth2 Authorization Error',
+        title: 'OAuth2 授权失败',
         statusIcon: '✗',
-        statusText: 'Authorization Failed',
+        statusText: '授权失败',
         statusColor: '#f44336',
-        message,
-        details,
+        message: OAUTH2_ERROR_MESSAGE,
         postMessageType: 'OAUTH2_ERROR',
         postMessageData: {
             success: false,
-            message,
-            error
+            message: OAUTH2_ERROR_MESSAGE
         },
         autoCloseDelay: 3000
     })

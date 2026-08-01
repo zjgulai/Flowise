@@ -102,7 +102,7 @@ export const SensitiveInput = ({ inputParam, value, onChange, disabled = false, 
                                     edge='end'
                                     onClick={handleToggle}
                                     onMouseDown={(e) => e.preventDefault()}
-                                    aria-label={isVisible ? 'Hide' : 'Show'}
+                                    aria-label={isVisible ? '隐藏' : '显示'}
                                     disabled={isRevealing}
                                 >
                                     {isRevealing ? (
@@ -121,7 +121,7 @@ export const SensitiveInput = ({ inputParam, value, onChange, disabled = false, 
             </FormControl>
             {isUrl && onReveal && (
                 <Typography variant='caption' sx={{ color: 'text.secondary', mt: 0.5, display: 'block' }}>
-                    Click the eye icon to reveal the value before editing.
+                    编辑前请先点击眼睛图标显示当前值。
                 </Typography>
             )}
         </>

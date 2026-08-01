@@ -294,7 +294,7 @@ export const ConfigInput = ({ data, inputParam, disabled = false, arrayIndex = n
                     <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ background: 'transparent' }}>
                         <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
                             <IconSettings stroke={1.5} size='1.3rem' />
-                            <Typography sx={{ ml: 1 }}>{selectedComponentNodeData?.label} Parameters</Typography>
+                            <Typography sx={{ ml: 1 }}>{selectedComponentNodeData?.label} 参数</Typography>
                             <div style={{ flexGrow: 1 }}></div>
                             {selectedComponentNodeData?.warning && (
                                 <Tooltip

@@ -99,7 +99,7 @@ const ComponentsListDialog = ({ show, dialogProps, onCancel, apiCall, onSelected
                                         color: theme.palette.grey[900]
                                     }
                                 }}
-                                title='Clear Search'
+                                title='清除搜索'
                             >
                                 <IconX
                                     stroke={1.5}
@@ -113,7 +113,7 @@ const ComponentsListDialog = ({ show, dialogProps, onCancel, apiCall, onSelected
                         }
                         aria-describedby='search-helper-text'
                         inputProps={{
-                            'aria-label': 'weight'
+                            'aria-label': '搜索组件'
                         }}
                     />
                 </Box>

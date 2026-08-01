@@ -108,7 +108,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
 
     const onSubmitResponse = async (type, feedback = '') => {
         setIsLoading(true)
-        setLoadingMessage(`Submitting feedback...`)
+        setLoadingMessage('正在提交反馈…')
         const params = {
             question: feedback ? feedback : type.charAt(0).toUpperCase() + type.slice(1),
             chatId: metadata?.sessionId,
@@ -126,12 +126,11 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                 response = await predictionApi.sendMessageAndGetPrediction(metadata?.agentflowId, params)
             }
             if (response && response.data) {
-                enqueueSnackbar('Successfully submitted response', { variant: 'success' })
+                enqueueSnackbar('响应已提交', { variant: 'success' })
                 if (onProceedSuccess) onProceedSuccess(response.data)
             }
         } catch (error) {
-            console.error(error)
-            enqueueSnackbar(error?.message || 'Failed to submit response', { variant: 'error' })
+            enqueueSnackbar('提交响应失败，请稍后重试', { variant: 'error' })
         } finally {
             setIsLoading(false)
             setLoadingMessage('')
@@ -193,7 +192,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
             link.click()
             link.remove()
         } catch (error) {
-            console.error('Download failed:', error)
+            enqueueSnackbar('文件下载失败，请稍后重试', { variant: 'error' })
         }
     }
 
@@ -213,9 +212,9 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                         }}
                     >
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant='body1'>Else condition fulfilled</Typography>
+                            <Typography variant='body1'>已满足“否则”条件</Typography>
                             <Chip
-                                label={condition.isFulfilled ? 'Fulfilled' : 'Not Fulfilled'}
+                                label={condition.isFulfilled ? '已满足' : '未满足'}
                                 size='small'
                                 sx={{ color: 'white', backgroundColor: theme.palette.success.dark }}
                                 variant='filled'
@@ -236,9 +235,9 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                     }}
                 >
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                        <Typography variant='subtitle2'>Condition {index}</Typography>
+                        <Typography variant='subtitle2'>条件 {index + 1}</Typography>
                         <Chip
-                            label={condition.isFulfilled ? 'Fulfilled' : 'Not Fulfilled'}
+                            label={condition.isFulfilled ? '已满足' : '未满足'}
                             size='small'
                             variant='filled'
                             sx={{ color: 'white', backgroundColor: theme.palette.success.dark }}
@@ -310,7 +309,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                 {data.output && data.output.timeMetadata && data.output.timeMetadata.delta && (
                     <Chip
                         icon={<IconClock size={17} />}
-                        label={`${(data.output.timeMetadata.delta / 1000).toFixed(2)} seconds`}
+                        label={`${(data.output.timeMetadata.delta / 1000).toFixed(2)} 秒`}
                         variant='contained'
                         color='secondary'
                         size='small'
@@ -320,7 +319,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                 {data.output && data.output.usageMetadata && data.output.usageMetadata.total_tokens && (
                     <Chip
                         icon={<IconCoins size={17} />}
-                        label={`${data.output.usageMetadata.total_tokens} tokens`}
+                        label={`${data.output.usageMetadata.total_tokens} 个令牌`}
                         variant='contained'
                         color='primary'
                         size='small'
@@ -364,7 +363,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                         value='rendered'
                         title='已渲染'
                     >
-                        Rendered
+                        已渲染
                     </ToggleButton>
                     <ToggleButton
                         sx={{
@@ -376,7 +375,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                         value='raw'
                         title='原始'
                     >
-                        Raw
+                        原始数据
                     </ToggleButton>
                 </ToggleButtonGroup>
             </Box>
@@ -386,7 +385,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                     {data.output && data.output.availableTools && data.output.availableTools.length > 0 && (
                         <Box>
                             <Typography sx={{ mt: 2 }} variant='h5' gutterBottom>
-                                Tools
+                                工具
                             </Typography>
                             {(showAllTools ? data.output.availableTools : data.output.availableTools.slice(0, 5)).map((tool, index) => {
                                 // Check if this tool is in the usedTools array
@@ -493,13 +492,13 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                     onClick={() => setShowAllTools((prev) => !prev)}
                                     sx={{ mt: 0.5, textTransform: 'none' }}
                                 >
-                                    {showAllTools ? 'Show less' : `Show ${data.output.availableTools.length - 5} more`}
+                                    {showAllTools ? '收起' : `再显示 ${data.output.availableTools.length - 5} 项`}
                                 </Button>
                             )}
                         </Box>
                     )}
                     <Typography sx={{ mt: 2 }} variant='h5' gutterBottom>
-                        Input
+                        输入
                     </Typography>
                     {data && data.input && data.input.messages && Array.isArray(data.input.messages) && data.input.messages.length > 0 ? (
                         data.input.messages.map((message, index) => (
@@ -631,7 +630,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                                             })()}
                                                         </Typography>
                                                         <Chip
-                                                            label='Called'
+                                                            label='已调用'
                                                             size='small'
                                                             sx={{
                                                                 ml: 2,
@@ -741,7 +740,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                                     }}
                                                     variant='outlined'
                                                     icon={<IconTool size={15} color={tool.error ? theme.palette.error.main : undefined} />}
-                                                    onClick={() => onUsedToolClick(tool, 'Used Tools')}
+                                                    onClick={() => onUsedToolClick(tool, '已使用的工具')}
                                                 />
                                             ) : null
                                         })}
@@ -778,7 +777,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                                                         : artifact.data
                                                                 }
                                                                 sx={{ height: 'auto', maxHeight: '500px', objectFit: 'contain' }}
-                                                                alt={`artifact-${artifactIndex}`}
+                                                                alt={`执行产物 ${artifactIndex + 1}`}
                                                             />
                                                         </Card>
                                                     )
@@ -858,7 +857,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                                         objectFit: 'contain',
                                                         display: 'block'
                                                     }}
-                                                    alt={`file-uploads-${index}`}
+                                                    alt={`上传文件 ${index + 1}`}
                                                 />
                                             </Card>
                                         )
@@ -880,7 +879,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                             return <MemoizedReactMarkdown>{message.content}</MemoizedReactMarkdown>
                                         }
                                     } else {
-                                        return <MemoizedReactMarkdown>{`*No data*`}</MemoizedReactMarkdown>
+                                        return <MemoizedReactMarkdown>{`*暂无数据*`}</MemoizedReactMarkdown>
                                     }
                                 })()}
                                 {message.additional_kwargs?.fileAnnotations && message.additional_kwargs.fileAnnotations.length > 0 && (
@@ -957,11 +956,11 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                 backgroundColor: theme.palette.background.default
                             }}
                         >
-                            <MemoizedReactMarkdown>{data?.input?.question || `*No data*`}</MemoizedReactMarkdown>
+                            <MemoizedReactMarkdown>{data?.input?.question || `*暂无数据*`}</MemoizedReactMarkdown>
                         </Box>
                     )}
                     <Typography sx={{ mt: 2 }} variant='h5' gutterBottom>
-                        Output
+                        输出
                     </Typography>
                     {data?.output?.form || data?.output?.http ? (
                         <JSONViewer data={data.output.form || data.output.http} />
@@ -1002,7 +1001,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                                 }}
                                                 variant='outlined'
                                                 icon={<IconTool size={15} color={tool.error ? theme.palette.error.main : undefined} />}
-                                                onClick={() => onUsedToolClick(tool, 'Used Tools')}
+                                                onClick={() => onUsedToolClick(tool, '已使用的工具')}
                                             />
                                         ) : null
                                     })}
@@ -1039,7 +1038,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                                                     : artifact.data
                                                             }
                                                             sx={{ height: 'auto', maxHeight: '500px', objectFit: 'contain' }}
-                                                            alt={`artifact-${artifactIndex}`}
+                                                            alt={`执行产物 ${artifactIndex + 1}`}
                                                         />
                                                     </Card>
                                                 )
@@ -1094,10 +1093,10 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                         )
                                     } catch (e) {
                                         // Not valid JSON, render as markdown
-                                        return <MemoizedReactMarkdown>{data?.output?.content || `*No data*`}</MemoizedReactMarkdown>
+                                        return <MemoizedReactMarkdown>{data?.output?.content || `*暂无数据*`}</MemoizedReactMarkdown>
                                     }
                                 } else {
-                                    return <MemoizedReactMarkdown>{`*No data*`}</MemoizedReactMarkdown>
+                                    return <MemoizedReactMarkdown>{`*暂无数据*`}</MemoizedReactMarkdown>
                                 }
                             })()}
                             {data.output?.fileAnnotations && data.output.fileAnnotations.length > 0 && (
@@ -1135,7 +1134,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                     {data.error && (
                         <>
                             <Typography sx={{ mt: 2 }} variant='h5' gutterBottom color='error'>
-                                Error
+                                错误
                             </Typography>
                             <Box
                                 sx={{
@@ -1152,7 +1151,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                                 <MemoizedReactMarkdown>
                                     {typeof data?.error === 'object'
                                         ? JSON.stringify(data.error, null, 2)
-                                        : data?.error || `*No error details*`}
+                                        : data?.error || `*暂无错误详情*`}
                                 </MemoizedReactMarkdown>
                             </Box>
                         </>
@@ -1160,7 +1159,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                     {data.state && Object.keys(data.state).length > 0 && (
                         <>
                             <Typography sx={{ mt: 2 }} variant='h5' gutterBottom>
-                                State
+                                状态
                             </Typography>
                             <JSONViewer data={data.state} />
                         </>
@@ -1206,7 +1205,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                         }}
                     >
                         <Button variant='outlined' color='error' sx={{ borderRadius: '25px' }} onClick={handleReject} disabled={isLoading}>
-                            Reject
+                            拒绝
                         </Button>
                         <Button
                             variant='contained'
@@ -1215,18 +1214,18 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                             onClick={handleProceed}
                             disabled={isLoading}
                         >
-                            Proceed
+                            继续
                         </Button>
                     </Box>
 
                     <Dialog maxWidth='md' fullWidth open={openFeedbackDialog} onClose={() => !isLoading && setOpenFeedbackDialog(false)}>
-                        <DialogTitle variant='h5'>Provide Feedback</DialogTitle>
+                        <DialogTitle variant='h5'>提供反馈</DialogTitle>
                         <DialogContent>
                             <TextField
                                 //eslint-disable-next-line jsx-a11y/no-autofocus
                                 autoFocus
                                 margin='dense'
-                                label='Feedback'
+                                label='反馈'
                                 fullWidth
                                 multiline
                                 rows={4}
@@ -1237,10 +1236,10 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                         </DialogContent>
                         <DialogActions>
                             <Button onClick={() => setOpenFeedbackDialog(false)} disabled={isLoading}>
-                                Cancel
+                                取消
                             </Button>
                             <Button onClick={handleSubmitFeedback} variant='contained' disabled={isLoading}>
-                                Submit
+                                提交
                             </Button>
                         </DialogActions>
                     </Dialog>

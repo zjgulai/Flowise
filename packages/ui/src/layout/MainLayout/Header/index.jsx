@@ -108,7 +108,7 @@ const Header = ({ handleLeftDrawerToggle }) => {
     const signOutClicked = () => {
         logoutApi.request()
         enqueueSnackbar({
-            message: 'Logging out...',
+            message: '正在退出登录…',
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'success',
@@ -127,8 +127,8 @@ const Header = ({ handleLeftDrawerToggle }) => {
                 store.dispatch(logoutSuccess())
                 window.location.href = logoutApi.data.redirectTo
             }
-        } catch (e) {
-            console.error(e)
+        } catch {
+            // Keep the current session state when a malformed logout response is received.
         }
     }, [logoutApi.data])
 
@@ -147,7 +147,7 @@ const Header = ({ handleLeftDrawerToggle }) => {
                     <LogoSection />
                 </Box>
                 {isAuthenticated && (
-                    <ButtonBase sx={{ borderRadius: '12px', overflow: 'hidden' }}>
+                    <ButtonBase aria-label='打开主导航' sx={{ borderRadius: '12px', overflow: 'hidden' }} onClick={handleLeftDrawerToggle}>
                         <Avatar
                             variant='rounded'
                             sx={{
@@ -161,7 +161,6 @@ const Header = ({ handleLeftDrawerToggle }) => {
                                     color: theme.palette.secondary.light
                                 }
                             }}
-                            onClick={handleLeftDrawerToggle}
                             color='inherit'
                         >
                             <IconMenu2 stroke={1.5} size='1.3rem' />
@@ -196,7 +195,7 @@ const Header = ({ handleLeftDrawerToggle }) => {
                     onClick={() => setIsPricingOpen(true)}
                     startIcon={<IconSparkles size={20} />}
                 >
-                    Upgrade
+                    升级
                 </Button>
             )}
             {isPricingOpen && isCloud && (
@@ -211,7 +210,11 @@ const Header = ({ handleLeftDrawerToggle }) => {
                     }}
                 />
             )}
-            <MaterialUISwitch checked={isDark} onChange={changeDarkMode} />
+            <MaterialUISwitch
+                checked={isDark}
+                onChange={changeDarkMode}
+                inputProps={{ 'aria-label': isDark ? '切换到浅色模式' : '切换到深色模式' }}
+            />
             <Box sx={{ ml: 2 }}></Box>
             <ProfileSection handleLogout={signOutClicked} />
         </>

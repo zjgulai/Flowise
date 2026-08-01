@@ -2,6 +2,15 @@ import PropTypes from 'prop-types'
 import { TableContainer, Table, TableHead, TableCell, TableRow, TableBody, Paper, Chip, Stack, Typography } from '@mui/material'
 import { TooltipWithParser } from '@/ui-component/tooltip/TooltipWithParser'
 
+const columnLabels = {
+    enabled: '覆盖',
+    label: '标签',
+    name: '名称',
+    nodeIds: '节点 ID',
+    type: '类型',
+    value: '值'
+}
+
 export const TableViewOnly = ({ columns, rows, sx }) => {
     // Helper function to safely render cell content
     const renderCellContent = (key, row) => {
@@ -33,13 +42,13 @@ export const TableViewOnly = ({ columns, rows, sx }) => {
                 // Handle object format: { "field": "string", "field2": "number", ... }
                 schemaContent = JSON.stringify(row.schema, null, 2).replace(/\n/g, '<br>').replace(/ /g, '&nbsp;')
             } else {
-                schemaContent = 'No schema available'
+                schemaContent = '暂无可用结构信息'
             }
 
             return (
                 <Stack direction='row' alignItems='center' spacing={1}>
                     <Typography>{row[key]}</Typography>
-                    <TooltipWithParser title={`<div>Schema:<br/>${schemaContent}</div>`} />
+                    <TooltipWithParser title={`<div>结构：<br/>${schemaContent}</div>`} />
                 </Stack>
             )
         } else if (typeof row[key] === 'object') {
@@ -53,23 +62,23 @@ export const TableViewOnly = ({ columns, rows, sx }) => {
     return (
         <>
             <TableContainer component={Paper}>
-                <Table sx={{ minWidth: 650, ...sx }} aria-label='simple table'>
+                <Table sx={{ minWidth: 650, ...sx }} aria-label='配置表格'>
                     <TableHead>
                         <TableRow>
                             {columns.map((col, index) => (
                                 <TableCell key={index}>
                                     {col === 'enabled' ? (
                                         <>
-                                            Override
+                                            覆盖
                                             <TooltipWithParser
                                                 style={{ mb: 1, mt: 2, marginLeft: 10 }}
                                                 title={
-                                                    'If enabled, this variable can be overridden in API calls and embeds. If disabled, any overrides will be ignored. To change this, go to Security settings in Chatflow Configuration.'
+                                                    '启用后，可在 API 调用和嵌入配置中覆盖此变量；禁用后，系统将忽略所有覆盖值。如需修改，请前往对话流程配置的安全设置。'
                                                 }
                                             />
                                         </>
                                     ) : (
-                                        col.charAt(0).toUpperCase() + col.slice(1)
+                                        columnLabels[col] ?? col
                                     )}
                                 </TableCell>
                             ))}

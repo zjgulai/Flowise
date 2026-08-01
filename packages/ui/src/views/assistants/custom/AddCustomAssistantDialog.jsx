@@ -25,6 +25,7 @@ import assistantsApi from '@/api/assistants'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 const AddCustomAssistantDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     const portalElement = document.getElementById('portal')
@@ -58,7 +59,7 @@ const AddCustomAssistantDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
             const createResp = await assistantsApi.createNewAssistant(obj)
             if (createResp.data) {
                 enqueueSnackbar({
-                    message: 'New Custom Assistant created.',
+                    message: '自定义助手创建成功。',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -73,9 +74,7 @@ const AddCustomAssistantDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
             }
         } catch (err) {
             enqueueSnackbar({
-                message: `Failed to add new Custom Assistant: ${
-                    typeof err.response.data === 'object' ? err.response.data.message : err.response.data
-                }`,
+                message: `创建自定义助手失败：${getErrorMessage(err, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -110,7 +109,7 @@ const AddCustomAssistantDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                 <Box sx={{ p: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
                         <Typography>
-                            Name<span style={{ color: 'red' }}>&nbsp;*</span>
+                            名称<span style={{ color: 'red' }}>&nbsp;*</span>
                         </Typography>
 
                         <div style={{ flexGrow: 1 }}></div>

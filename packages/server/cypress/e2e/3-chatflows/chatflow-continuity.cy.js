@@ -66,10 +66,10 @@ describe('authenticated Chatflow continuity', () => {
             })
 
     const createChatflowThroughUi = (expectedName) => {
-        cy.get('button[title="Save Chatflow"]').click()
+        cy.get('button[title="保存对话流程"]').click()
         cy.get('#chatflow-name').type(expectedName)
         cy.get('[role="dialog"]').contains('button', '保存').click()
-        cy.contains('Chatflow saved', { timeout: 30_000 }).should('be.visible')
+        cy.contains('对话流程已保存', { timeout: 30_000 }).should('be.visible')
 
         return getCurrentChatflowId().then((id) => {
             createdChatflowIds.push(id)
@@ -125,7 +125,7 @@ describe('authenticated Chatflow continuity', () => {
         cy.get('[role="dialog"]')
             .should('be.visible')
             .within(() => {
-                cy.contains('button', 'Delete').click()
+                cy.contains('button', '删除').click()
             })
         cy.location('pathname', { timeout: 30_000 }).should('eq', '/')
         return confirmChatflowDeleted(id)
@@ -183,7 +183,7 @@ describe('authenticated Chatflow continuity', () => {
         cy.visit('/canvas')
         cy.get('button[title="添加节点"]').click()
         cy.get('[id^="nodes-accordian-header-"]').should('exist')
-        cy.contains('[role="tab"]', 'Utilities').click().should('have.attr', 'aria-selected', 'true')
+        cy.contains('[role="tab"]', '工具').click().should('have.attr', 'aria-selected', 'true')
         cy.get('#input-search-node').type('Sticky Note')
         cy.contains('span', 'Sticky Note')
             .parents('[draggable="true"]')

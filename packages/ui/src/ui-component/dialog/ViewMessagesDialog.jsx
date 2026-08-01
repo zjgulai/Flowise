@@ -64,6 +64,7 @@ import useConfirm from '@/hooks/useConfirm'
 
 // Utils
 import { isValidURL, removeDuplicateURL } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 import { baseURL } from '@/store/constant'
 
@@ -275,10 +276,10 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
 
     const onDeleteMessages = () => {
         setHardDeleteDialogProps({
-            title: 'Delete Messages',
-            description: 'Are you sure you want to delete messages? This action cannot be undone.',
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel',
+            title: '删除消息',
+            description: '确定要删除这些消息吗？此操作无法撤销。',
+            confirmButtonName: '删除',
+            cancelButtonName: '取消',
             isChatflow: dialogProps.isChatflow
         })
         setHardDeleteDialogOpen(true)
@@ -312,7 +313,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
 
             await chatmessageApi.deleteChatmessage(chatflowid, obj)
             enqueueSnackbar({
-                message: 'Successfully deleted messages',
+                message: '消息已删除',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'success',
@@ -325,9 +326,8 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
             })
             refresh(1, pageLimit, startDate, endDate, chatTypeFilter, feedbackTypeFilter)
         } catch (error) {
-            console.error(error)
             enqueueSnackbar({
-                message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                message: `删除消息失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -344,17 +344,17 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
 
     const getChatType = (chatType) => {
         if (chatType === 'INTERNAL') {
-            return 'UI'
+            return '界面'
         } else if (chatType === 'EVALUATION') {
-            return 'Evaluation'
+            return '评估'
         } else if (chatType === 'MCP') {
             return 'MCP'
         } else if (chatType === 'SCHEDULED') {
-            return 'Scheduled'
+            return '定时任务'
         } else if (chatType === 'WEBHOOK') {
             return 'Webhook'
         }
-        return 'API/Embed'
+        return 'API／嵌入'
     }
 
     const exportMessages = async () => {
@@ -380,7 +380,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
             linkElement.click()
 
             enqueueSnackbar({
-                message: 'Messages exported successfully',
+                message: '消息已导出',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'success',
@@ -392,9 +392,8 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                 }
             })
         } catch (error) {
-            console.error('Error exporting messages:', error)
             enqueueSnackbar({
-                message: 'Failed to export messages',
+                message: `导出消息失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -412,13 +411,13 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
     const clearChat = async (chatmsg) => {
         const description =
             chatmsg.sessionId && chatmsg.memoryType
-                ? `Are you sure you want to clear session id: ${chatmsg.sessionId} from ${chatmsg.memoryType}?`
-                : `Are you sure you want to clear messages?`
+                ? `确定要从 ${chatmsg.memoryType} 中清除会话 ${chatmsg.sessionId} 吗？`
+                : '确定要清除这些消息吗？'
         const confirmPayload = {
-            title: `Clear Session`,
+            title: '清除会话',
             description,
-            confirmButtonName: 'Clear',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '清除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -433,9 +432,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
 
                 await chatmessageApi.deleteChatmessage(chatflowid, obj)
                 const description =
-                    chatmsg.sessionId && chatmsg.memoryType
-                        ? `Successfully cleared session id: ${chatmsg.sessionId} from ${chatmsg.memoryType}`
-                        : `Successfully cleared messages`
+                    chatmsg.sessionId && chatmsg.memoryType ? `已从 ${chatmsg.memoryType} 中清除会话 ${chatmsg.sessionId}` : '消息已清除'
                 enqueueSnackbar({
                     message: description,
                     options: {
@@ -462,7 +459,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                 })
             } catch (error) {
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: `清除会话失败：${getErrorMessage(error, '未知错误')}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -639,7 +636,10 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
             link.click()
             link.remove()
         } catch (error) {
-            console.error('Download failed:', error)
+            enqueueSnackbar({
+                message: getErrorMessage(error, '文件下载失败，请稍后重试'),
+                options: { variant: 'error' }
+            })
         }
     }
 
@@ -669,14 +669,14 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                         flex: '0 0 auto'
                     }}
                 >
-                    <CardMedia component='img' image={item.data} sx={{ height: 64 }} alt={'preview'} style={messageImageStyle} />
+                    <CardMedia component='img' image={item.data} sx={{ height: 64 }} alt='上传图片预览' style={messageImageStyle} />
                 </Card>
             )
         } else if (item?.mime?.startsWith('audio/')) {
             return (
                 /* eslint-disable jsx-a11y/media-has-caption */
                 <audio controls='controls'>
-                    Your browser does not support the &lt;audio&gt; tag.
+                    您的浏览器不支持音频播放。
                     <source src={item.data} type={item.mime} />
                 </audio>
             )
@@ -825,7 +825,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                         component='img'
                         image={item.data}
                         sx={{ height: 'auto' }}
-                        alt={'artifact'}
+                        alt='生成内容'
                         style={{
                             width: isAgentReasoning ? '200px' : '100%',
                             height: isAgentReasoning ? '200px' : 'auto',
@@ -867,18 +867,19 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                         }}
                     >
                         <div style={{ marginRight: 10 }}>
-                            <b style={{ marginRight: 10 }}>From Date</b>
+                            <b style={{ marginRight: 10 }}>开始日期</b>
                             <DatePicker
                                 selected={startDate}
                                 onChange={(date) => onStartDateSelected(date)}
                                 selectsStart
                                 startDate={startDate}
                                 endDate={endDate}
+                                dateFormat='yyyy年MM月dd日'
                                 customInput={<DatePickerCustomInput />}
                             />
                         </div>
                         <div style={{ marginRight: 10 }}>
-                            <b style={{ marginRight: 10 }}>To Date</b>
+                            <b style={{ marginRight: 10 }}>结束日期</b>
                             <DatePicker
                                 selected={endDate}
                                 onChange={(date) => onEndDateSelected(date)}
@@ -887,6 +888,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                 endDate={endDate}
                                 minDate={startDate}
                                 maxDate={new Date()}
+                                dateFormat='yyyy年MM月dd日'
                                 customInput={<DatePickerCustomInput />}
                             />
                         </div>
@@ -905,7 +907,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                 name='chatType'
                                 options={[
                                     {
-                                        label: 'UI',
+                                        label: '界面',
                                         name: 'INTERNAL'
                                     },
                                     {
@@ -943,7 +945,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                 marginRight: 10
                             }}
                         >
-                            <b style={{ marginRight: 10 }}>Feedback</b>
+                            <b style={{ marginRight: 10 }}>反馈</b>
                             <MultiDropdown
                                 key={JSON.stringify(feedbackTypeFilter)}
                                 name='feedbackType'
@@ -982,7 +984,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                 <KeyboardArrowDownIcon style={{ backgroundColor: customization.isDarkMode ? 'transparent' : 'inherit' }} />
                             }
                         >
-                            More Actions
+                            更多操作
                         </Button>
                         <StyledMenu
                             id='messages-dialog-action-menu'
@@ -1001,7 +1003,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                 disableRipple
                             >
                                 <IconFileExport style={{ marginRight: 8 }} />
-                                Export to JSON
+                                导出为 JSON
                             </MenuItem>
                             {(stats.totalMessages ?? 0) > 0 && (
                                 <MenuItem
@@ -1012,7 +1014,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                     disableRipple
                                 >
                                     <IconEraser style={{ marginRight: 8 }} />
-                                    Delete All
+                                    全部删除
                                 </MenuItem>
                             )}
                         </StyledMenu>
@@ -1046,7 +1048,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                         alt='msgEmptySVG'
                                     />
                                 </Box>
-                                <div>No Messages</div>
+                                <div>暂无消息</div>
                             </Stack>
                         )}
                         {chatlogs && chatlogs.length > 0 && (
@@ -1071,8 +1073,8 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                         }}
                                     >
                                         <Typography variant='h5'>
-                                            Sessions {pageLimit * (currentPage - 1) + 1} - {Math.min(pageLimit * currentPage, total)} of{' '}
-                                            {total}
+                                            会话 {pageLimit * (currentPage - 1) + 1}–{Math.min(pageLimit * currentPage, total)}，共 {total}{' '}
+                                            条
                                         </Typography>
                                         <Pagination
                                             style={{ justifyItems: 'right', justifyContent: 'center' }}
@@ -1115,7 +1117,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                             </div>
                                                         </div>
                                                     }
-                                                    secondary={moment(chatmsg.createdDate).format('MMMM Do YYYY, h:mm:ss a')}
+                                                    secondary={moment(chatmsg.createdDate).format('YYYY年M月D日 HH:mm:ss')}
                                                 />
                                             </ListItem>
                                         </ListItemButton>
@@ -1130,22 +1132,22 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                         <div style={{ flex: 1, marginLeft: '20px', marginBottom: '15px', marginTop: '10px' }}>
                                             {chatMessages[1].sessionId && (
                                                 <div>
-                                                    Session Id:&nbsp;<b>{chatMessages[1].sessionId}</b>
+                                                    会话标识：&nbsp;<b>{chatMessages[1].sessionId}</b>
                                                 </div>
                                             )}
                                             {chatMessages[1].chatType && (
                                                 <div>
-                                                    Source:&nbsp;<b>{getChatType(chatMessages[1].chatType)}</b>
+                                                    来源：&nbsp;<b>{getChatType(chatMessages[1].chatType)}</b>
                                                 </div>
                                             )}
                                             {chatMessages[1].memoryType && (
                                                 <div>
-                                                    Memory:&nbsp;<b>{chatMessages[1].memoryType}</b>
+                                                    记忆节点：&nbsp;<b>{chatMessages[1].memoryType}</b>
                                                 </div>
                                             )}
                                             {leadEmail && (
                                                 <div>
-                                                    Email:&nbsp;<b>{leadEmail}</b>
+                                                    邮箱：&nbsp;<b>{leadEmail}</b>
                                                 </div>
                                             )}
                                         </div>
@@ -1157,7 +1159,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                 alignItems: 'end'
                                             }}
                                         >
-                                            <Tooltip title='Clear Message'>
+                                            <Tooltip title='清除消息'>
                                                 <IconButton color='error' onClick={() => clearChat(chatMessages[1])}>
                                                     <IconEraser />
                                                 </IconButton>
@@ -1165,7 +1167,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                             {chatMessages[1].sessionId && (
                                                 <Tooltip
                                                     title={
-                                                        'On the left 👈, you’ll see the Memory node used in this conversation. To delete the session conversations stored on that Memory node, you must have a matching Memory node with identical parameters in the canvas.'
+                                                        '左侧 👈 会显示本次对话使用的记忆节点。若要删除该记忆节点中保存的会话，画布中必须存在参数完全一致的对应记忆节点。'
                                                     }
                                                     placement='bottom'
                                                 >
@@ -1210,7 +1212,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                                 <img
                                                                     style={{ marginLeft: '10px' }}
                                                                     src={robotPNG}
-                                                                    alt='AI'
+                                                                    alt='助手'
                                                                     width='25'
                                                                     height='25'
                                                                     className='boticon'
@@ -1219,7 +1221,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                                 <img
                                                                     style={{ marginLeft: '10px' }}
                                                                     src={userPNG}
-                                                                    alt='Me'
+                                                                    alt='我'
                                                                     width='25'
                                                                     height='25'
                                                                     className='usericon'
@@ -1337,7 +1339,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                                                                             onClick={() =>
                                                                                                                 onSourceDialogClick(
                                                                                                                     tool,
-                                                                                                                    'Used Tools'
+                                                                                                                    '已用工具'
                                                                                                                 )
                                                                                                             }
                                                                                                         />
@@ -1356,7 +1358,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                                                                 >
                                                                                                     <Chip
                                                                                                         size='small'
-                                                                                                        label={'State'}
+                                                                                                        label='状态'
                                                                                                         component='a'
                                                                                                         sx={{ mr: 1, mt: 1 }}
                                                                                                         variant='outlined'
@@ -1367,7 +1369,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                                                                         onClick={() =>
                                                                                                             onSourceDialogClick(
                                                                                                                 agent.state,
-                                                                                                                'State'
+                                                                                                                '状态'
                                                                                                             )
                                                                                                         }
                                                                                                     />
@@ -1504,7 +1506,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                                                             }
                                                                                         />
                                                                                     }
-                                                                                    onClick={() => onSourceDialogClick(tool, 'Used Tools')}
+                                                                                    onClick={() => onSourceDialogClick(tool, '已用工具')}
                                                                                 />
                                                                             )
                                                                         })}
@@ -1611,7 +1613,7 @@ const ViewMessagesDialog = ({ show, dialogProps, onCancel }) => {
                                                             key={index}
                                                             style={{ display: 'flex', justifyContent: 'center', alignContent: 'center' }}
                                                         >
-                                                            {moment(message.message).format('MMMM Do YYYY, h:mm:ss a')}
+                                                            {moment(message.message).format('YYYY年M月D日 HH:mm:ss')}
                                                         </Box>
                                                     )
                                                 }

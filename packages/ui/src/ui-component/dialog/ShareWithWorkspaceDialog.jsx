@@ -24,6 +24,7 @@ import userApi from '@/api/user'
 import useApi from '@/hooks/useApi'
 
 // utils
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 
 // const
@@ -63,8 +64,8 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) => 
 
     const columns = useMemo(
         () => [
-            { field: 'workspaceName', headerName: 'Workspace', editable: false, flex: 1 },
-            { field: 'shared', headerName: 'Share', type: 'boolean', editable: true, width: 180 }
+            { field: 'workspaceName', headerName: '工作空间', editable: false, flex: 1 },
+            { field: 'shared', headerName: '共享', type: 'boolean', editable: true, width: 180 }
         ],
         []
     )
@@ -130,7 +131,7 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) => 
             const sharedResp = await workspaceApi.setSharedWorkspacesForItem(dialogProps.data.id, obj)
             if (sharedResp.data) {
                 enqueueSnackbar({
-                    message: 'Items Shared Successfully',
+                    message: '项目共享成功',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -146,9 +147,7 @@ const ShareWithWorkspaceDialog = ({ show, dialogProps, onCancel, setError }) => 
         } catch (error) {
             if (setError) setError(error)
             enqueueSnackbar({
-                message: `Failed to share Item: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `共享项目失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',

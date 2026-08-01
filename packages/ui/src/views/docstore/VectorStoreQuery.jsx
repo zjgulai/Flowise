@@ -32,6 +32,7 @@ import { useAuth } from '@/hooks/useAuth'
 import useNotifier from '@/utils/useNotifier'
 import { baseURL } from '@/store/constant'
 import { initNode, showHideInputParams } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
@@ -153,7 +154,7 @@ const VectorStoreQuery = () => {
             setLoading(false)
             if (updateResp.data) {
                 enqueueSnackbar({
-                    message: 'Vector Store Config Successfully Updated',
+                    message: '向量库配置已更新',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -167,9 +168,8 @@ const VectorStoreQuery = () => {
             }
         } catch (error) {
             setLoading(false)
-            const errorData = error.response?.data || `${error.response?.status}: ${error.response?.statusText}`
             enqueueSnackbar({
-                message: `Failed to update vector store config: ${errorData}`,
+                message: `更新向量库配置失败：${getErrorMessage(error)}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -200,13 +200,11 @@ const VectorStoreQuery = () => {
 
     useEffect(() => {
         if (queryVectorStoreApi.error) {
-            if (queryVectorStoreApi.error.response?.data?.message) {
-                const message = queryVectorStoreApi.error.response.data.message
-                // remove the text 'documentStoreServices.queryVectorStore - ' from the error message to make it readable
-                setRetrievalError(message.replace('documentStoreServices.queryVectorStore - ', ''))
-                setDocumentChunks([])
-                setTimeTaken(-1)
-            }
+            const message = getErrorMessage(queryVectorStoreApi.error, '检索失败，请稍后重试')
+            // remove the service prefix from the error message to make it readable
+            setRetrievalError(message.replace('documentStoreServices.queryVectorStore - ', ''))
+            setDocumentChunks([])
+            setTimeTaken(-1)
             setLoading(false)
         }
 
@@ -261,8 +259,8 @@ const VectorStoreQuery = () => {
                     <ViewHeader
                         isBackButton={true}
                         search={false}
-                        title={documentStore?.name || 'Document Store'}
-                        description='Retrieval Playground - Test your vector store retrieval settings'
+                        title={documentStore?.name || '文档库'}
+                        description='检索测试台——验证向量库检索设置'
                         onBack={() => navigate(-1)}
                     >
                         <PermissionButton
@@ -273,7 +271,7 @@ const VectorStoreQuery = () => {
                             startIcon={<IconDeviceFloppy />}
                             onClick={saveConfig}
                         >
-                            Save Config
+                            保存配置
                         </PermissionButton>
                     </ViewHeader>
                     <div style={{ width: '100%' }}></div>
@@ -283,7 +281,7 @@ const VectorStoreQuery = () => {
                                 <Box>
                                     <div style={{ display: 'flex', flexDirection: 'row' }}>
                                         <Typography variant='overline'>
-                                            Enter your Query<span style={{ color: 'red' }}>&nbsp;*</span>
+                                            输入查询内容<span style={{ color: 'red' }}>&nbsp;*</span>
                                         </Typography>
 
                                         <div style={{ flexGrow: 1 }}></div>
@@ -349,7 +347,7 @@ const VectorStoreQuery = () => {
                                                                         borderRadius: '50%',
                                                                         objectFit: 'contain'
                                                                     }}
-                                                                    alt={selectedVectorStoreProvider.label ?? 'embeddings'}
+                                                                    alt={selectedVectorStoreProvider.label ?? '向量库'}
                                                                     src={`${baseURL}/api/v1/node-icon/${selectedVectorStoreProvider?.name}`}
                                                                 />
                                                             ) : (
@@ -413,10 +411,10 @@ const VectorStoreQuery = () => {
                                             />
                                         </div>
                                         <Typography sx={{ ml: 2 }} variant='h3'>
-                                            Retrieved Documents
+                                            已检索文档
                                             {timeTaken > -1 && (
                                                 <Typography variant='body2' sx={{ color: 'gray' }}>
-                                                    Count: {documentChunks.length}. Time taken: {timeTaken} millis.
+                                                    数量：{documentChunks.length}；耗时：{timeTaken} 毫秒。
                                                 </Typography>
                                             )}
                                             {retrievalError && (
@@ -440,10 +438,10 @@ const VectorStoreQuery = () => {
                                                 <img
                                                     style={{ objectFit: 'cover', height: '16vh', width: 'auto' }}
                                                     src={chunks_emptySVG}
-                                                    alt='chunks_emptySVG'
+                                                    alt='暂无检索结果'
                                                 />
                                             </Box>
-                                            <div>No Documents Retrieved</div>
+                                            <div>未检索到文档</div>
                                         </div>
                                     )}
                                     <Grid container spacing={2}>
@@ -458,7 +456,7 @@ const VectorStoreQuery = () => {
                                                         <Card>
                                                             <CardContent sx={{ p: 2 }}>
                                                                 <Typography sx={{ wordWrap: 'break-word', mb: 1 }} variant='h5'>
-                                                                    {`#${row.chunkNo}. Characters: ${row.pageContent.length}`}
+                                                                    {`#${row.chunkNo} · ${row.pageContent.length} 个字符`}
                                                                 </Typography>
                                                                 <Typography sx={{ wordWrap: 'break-word' }} variant='body2'>
                                                                     {row.pageContent}

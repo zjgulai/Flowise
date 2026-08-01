@@ -35,6 +35,7 @@ import opikPNG from '@/assets/images/opik.png'
 
 // store
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // API
 import chatflowsApi from '@/api/chatflows'
@@ -57,7 +58,7 @@ const analyticProviders = [
                 name: 'projectName',
                 type: 'string',
                 optional: true,
-                description: 'If not provided, default will be used',
+                description: '未填写时使用默认值',
                 placeholder: 'default'
             },
             {
@@ -85,7 +86,7 @@ const analyticProviders = [
                 name: 'release',
                 type: 'string',
                 optional: true,
-                description: 'The release number/hash of the application to provide analytics grouped by release'
+                description: '应用的发布版本号或哈希值，用于按发布版本汇总分析数据'
             },
             {
                 label: '开/关',
@@ -152,7 +153,7 @@ const analyticProviders = [
                 name: 'projectName',
                 type: 'string',
                 optional: true,
-                description: 'If not provided, default will be used.',
+                description: '未填写时使用默认值。',
                 placeholder: 'default'
             },
             {
@@ -180,7 +181,7 @@ const analyticProviders = [
                 name: 'projectName',
                 type: 'string',
                 optional: true,
-                description: 'If not provided, default will be used.',
+                description: '未填写时使用默认值。',
                 placeholder: 'default'
             },
             {
@@ -207,7 +208,7 @@ const analyticProviders = [
                 label: '项目名称',
                 name: 'opikProjectName',
                 type: 'string',
-                description: 'Name of your Opik project',
+                description: '您的 Opik 项目名称',
                 placeholder: 'default'
             },
             {
@@ -239,7 +240,7 @@ const AnalyseFlow = ({ dialogProps }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Analytic Configuration Saved',
+                    message: '分析配置已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -254,9 +255,7 @@ const AnalyseFlow = ({ dialogProps }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to save Analytic Configuration: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存分析配置失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -293,9 +292,8 @@ const AnalyseFlow = ({ dialogProps }) => {
         if (dialogProps.chatflow && dialogProps.chatflow.analytic) {
             try {
                 setAnalytic(JSON.parse(dialogProps.chatflow.analytic))
-            } catch (e) {
+            } catch {
                 setAnalytic({})
-                console.error(e)
             }
         }
 
@@ -332,7 +330,7 @@ const AnalyseFlow = ({ dialogProps }) => {
                                             padding: 10,
                                             objectFit: 'contain'
                                         }}
-                                        alt='AI'
+                                        alt='分析服务'
                                         src={provider.icon}
                                     />
                                 </div>
@@ -374,7 +372,7 @@ const AnalyseFlow = ({ dialogProps }) => {
                                             backgroundColor: '#70e000'
                                         }}
                                     />
-                                    <span style={{ color: '#006400', marginLeft: 10 }}>ON</span>
+                                    <span style={{ color: '#006400', marginLeft: 10 }}>已开启</span>
                                 </div>
                             )}
                         </ListItem>
@@ -425,7 +423,7 @@ const AnalyseFlow = ({ dialogProps }) => {
             ))}
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
                 <StyledButton variant='contained' onClick={onSave} sx={{ minWidth: 100 }}>
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </>

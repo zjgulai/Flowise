@@ -23,20 +23,8 @@ import { IconX, IconFiles } from '@tabler/icons-react'
 import documentStoreApi from '@/api/documentstore'
 
 // utils
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
-
-const getDocumentStoreErrorMessage = (error) => {
-    const responseData = error?.response?.data
-    if (typeof responseData === 'string' && responseData.trim()) return responseData
-    if (responseData && typeof responseData === 'object') {
-        const responseMessage = responseData.message || responseData.error
-        if (typeof responseMessage === 'string' && responseMessage.trim()) return responseMessage
-    }
-    const status = error?.response?.status
-    if (status) return `服务请求失败（${status}）`
-    if (typeof error?.message === 'string' && error.message.trim()) return error.message
-    return '未知错误'
-}
 
 const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     const portalElement = document.getElementById('portal')
@@ -119,7 +107,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             const key = new Date().getTime() + Math.random()
             submitErrorSnackbarKey.current = key
             enqueueSnackbar({
-                message: `新增文档库失败：${getDocumentStoreErrorMessage(error)}`,
+                message: `新增文档库失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key,
                     variant: 'error',
@@ -170,7 +158,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             const key = new Date().getTime() + Math.random()
             submitErrorSnackbarKey.current = key
             enqueueSnackbar({
-                message: `更新文档库失败：${getDocumentStoreErrorMessage(error)}`,
+                message: `更新文档库失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key,
                     variant: 'error',

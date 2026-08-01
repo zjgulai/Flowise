@@ -43,7 +43,7 @@ const ChatFeedbackContentDialog = ({ show, onCancel, onConfirm }) => {
             aria-describedby='alert-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
-                Provide additional feedback
+                补充反馈
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -64,7 +64,7 @@ const ChatFeedbackContentDialog = ({ show, onCancel, onConfirm }) => {
             <DialogActions>
                 <Button onClick={onCancel}>取消</Button>
                 <StyledButton variant='contained' onClick={onSave}>
-                    Submit Feedback
+                    提交反馈
                 </StyledButton>
             </DialogActions>
         </Dialog>

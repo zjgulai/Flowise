@@ -39,7 +39,7 @@ const HowToUseVariablesDialog = ({ show, onCancel }) => {
                 <p style={{ marginBottom: '10px' }}>变量也可用于任何节点的文本字段参数。例如，在智能体的系统消息中：</p>
                 <CodeEditor
                     disabled={true}
-                    value={`You are a {{$vars.personality}} AI assistant`}
+                    value={`你是一名具有 {{$vars.personality}} 性格的 AI 助手`}
                     height={'50px'}
                     theme={'dark'}
                     lang={'js'}
@@ -58,10 +58,11 @@ const HowToUseVariablesDialog = ({ show, onCancel }) => {
                     basicSetup={{ highlightActiveLine: false, highlightActiveLineGutter: false }}
                 />
                 <p>
-                    Read more from{' '}
+                    更多信息请参阅{' '}
                     <a target='_blank' rel='noreferrer' href='https://docs.flowiseai.com/using-flowise/variables'>
-                        docs
+                        Flowise 文档
                     </a>
+                    。
                 </p>
             </DialogContent>
         </Dialog>

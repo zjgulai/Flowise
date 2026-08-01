@@ -13,15 +13,16 @@ import { SwitchInput } from '@/ui-component/switch/Switch'
 // store
 import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackbarAction, SET_CHATFLOW } from '@/store/actions'
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // API
 import chatflowsApi from '@/api/chatflows'
 
-const formTitle = `Hey 👋 thanks for your interest!
-Let us know where we can reach you`
+const formTitle = `您好 👋 感谢您的关注！
+请留下方便联系您的方式`
 
-const endTitle = `Thank you!
-What can I do for you?`
+const endTitle = `谢谢！
+接下来有什么可以帮您？`
 
 const Leads = ({ dialogProps }) => {
     const dispatch = useDispatch()
@@ -52,7 +53,7 @@ const Leads = ({ dialogProps }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Leads configuration Saved',
+                    message: '线索收集配置已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -66,9 +67,8 @@ const Leads = ({ dialogProps }) => {
                 dispatch({ type: SET_CHATFLOW, chatflow: saveResp.data })
             }
         } catch (error) {
-            const errorData = error.response.data || `${error.response.status}: ${error.response.statusText}`
             enqueueSnackbar({
-                message: `Failed to save Leads configuration: ${errorData}`,
+                message: `保存线索收集配置失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -108,11 +108,11 @@ const Leads = ({ dialogProps }) => {
                     mb: 2
                 }}
             >
-                <SwitchInput label='Enable Lead Capture' onChange={(value) => handleChange('status', value)} value={leadsConfig.status} />
+                <SwitchInput label='启用线索收集' onChange={(value) => handleChange('status', value)} value={leadsConfig.status} />
                 {leadsConfig && leadsConfig['status'] && (
                     <>
                         <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-                            <Typography>Form Title</Typography>
+                            <Typography>表单标题</Typography>
                             <OutlinedInput
                                 id='form-title'
                                 type='text'
@@ -129,7 +129,7 @@ const Leads = ({ dialogProps }) => {
                             />
                         </Box>
                         <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-                            <Typography>Message after lead captured</Typography>
+                            <Typography>收集线索后的提示消息</Typography>
                             <OutlinedInput
                                 id='success-message'
                                 type='text'
@@ -145,7 +145,7 @@ const Leads = ({ dialogProps }) => {
                                 }}
                             />
                         </Box>
-                        <Typography variant='h4'>Form fields</Typography>
+                        <Typography variant='h4'>表单字段</Typography>
                         <Box sx={{ width: '100%' }}>
                             <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
                                 <SwitchInput label='名称' onChange={(value) => handleChange('name', value)} value={leadsConfig.name} />
@@ -167,7 +167,7 @@ const Leads = ({ dialogProps }) => {
                     onClick={onSave}
                     sx={{ minWidth: 100 }}
                 >
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </>

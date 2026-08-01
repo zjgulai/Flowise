@@ -15,15 +15,14 @@ import { IconRobotFace, IconBrandOpenai } from '@tabler/icons-react'
 const cards = [
     {
         title: '自定义助手',
-        description: 'Create custom assistant using your choice of LLMs',
+        description: '使用自选大模型创建专属助手',
         icon: <IconRobotFace />,
-        iconText: 'Custom',
+        iconText: '自定义',
         gradient: 'linear-gradient(135deg, #fff8e14e 0%, #ffcc802f 100%)'
     },
     {
         title: 'OpenAI 助手',
-        description:
-            'Create assistant using OpenAI Assistant API. This option is being deprecated; consider using Custom Assistant instead.',
+        description: '使用 OpenAI 助手 API 创建助手。此功能即将弃用，建议改用自定义助手。',
         icon: <IconBrandOpenai />,
         iconText: 'OpenAI',
         gradient: 'linear-gradient(135deg, #c9ffd85f 0%, #a0f0b567 100%)',
@@ -100,7 +99,7 @@ const FeatureCards = () => {
                                 {card.icon}
                                 <span className='text-xs uppercase'>{card.iconText}</span>
                             </FeatureIcon>
-                            {card.deprecating && <Chip label='Deprecating' size='small' color='warning' sx={{ fontWeight: 600 }} />}
+                            {card.deprecating && <Chip label='即将弃用' size='small' color='warning' sx={{ fontWeight: 600 }} />}
                         </Stack>
                         <h2 className='text-2xl font-bold mb-2'>{card.title}</h2>
                         <p className='text-gray-600'>{card.description}</p>
@@ -118,7 +117,7 @@ const Assistants = () => {
         <>
             <MainCard>
                 <Stack flexDirection='column' sx={{ gap: 3 }}>
-                    <ViewHeader title='助手' description='Chat assistants with instructions, tools, and files to respond to user queries' />
+                    <ViewHeader title='助手' description='通过指令、工具和文件构建可响应用户问题的对话助手' />
                     <FeatureCards />
                 </Stack>
             </MainCard>

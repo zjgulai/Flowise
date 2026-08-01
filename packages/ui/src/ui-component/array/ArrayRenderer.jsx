@@ -81,7 +81,7 @@ export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }
             id: `${data.id}-output-${i}`,
             label: i,
             name: i,
-            description: `Condition ${i}`
+            description: `条件 ${i}`
         }))
 
         // always append additional output anchor for ELSE for condition
@@ -90,7 +90,7 @@ export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }
                 id: `${data.id}-output-${items.length}`,
                 label: items.length,
                 name: items.length,
-                description: 'Else'
+                description: '否则'
             })
         }
         data.outputAnchors = updatedOutputs
@@ -268,7 +268,7 @@ export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }
                 startIcon={<IconPlus />}
                 onClick={handleAddItem}
             >
-                Add {inputParam.label}
+                添加{inputParam.label}
             </Button>
         </>
     )

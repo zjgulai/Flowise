@@ -77,10 +77,10 @@ const PublicExecutionDetails = () => {
                                     <Stack spacing={2} alignItems='center'>
                                         <IconCircleXFilled size={50} color={theme.palette.error.main} />
                                         <Typography variant='h3' color='error.main' align='center'>
-                                            Invalid Execution
+                                            无效的执行记录
                                         </Typography>
                                         <Typography variant='body1' color='text.secondary' align='center'>
-                                            {`The execution you're looking for doesn't exist or you don't have permission to view it.`}
+                                            该执行记录不存在，或你没有查看权限。
                                         </Typography>
                                     </Stack>
                                 </Card>

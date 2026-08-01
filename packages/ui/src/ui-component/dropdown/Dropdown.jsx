@@ -63,7 +63,7 @@ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = f
                                     <Box
                                         component='img'
                                         src={matchingOption.imageSrc}
-                                        alt={matchingOption.label || 'Selected Option'}
+                                        alt={matchingOption.label || '已选选项'}
                                         sx={{
                                             width: 32,
                                             height: 32,

@@ -138,32 +138,32 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
     const [modelName, setModelName] = useState([])
 
     const usecases = [
-        { id: 201, name: 'Agents' },
-        { id: 202, name: 'Agent Stimulation' },
-        { id: 203, name: 'Autonomous agents' },
-        { id: 204, name: 'Classification' },
-        { id: 205, name: 'Chatbots' },
-        { id: 206, name: 'Code understanding' },
-        { id: 207, name: 'Code writing' },
-        { id: 208, name: 'Evaluation' },
-        { id: 209, name: 'Extraction' },
-        { id: 210, name: 'Interacting with APIs' },
-        { id: 211, name: 'Multi-modal' },
-        { id: 212, name: 'QA over documents' },
-        { id: 213, name: 'Self-checking' },
-        { id: 214, name: 'SQL' },
-        { id: 215, name: 'Summarization' },
-        { id: 216, name: 'Tagging' }
+        { id: 201, name: 'Agents', label: '智能体' },
+        { id: 202, name: 'Agent Stimulation', label: '智能体模拟' },
+        { id: 203, name: 'Autonomous agents', label: '自主智能体' },
+        { id: 204, name: 'Classification', label: '分类' },
+        { id: 205, name: 'Chatbots', label: '聊天机器人' },
+        { id: 206, name: 'Code understanding', label: '代码理解' },
+        { id: 207, name: 'Code writing', label: '代码编写' },
+        { id: 208, name: 'Evaluation', label: '评估' },
+        { id: 209, name: 'Extraction', label: '信息提取' },
+        { id: 210, name: 'Interacting with APIs', label: 'API 交互' },
+        { id: 211, name: 'Multi-modal', label: '多模态' },
+        { id: 212, name: 'QA over documents', label: '文档问答' },
+        { id: 213, name: 'Self-checking', label: '自检' },
+        { id: 214, name: 'SQL', label: 'SQL' },
+        { id: 215, name: 'Summarization', label: '摘要生成' },
+        { id: 216, name: 'Tagging', label: '标签化' }
     ]
     const [usecase, setUsecase] = useState([])
 
     const languages = [
-        { id: 301, name: 'Chinese' },
-        { id: 302, name: 'English' },
-        { id: 303, name: 'French' },
-        { id: 304, name: 'German' },
-        { id: 305, name: 'Russian' },
-        { id: 306, name: 'Spanish' }
+        { id: 301, name: 'Chinese', label: '中文' },
+        { id: 302, name: 'English', label: '英语' },
+        { id: 303, name: 'French', label: '法语' },
+        { id: 304, name: 'German', label: '德语' },
+        { id: 305, name: 'Russian', label: '俄语' },
+        { id: 306, name: 'Spanish', label: '西班牙语' }
     ]
     const [language, setLanguage] = useState([])
     const [availablePrompNameList, setAvailablePrompNameList] = useState([])
@@ -254,13 +254,13 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
             aria-describedby='prompt-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='prompt-dialog-title'>
-                Langchain Hub ({promptType === 'template' ? 'PromptTemplate' : 'ChatPromptTemplate'})
+                LangChain 提示词中心（{promptType === 'template' ? 'PromptTemplate' : 'ChatPromptTemplate'}）
             </DialogTitle>
             <DialogContent dividers sx={{ p: 1 }}>
                 <Box sx={{ display: 'flex', flexDirection: 'row', p: 2, pt: 1, alignItems: 'center' }}>
                     <FormControl sx={{ mr: 1, width: '30%' }}>
                         <InputLabel size='small' id='model-checkbox-label'>
-                            Model
+                            模型
                         </InputLabel>
                         <Select
                             id='model-checkbox'
@@ -297,7 +297,7 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
                     </FormControl>
                     <FormControl sx={{ mr: 1, width: '30%' }}>
                         <InputLabel size='small' id='usecase-checkbox-label'>
-                            Usecase
+                            用例
                         </InputLabel>
                         <Select
                             autoWidth={false}
@@ -308,7 +308,7 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
                             value={usecase}
                             onChange={handleUsecaseChange}
                             input={<OutlinedInput label='用例' />}
-                            renderValue={(selected) => selected.map((x) => x.name).join(', ')}
+                            renderValue={(selected) => selected.map((x) => x.label).join('、')}
                             endAdornment={
                                 usecase.length ? (
                                     <IconButton sx={{ mr: 2 }} onClick={() => setUsecase([])}>
@@ -328,14 +328,14 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
                             {usecases.map((variant) => (
                                 <MenuItem key={variant.id} value={variant}>
                                     <Checkbox id={variant.id} checked={usecase.findIndex((item) => item.id === variant.id) >= 0} />
-                                    <ListItemText primary={variant.name} />
+                                    <ListItemText primary={variant.label} />
                                 </MenuItem>
                             ))}
                         </Select>
                     </FormControl>
                     <FormControl sx={{ mr: 1, width: '30%' }}>
                         <InputLabel size='small' id='language-checkbox-label'>
-                            Language
+                            语言
                         </InputLabel>
                         <Select
                             labelId='language-checkbox-label'
@@ -344,8 +344,8 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
                             size='small'
                             value={language}
                             onChange={handleLanguageChange}
-                            input={<OutlinedInput label='language' />}
-                            renderValue={(selected) => selected.map((x) => x.name).join(', ')}
+                            input={<OutlinedInput label='语言' />}
+                            renderValue={(selected) => selected.map((x) => x.label).join('、')}
                             endAdornment={
                                 language.length ? (
                                     <IconButton sx={{ mr: 2 }} onClick={() => setLanguage([])}>
@@ -365,14 +365,14 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
                             {languages.map((variant) => (
                                 <MenuItem key={variant.id} value={variant}>
                                     <Checkbox id={variant.id} checked={language.findIndex((item) => item.id === variant.id) >= 0} />
-                                    <ListItemText primary={variant.name} />
+                                    <ListItemText primary={variant.label} />
                                 </MenuItem>
                             ))}
                         </Select>
                     </FormControl>
                     <FormControl sx={{ width: '10%' }}>
                         <Button disableElevation variant='outlined' onClick={fetchPrompts}>
-                            Search
+                            搜索
                         </Button>
                     </FormControl>
                 </Box>
@@ -382,7 +382,7 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
                         <Box sx={{ p: 5, height: 'auto' }}>
                             <img style={{ objectFit: 'cover', height: '20vh', width: 'auto' }} src={promptEmptySVG} alt='promptEmptySVG' />
                         </Box>
-                        <div>Please wait....loading Prompts</div>
+                        <div>正在加载提示词，请稍候……</div>
                     </Stack>
                 )}
                 {!loading && availablePrompNameList && availablePrompNameList.length === 0 && (
@@ -390,7 +390,7 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
                         <Box sx={{ p: 5, height: 'auto' }}>
                             <img style={{ objectFit: 'cover', height: '20vh', width: 'auto' }} src={promptEmptySVG} alt='promptEmptySVG' />
                         </Box>
-                        <div>No Available Prompts</div>
+                        <div>暂无可用提示词</div>
                     </Stack>
                 )}
                 {!loading && availablePrompNameList && availablePrompNameList.length > 0 && (
@@ -402,9 +402,9 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
                                         <Card variant='outlined' sx={{ height: 470, overflow: 'auto', borderRadius: 0 }}>
                                             <CardContent sx={{ p: 1 }}>
                                                 <Typography sx={{ fontSize: 10 }} color='text.secondary' gutterBottom>
-                                                    Available Prompts
+                                                    可用提示词
                                                 </Typography>
-                                                <List component='nav' aria-label='secondary mailbox folder'>
+                                                <List component='nav' aria-label='提示词列表'>
                                                     {availablePrompNameList.map((item, index) => (
                                                         <ListItemButton
                                                             key={item.id}
@@ -550,7 +550,7 @@ const PromptLangsmithHubDialog = ({ promptType, show, onCancel, onSubmit }) => {
                         onClick={() => onSubmit(selectedPrompt.detailed)}
                         variant='contained'
                     >
-                        Load
+                        加载
                     </StyledButton>
                 </DialogActions>
             )}

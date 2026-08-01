@@ -11,19 +11,19 @@ import { baseURL } from '@/store/constant'
 const sequentialStateMessagesSelection = [
     {
         primary: '$flow.state.messages',
-        secondary: `All messages from the start of the conversation till now`
+        secondary: '从对话开始到当前的全部消息'
     },
     {
         primary: '$flow.state.<replace-with-key>',
-        secondary: `Current value of the state variable with specified key`
+        secondary: '指定键对应的状态变量当前值'
     },
     {
         primary: '$flow.state.messages[0].content',
-        secondary: `First message content`
+        secondary: '第一条消息的内容'
     },
     {
         primary: '$flow.state.messages[-1].content',
-        secondary: `Last message content`
+        secondary: '最后一条消息的内容'
     }
 ]
 
@@ -41,7 +41,7 @@ const SelectVariable = ({ availableNodesForVariable, disabled = false, onSelectA
             {!disabled && (
                 <div style={{ flex: 30 }}>
                     <Stack flexDirection='row' sx={{ mb: 1, ml: 2, mt: 2 }}>
-                        <Typography variant='h5'>Select Variable</Typography>
+                        <Typography variant='h5'>选择变量</Typography>
                     </Stack>
                     <PerfectScrollbar style={{ height: '100%', maxHeight: 'calc(100vh - 220px)', overflowX: 'hidden' }}>
                         <Box sx={{ pl: 2, pr: 2 }}>
@@ -73,12 +73,12 @@ const SelectVariable = ({ availableNodesForVariable, disabled = false, onSelectA
                                                         padding: 10,
                                                         objectFit: 'contain'
                                                     }}
-                                                    alt='AI'
+                                                    alt='用户问题'
                                                     src={robotPNG}
                                                 />
                                             </div>
                                         </ListItemAvatar>
-                                        <ListItemText sx={{ ml: 1 }} primary='question' secondary={`User's question from chatbox`} />
+                                        <ListItemText sx={{ ml: 1 }} primary='question' secondary='用户在对话框中输入的问题' />
                                     </ListItem>
                                 </ListItemButton>
                                 <ListItemButton
@@ -108,16 +108,12 @@ const SelectVariable = ({ availableNodesForVariable, disabled = false, onSelectA
                                                         padding: 10,
                                                         objectFit: 'contain'
                                                     }}
-                                                    alt='chatHistory'
+                                                    alt='对话历史'
                                                     src={chatPNG}
                                                 />
                                             </div>
                                         </ListItemAvatar>
-                                        <ListItemText
-                                            sx={{ ml: 1 }}
-                                            primary='chat_history'
-                                            secondary={`Past conversation history between user and AI`}
-                                        />
+                                        <ListItemText sx={{ ml: 1 }} primary='chat_history' secondary='用户与 AI 之间的历史对话' />
                                     </ListItem>
                                 </ListItemButton>
                                 <ListItemButton
@@ -147,7 +143,7 @@ const SelectVariable = ({ availableNodesForVariable, disabled = false, onSelectA
                                                         padding: 10,
                                                         objectFit: 'contain'
                                                     }}
-                                                    alt='fileAttachment'
+                                                    alt='文件附件'
                                                     src={fileAttachmentPNG}
                                                 />
                                             </div>
@@ -155,7 +151,7 @@ const SelectVariable = ({ availableNodesForVariable, disabled = false, onSelectA
                                         <ListItemText
                                             sx={{ ml: 1 }}
                                             primary='file_attachment'
-                                            secondary={`Files uploaded from the chat when Full File Upload is enabled on the Configuration`}
+                                            secondary='在配置中启用完整文件上传后，用户从对话中上传的文件'
                                         />
                                     </ListItem>
                                 </ListItemButton>
@@ -211,7 +207,7 @@ const SelectVariable = ({ availableNodesForVariable, disabled = false, onSelectA
                                                         secondary={
                                                             node.data.name === 'ifElseFunction'
                                                                 ? `${node.data.description}`
-                                                                : `${selectedOutputAnchor?.label ?? 'output'} from ${node.data.label}`
+                                                                : `${selectedOutputAnchor?.label ?? '输出'}（来自 ${node.data.label}）`
                                                         }
                                                     />
                                                 </ListItem>
@@ -248,7 +244,7 @@ const SelectVariable = ({ availableNodesForVariable, disabled = false, onSelectA
                                                                 padding: 10,
                                                                 objectFit: 'contain'
                                                             }}
-                                                            alt='state'
+                                                            alt='流程状态'
                                                             src={diskPNG}
                                                         />
                                                     </div>

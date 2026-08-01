@@ -16,7 +16,7 @@ describe('authenticated API key management', () => {
         cy.intercept('POST', '**/api/v1/apikey').as('createApiKey')
         cy.get('#btn_createApiKey').click()
         cy.get('#keyName').type(keyName)
-        cy.contains('.permission-category h3', 'CHATFLOWS')
+        cy.contains('.permission-category h3', '聊天流')
             .parents('.permission-category')
             .first()
             .find('input[type="checkbox"]')
@@ -45,7 +45,7 @@ describe('authenticated API key management', () => {
         cy.get('[role="dialog"]')
             .should('be.visible')
             .within(() => {
-                cy.contains('button', 'Delete').click()
+                cy.contains('button', '删除').click()
             })
         cy.wait('@deleteApiKey').its('response.statusCode').should('eq', 200)
         cy.contains('暂无 API 密钥').should('be.visible')

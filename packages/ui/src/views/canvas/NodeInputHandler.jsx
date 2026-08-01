@@ -92,6 +92,7 @@ import {
     isValidConnection,
     getAvailableNodesForVariable
 } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 
 // const
@@ -185,12 +186,12 @@ const NodeInputHandler = ({
             setWebhookSecretPlaintext(resp.data.webhookSecret)
             dispatch({ type: SET_CHATFLOW, chatflow: { ...canvasChatflow, webhookSecretConfigured: true } })
             enqueueSnackbar({
-                message: 'Webhook secret generated.',
+                message: 'Webhook 密钥已生成',
                 options: { key: new Date().getTime() + Math.random(), variant: 'success' }
             })
         } catch (error) {
             enqueueSnackbar({
-                message: error?.response?.data?.message || 'Failed to generate webhook secret.',
+                message: getErrorMessage(error, '生成 Webhook 密钥失败，请稍后重试'),
                 options: { key: new Date().getTime() + Math.random(), variant: 'error' }
             })
         }
@@ -203,12 +204,12 @@ const NodeInputHandler = ({
             setWebhookSecretPlaintext(null)
             dispatch({ type: SET_CHATFLOW, chatflow: { ...canvasChatflow, webhookSecretConfigured: false } })
             enqueueSnackbar({
-                message: 'Webhook secret removed.',
+                message: 'Webhook 密钥已移除',
                 options: { key: new Date().getTime() + Math.random(), variant: 'success' }
             })
         } catch (error) {
             enqueueSnackbar({
-                message: error?.response?.data?.message || 'Failed to remove webhook secret.',
+                message: getErrorMessage(error, '移除 Webhook 密钥失败，请稍后重试'),
                 options: { key: new Date().getTime() + Math.random(), variant: 'error' }
             })
         }
@@ -253,8 +254,8 @@ const NodeInputHandler = ({
             nodes: reactFlowInstance?.getNodes() || [],
             edges: reactFlowInstance?.getEdges() || [],
             nodeId: data.id,
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         if (inputParam.acceptVariable) {
             setExpandRichDialogProps(dialogProps)
@@ -270,8 +271,8 @@ const NodeInputHandler = ({
             data,
             inputParam,
             disabled,
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setConditionDialogProps(dialogProps)
         setShowConditionDialog(true)
@@ -297,8 +298,8 @@ const NodeInputHandler = ({
             relativeLinksMethod,
             limit,
             selectedLinks,
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setManageScrapedLinksDialogProps(dialogProps)
         setShowManageScrapedLinksDialog(true)
@@ -351,8 +352,8 @@ const NodeInputHandler = ({
                                     editable: true,
                                     valueOptions: keys
                                 })
-                            } catch (error) {
-                                console.error('Error parsing stateMemory', error)
+                            } catch {
+                                // Ignore invalid legacy state metadata and keep the field editable.
                             }
                         }
                     }
@@ -378,7 +379,7 @@ const NodeInputHandler = ({
                     for (const node of nodes) {
                         preLoadOptions.push({
                             value: `$${node.id}`,
-                            label: `Output from ${node.data.id}`
+                            label: `来自 ${node.data.id} 的输出`
                         })
                     }
                 }
@@ -403,11 +404,11 @@ const NodeInputHandler = ({
                                     for (const key of keys) {
                                         preLoadOptions.push({
                                             value: `$flow.state.${key}`,
-                                            label: `Value from ${key}`
+                                            label: `来自 ${key} 的值`
                                         })
                                     }
-                                } catch (error) {
-                                    console.error('Error parsing stateMemory', error)
+                                } catch {
+                                    // Ignore invalid legacy state metadata and keep the field editable.
                                 }
                             }
                         }
@@ -479,7 +480,7 @@ const NodeInputHandler = ({
                 preLoadOptions.push({
                     name: `{{ ${node.data.id} }}`,
                     label: `{{ ${node.data.id} }}`,
-                    description: `Output from ${node.data.id}`
+                    description: `来自 ${node.data.id} 的输出`
                 })
             }
         }
@@ -618,8 +619,9 @@ const NodeInputHandler = ({
                 setAvailableChatModels(chatModels)
                 setAvailableChatModelsOptions(chatModelsOptions)
             }
-        } catch (error) {
-            console.error('Error loading chat models:', error)
+        } catch {
+            setAvailableChatModels([])
+            setAvailableChatModelsOptions([])
         }
     }
 
@@ -715,10 +717,9 @@ const NodeInputHandler = ({
                     })
                 }
             } catch (error) {
-                console.error('Error generating doc store tool desc', error)
                 setLoading(false)
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: getErrorMessage(error, '生成文档库工具描述失败，请稍后重试'),
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -763,10 +764,9 @@ const NodeInputHandler = ({
                     })
                 }
             } catch (error) {
-                console.error('Error generating doc store tool desc', error)
                 setLoading(false)
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: getErrorMessage(error, '生成文档库工具描述失败，请稍后重试'),
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -907,7 +907,7 @@ const NodeInputHandler = ({
                                         onClick={() => onShowPromptHubButtonClicked()}
                                         endIcon={<IconAutoFixHigh />}
                                     >
-                                        Langchain Hub
+                                        LangChain Hub
                                     </Button>
                                     <PromptLangsmithHubDialog
                                         promptType={inputParam.name}
@@ -974,7 +974,7 @@ const NodeInputHandler = ({
                             )}
                             {inputParam.generateDocStoreDescription && (
                                 <IconButton
-                                    title='Generate knowledge base description'
+                                    title='生成知识库描述'
                                     sx={{
                                         height: 25,
                                         width: 25
@@ -988,7 +988,7 @@ const NodeInputHandler = ({
                             )}
                             {inputParam.generateInstruction && (
                                 <IconButton
-                                    title='Generate instructions'
+                                    title='生成说明'
                                     sx={{
                                         height: 25,
                                         width: 25,
@@ -1085,7 +1085,9 @@ const NodeInputHandler = ({
                                 disabled={disabled}
                                 fileType={inputParam.fileType || '*'}
                                 onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
-                                value={data.inputs[inputParam.name] ?? inputParam.default ?? 'Choose a file to upload'}
+                                value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
+                                placeholder='选择要上传的文件'
+                                buttonText='上传文件'
                             />
                         )}
                         {inputParam.type === 'boolean' && (
@@ -1115,7 +1117,7 @@ const NodeInputHandler = ({
                                                 setReloadTimestamp(Date.now().toString())
                                             }}
                                         >
-                                            See Example
+                                            查看示例
                                         </Button>
                                     )}
                                 </div>
@@ -1154,14 +1156,14 @@ const NodeInputHandler = ({
                                     readOnly: true,
                                     endAdornment: chatflowId ? (
                                         <InputAdornment position='end'>
-                                            <Tooltip title='Copy URL'>
+                                            <Tooltip title='复制 URL'>
                                                 <IconButton
                                                     size='small'
                                                     onClick={() => {
                                                         navigator.clipboard.writeText(webhookUrlBase).then(
                                                             () =>
                                                                 enqueueSnackbar({
-                                                                    message: 'URL copied!',
+                                                                    message: 'URL 已复制',
                                                                     options: {
                                                                         key: new Date().getTime() + Math.random(),
                                                                         variant: 'success'
@@ -1169,7 +1171,7 @@ const NodeInputHandler = ({
                                                                 }),
                                                             () =>
                                                                 enqueueSnackbar({
-                                                                    message: 'Failed to copy URL.',
+                                                                    message: '复制 URL 失败',
                                                                     options: { key: new Date().getTime() + Math.random(), variant: 'error' }
                                                                 })
                                                         )
@@ -1206,15 +1208,15 @@ const NodeInputHandler = ({
                                                 }
                                             }}
                                         >
-                                            Generate a secret below — without one, every incoming webhook request will be rejected.
+                                            请在下方生成密钥；未配置密钥时，系统将拒绝所有传入的 Webhook 请求。
                                         </Alert>
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                             <Typography variant='body2' sx={{ color: 'text.secondary', flexGrow: 1 }}>
-                                                No secret configured
+                                                尚未配置密钥
                                             </Typography>
                                             {chatflowId && (
                                                 <Button size='small' variant='outlined' onClick={handleSetWebhookSecret}>
-                                                    Generate Secret
+                                                    生成密钥
                                                 </Button>
                                             )}
                                         </Box>
@@ -1232,14 +1234,14 @@ const NodeInputHandler = ({
                                             endAdornment: (
                                                 <InputAdornment position='end' sx={{ gap: 0.5 }}>
                                                     {webhookSecretPlaintext && (
-                                                        <Tooltip title='Copy secret'>
+                                                        <Tooltip title='复制密钥'>
                                                             <IconButton
                                                                 size='small'
                                                                 onClick={() => {
                                                                     navigator.clipboard.writeText(webhookSecretPlaintext).then(
                                                                         () =>
                                                                             enqueueSnackbar({
-                                                                                message: 'Secret copied!',
+                                                                                message: '密钥已复制',
                                                                                 options: {
                                                                                     key: new Date().getTime() + Math.random(),
                                                                                     variant: 'success'
@@ -1247,7 +1249,7 @@ const NodeInputHandler = ({
                                                                             }),
                                                                         () =>
                                                                             enqueueSnackbar({
-                                                                                message: 'Failed to copy secret.',
+                                                                                message: '复制密钥失败',
                                                                                 options: {
                                                                                     key: new Date().getTime() + Math.random(),
                                                                                     variant: 'error'
@@ -1487,7 +1489,7 @@ const NodeInputHandler = ({
                                             )
                                         }
                                     >
-                                        Manage Links
+                                        管理链接
                                     </Button>
                                     <ManageScrapedLinksDialog
                                         show={showManageScrapedLinksDialog}

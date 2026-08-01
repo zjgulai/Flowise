@@ -194,7 +194,7 @@ function CustomLabel({ icon: Icon, itemStatus, children, name, label, data, meta
                     {data ? (
                         <NodeExecutionDetails data={data} label={label} metadata={metadata} />
                     ) : (
-                        <Typography color='text.secondary'>No data available for this item</Typography>
+                        <Typography color='text.secondary'>此项暂无可用数据</Typography>
                     )}
                 </DialogContent>
                 <DialogActions>
@@ -411,7 +411,7 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
 
                 // Create a virtual node for this iteration
                 const iterationNodeId = `${parentId}_${iterationIndex}`
-                const iterationLabel = `Iteration #${iterationIndex}`
+                const iterationLabel = `第 ${iterationIndex} 次迭代`
 
                 // Determine status based on child nodes
                 const childNodes = nodeIds.map((id) => nodeMap.get(id))
@@ -718,7 +718,7 @@ const AgentExecutedDataCard = ({ status, execution, agentflowId, sessionId }) =>
                             fontWeight: 500
                         }}
                     >
-                        Process Flow
+                        执行流程
                     </Typography>
                 </AccordionSummary>
                 <Divider />

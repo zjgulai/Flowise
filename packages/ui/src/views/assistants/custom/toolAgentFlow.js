@@ -214,7 +214,7 @@ export const toolAgentFlow = {
                         id: 'chatOpenAI_0-output-chatOpenAI-ChatOpenAI|BaseChatModel|BaseLanguageModel|Runnable',
                         name: 'chatOpenAI',
                         label: 'ChatOpenAI',
-                        description: 'Wrapper around OpenAI large language models that use the Chat endpoint',
+                        description: '封装使用聊天端点的 OpenAI 大语言模型',
                         type: 'ChatOpenAI | BaseChatModel | BaseLanguageModel | Runnable'
                     }
                 ],

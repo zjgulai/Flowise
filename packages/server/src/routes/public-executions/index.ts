@@ -5,7 +5,7 @@ const router = express.Router()
 // CREATE
 
 // READ
-router.get(['/', '/:id'], executionController.getPublicExecutionById)
+router.get('/:id', executionController.getPublicExecutionById)
 
 // UPDATE
 

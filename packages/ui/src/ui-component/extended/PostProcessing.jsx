@@ -34,15 +34,16 @@ import ExpandTextDialog from '@/ui-component/dialog/ExpandTextDialog'
 // store
 import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackbarAction, SET_CHATFLOW } from '@/store/actions'
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // API
 import chatflowsApi from '@/api/chatflows'
 
-const sampleFunction = `// Access chat history as a string
+const sampleFunction = `// 将对话历史读取为字符串
 const chatHistory = JSON.stringify($flow.chatHistory, null, 2); 
 
-// Return a modified response
-return $flow.rawOutput + " This is a post processed response!";`
+// 返回处理后的响应
+return $flow.rawOutput + " 这是经过后处理的响应！";`
 
 const PostProcessing = ({ dialogProps }) => {
     const dispatch = useDispatch()
@@ -75,8 +76,8 @@ const PostProcessing = ({ dialogProps }) => {
                 hideCodeExecute: true
             },
             languageType: 'js',
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setExpandDialogProps(dialogProps)
         setShowExpandDialog(true)
@@ -96,7 +97,7 @@ const PostProcessing = ({ dialogProps }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Post Processing Settings Saved',
+                    message: '后处理设置已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -111,9 +112,7 @@ const PostProcessing = ({ dialogProps }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to save Post Processing Settings: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存后处理设置失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -146,11 +145,11 @@ const PostProcessing = ({ dialogProps }) => {
     return (
         <>
             <Box sx={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <SwitchInput label='Enable Post Processing' onChange={handleChange} value={postProcessingEnabled} />
+                <SwitchInput label='启用后处理' onChange={handleChange} value={postProcessingEnabled} />
             </Box>
             <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
                 <Box sx={{ width: '100%', display: 'flex', alignItems: 'center' }}>
-                    <Typography>JS Function</Typography>
+                    <Typography>脚本函数</Typography>
                     <Button
                         sx={{ ml: 2 }}
                         variant='outlined'
@@ -158,7 +157,7 @@ const PostProcessing = ({ dialogProps }) => {
                             setPostProcessingFunction(sampleFunction)
                         }}
                     >
-                        See Example
+                        查看示例
                     </Button>
                     <div style={{ flex: 1 }} />
                     <IconButton
@@ -215,11 +214,11 @@ const PostProcessing = ({ dialogProps }) => {
                     }}
                 >
                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                        <Typography sx={{ fontSize: '0.875rem', fontWeight: 500 }}>Available Variables</Typography>
+                        <Typography sx={{ fontSize: '0.875rem', fontWeight: 500 }}>可用变量</Typography>
                     </AccordionSummary>
                     <AccordionDetails sx={{ p: 0 }}>
                         <TableContainer component={Paper} elevation={0} sx={{ boxShadow: 'none', bgcolor: 'transparent' }}>
-                            <Table size='small' aria-label='available variables table'>
+                            <Table size='small' aria-label='可用变量表'>
                                 <TableHead>
                                     <TableRow>
                                         <TableCell
@@ -232,7 +231,7 @@ const PostProcessing = ({ dialogProps }) => {
                                                 borderColor: customization.isDarkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'
                                             }}
                                         >
-                                            Variable
+                                            变量
                                         </TableCell>
                                         <TableCell
                                             sx={{
@@ -244,7 +243,7 @@ const PostProcessing = ({ dialogProps }) => {
                                                 borderColor: customization.isDarkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'
                                             }}
                                         >
-                                            Type
+                                            类型
                                         </TableCell>
                                         <TableCell
                                             sx={{
@@ -256,7 +255,7 @@ const PostProcessing = ({ dialogProps }) => {
                                                 borderColor: customization.isDarkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'
                                             }}
                                         >
-                                            Description
+                                            说明
                                         </TableCell>
                                     </TableRow>
                                 </TableHead>
@@ -274,71 +273,71 @@ const PostProcessing = ({ dialogProps }) => {
                                         <TableCell>
                                             <code>$flow.rawOutput</code>
                                         </TableCell>
-                                        <TableCell>string</TableCell>
-                                        <TableCell>The raw output response from the flow</TableCell>
+                                        <TableCell>字符串</TableCell>
+                                        <TableCell>流程的原始输出响应</TableCell>
                                     </TableRow>
                                     <TableRow>
                                         <TableCell>
                                             <code>$flow.input</code>
                                         </TableCell>
-                                        <TableCell>string</TableCell>
-                                        <TableCell>The user input message</TableCell>
+                                        <TableCell>字符串</TableCell>
+                                        <TableCell>用户输入消息</TableCell>
                                     </TableRow>
                                     <TableRow>
                                         <TableCell>
                                             <code>$flow.chatHistory</code>
                                         </TableCell>
-                                        <TableCell>array</TableCell>
-                                        <TableCell>Array of previous messages in the conversation</TableCell>
+                                        <TableCell>数组</TableCell>
+                                        <TableCell>对话中的历史消息数组</TableCell>
                                     </TableRow>
                                     <TableRow>
                                         <TableCell>
                                             <code>$flow.chatflowId</code>
                                         </TableCell>
-                                        <TableCell>string</TableCell>
-                                        <TableCell>Unique identifier for the chatflow</TableCell>
+                                        <TableCell>字符串</TableCell>
+                                        <TableCell>对话流程的唯一标识</TableCell>
                                     </TableRow>
                                     <TableRow>
                                         <TableCell>
                                             <code>$flow.sessionId</code>
                                         </TableCell>
-                                        <TableCell>string</TableCell>
-                                        <TableCell>Current session identifier</TableCell>
+                                        <TableCell>字符串</TableCell>
+                                        <TableCell>当前会话标识</TableCell>
                                     </TableRow>
                                     <TableRow>
                                         <TableCell>
                                             <code>$flow.chatId</code>
                                         </TableCell>
-                                        <TableCell>string</TableCell>
-                                        <TableCell>Current chat identifier</TableCell>
+                                        <TableCell>字符串</TableCell>
+                                        <TableCell>当前对话标识</TableCell>
                                     </TableRow>
                                     <TableRow>
                                         <TableCell>
                                             <code>$flow.sourceDocuments</code>
                                         </TableCell>
-                                        <TableCell>array</TableCell>
-                                        <TableCell>Source documents used in retrieval (if applicable)</TableCell>
+                                        <TableCell>数组</TableCell>
+                                        <TableCell>检索时使用的来源文档（如适用）</TableCell>
                                     </TableRow>
                                     <TableRow>
                                         <TableCell>
                                             <code>$flow.usedTools</code>
                                         </TableCell>
-                                        <TableCell>array</TableCell>
-                                        <TableCell>List of tools used during execution</TableCell>
+                                        <TableCell>数组</TableCell>
+                                        <TableCell>执行期间使用的工具列表</TableCell>
                                     </TableRow>
                                     <TableRow>
                                         <TableCell>
                                             <code>$flow.artifacts</code>
                                         </TableCell>
-                                        <TableCell>array</TableCell>
-                                        <TableCell>List of artifacts generated during execution</TableCell>
+                                        <TableCell>数组</TableCell>
+                                        <TableCell>执行期间生成的内容列表</TableCell>
                                     </TableRow>
                                     <TableRow>
                                         <TableCell>
                                             <code>$flow.fileAnnotations</code>
                                         </TableCell>
-                                        <TableCell>array</TableCell>
-                                        <TableCell>File annotations associated with the response</TableCell>
+                                        <TableCell>数组</TableCell>
+                                        <TableCell>与响应关联的文件注解</TableCell>
                                     </TableRow>
                                 </TableBody>
                             </Table>
@@ -353,7 +352,7 @@ const PostProcessing = ({ dialogProps }) => {
                     onClick={onSave}
                     sx={{ minWidth: 100 }}
                 >
-                    Save
+                    保存
                 </StyledButton>
             </Box>
             <ExpandTextDialog

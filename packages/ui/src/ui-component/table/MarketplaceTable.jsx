@@ -66,7 +66,7 @@ export const MarketplaceTable = ({
     return (
         <>
             <TableContainer sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }} component={Paper}>
-                <Table sx={{ minWidth: 650 }} size='small' aria-label='a dense table'>
+                <Table sx={{ minWidth: 650 }} size='small' aria-label='模板市场表'>
                     <TableHead
                         sx={{
                             backgroundColor: customization.isDarkMode ? theme.palette.common.black : theme.palette.grey[100],
@@ -75,19 +75,19 @@ export const MarketplaceTable = ({
                     >
                         <TableRow>
                             <StyledTableCell sx={{ minWidth: '150px' }} component='th' scope='row' key='0'>
-                                Name
+                                名称
                             </StyledTableCell>
                             <StyledTableCell sx={{ minWidth: '100px' }} component='th' scope='row' key='1'>
-                                Type
+                                类型
                             </StyledTableCell>
                             <StyledTableCell key='2'>描述</StyledTableCell>
                             <StyledTableCell sx={{ minWidth: '100px' }} key='3'>
-                                Framework
+                                框架
                             </StyledTableCell>
                             <StyledTableCell sx={{ minWidth: '100px' }} key='4'>
-                                Use cases
+                                使用场景
                             </StyledTableCell>
-                            <StyledTableCell key='5'>Badges</StyledTableCell>
+                            <StyledTableCell key='5'>标签</StyledTableCell>
                             <StyledTableCell component='th' scope='row' key='6'></StyledTableCell>
                         </TableRow>
                     </TableHead>
@@ -230,7 +230,7 @@ export const MarketplaceTable = ({
                                             </StyledTableCell>
                                             <StyledTableCell key='6' colSpan={row.shared ? 2 : undefined}>
                                                 {row.shared ? (
-                                                    <Typography>Shared Template</Typography>
+                                                    <Typography>已共享模板</Typography>
                                                 ) : (
                                                     <>
                                                         {onShare && (

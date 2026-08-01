@@ -42,7 +42,7 @@ export const ToolsTable = ({ data, isLoading, onSelect }) => {
     return (
         <>
             <TableContainer sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }} component={Paper}>
-                <Table sx={{ minWidth: 650 }} size='small' aria-label='a dense table'>
+                <Table sx={{ minWidth: 650 }} size='small' aria-label='工具列表'>
                     <TableHead
                         sx={{
                             backgroundColor: customization.isDarkMode ? theme.palette.common.black : theme.palette.grey[100],
@@ -51,7 +51,7 @@ export const ToolsTable = ({ data, isLoading, onSelect }) => {
                     >
                         <TableRow>
                             <StyledTableCell component='th' scope='row' key='0'>
-                                Name
+                                名称
                             </StyledTableCell>
                             <StyledTableCell key='1'>描述</StyledTableCell>
                             <StyledTableCell component='th' scope='row' key='3'>

@@ -18,6 +18,7 @@ import chatflowsApi from '@/api/chatflows'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 const RateLimit = ({ dialogProps, hideTitle = false }) => {
     const dispatch = useDispatch()
@@ -46,7 +47,7 @@ const RateLimit = ({ dialogProps, hideTitle = false }) => {
             const rateLimitValuesBoolean = [!limitMax, !limitDuration, !limitMsg]
             const rateLimitFilledValues = rateLimitValuesBoolean.filter((value) => value === false)
             if (rateLimitFilledValues.length >= 1 && rateLimitFilledValues.length <= 2) {
-                throw new Error('Need to fill all rate limit input fields')
+                throw new Error('请填写所有速率限制字段')
             } else if (rateLimitFilledValues.length === 3) {
                 obj = {
                     ...obj,
@@ -80,7 +81,7 @@ const RateLimit = ({ dialogProps, hideTitle = false }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Rate Limit Configuration Saved',
+                    message: '速率限制配置已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -95,9 +96,7 @@ const RateLimit = ({ dialogProps, hideTitle = false }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to save Rate Limit Configuration: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存速率限制配置失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -150,26 +149,26 @@ const RateLimit = ({ dialogProps, hideTitle = false }) => {
         <Stack direction='column' spacing={2} sx={{ width: '100%' }}>
             {!hideTitle && (
                 <Typography variant='h3'>
-                    Rate Limit{' '}
+                    速率限制{' '}
                     <TooltipWithParser
                         style={{ marginLeft: 10 }}
                         title={
-                            'Visit <a target="_blank" href="https://docs.flowiseai.com/configuration/rate-limit">Rate Limit Setup Guide</a> to set up Rate Limit correctly in your hosting environment.'
+                            '请参阅<a target="_blank" href="https://docs.flowiseai.com/configuration/rate-limit">速率限制设置指南</a>，在托管环境中正确配置速率限制。'
                         }
                     />
                 </Typography>
             )}
-            <SwitchInput label='Enable Rate Limit' onChange={handleChange} value={rateLimitStatus} />
+            <SwitchInput label='启用速率限制' onChange={handleChange} value={rateLimitStatus} />
             {rateLimitStatus && (
                 <Stack direction='column' spacing={2} sx={{ width: '100%' }}>
-                    {textField(limitMax, 'limitMax', 'Message Limit per Duration', 'number', '5')}
-                    {textField(limitDuration, 'limitDuration', 'Duration in Second', 'number', '60')}
-                    {textField(limitMsg, 'limitMsg', 'Limit Message', 'string', 'You have reached the quota')}
+                    {textField(limitMax, 'limitMax', '每个周期的消息上限', 'number', '5')}
+                    {textField(limitDuration, 'limitDuration', '周期时长（秒）', 'number', '60')}
+                    {textField(limitMsg, 'limitMsg', '达到上限时的提示消息', 'string', '您已达到使用上限')}
                 </Stack>
             )}
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
                 <StyledButton disabled={checkDisabled()} variant='contained' onClick={() => onSave()} sx={{ minWidth: 100 }}>
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </Stack>

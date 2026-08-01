@@ -44,6 +44,7 @@ import useConfirm from '@/hooks/useConfirm'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // Icons
 import { IconTrash, IconEdit, IconX, IconPlus, IconVariable } from '@tabler/icons-react'
@@ -123,8 +124,8 @@ const Variables = () => {
     const addNew = () => {
         const dialogProp = {
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加',
             customBtnId: 'btn_confirmAddingVariable',
             data: {}
         }
@@ -135,8 +136,8 @@ const Variables = () => {
     const edit = (variable) => {
         const dialogProp = {
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             data: variable
         }
         setVariableDialogProps(dialogProp)
@@ -145,10 +146,10 @@ const Variables = () => {
 
     const deleteVariable = async (variable) => {
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete variable ${variable.name}?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除变量',
+            description: `确定删除变量“${variable.name}”吗？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -157,7 +158,7 @@ const Variables = () => {
                 const deleteResp = await variablesApi.deleteVariable(variable.id)
                 if (deleteResp.data) {
                     enqueueSnackbar({
-                        message: 'Variable deleted',
+                        message: '变量已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -172,9 +173,7 @@ const Variables = () => {
                 }
             } catch (error) {
                 enqueueSnackbar({
-                    message: `Failed to delete Variable: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `删除变量失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -222,12 +221,12 @@ const Variables = () => {
                         <ViewHeader
                             onSearchChange={onSearchChange}
                             search={true}
-                            searchPlaceholder='Search Variables'
+                            searchPlaceholder='搜索变量'
                             title='变量'
                             description='创建和管理全局变量'
                         >
                             <Button variant='outlined' sx={{ borderRadius: 2, height: '100%' }} onClick={() => setShowHowToDialog(true)}>
-                                How To Use
+                                使用说明
                             </Button>
                             <StyledPermissionButton
                                 permissionId={'variables:create'}
@@ -237,7 +236,7 @@ const Variables = () => {
                                 startIcon={<IconPlus />}
                                 id='btn_createVariable'
                             >
-                                Add Variable
+                                添加变量
                             </StyledPermissionButton>
                         </ViewHeader>
                         {!isLoading && variables.length === 0 ? (
@@ -246,7 +245,7 @@ const Variables = () => {
                                     <img
                                         style={{ objectFit: 'cover', height: '20vh', width: 'auto' }}
                                         src={VariablesEmptySVG}
-                                        alt='VariablesEmptySVG'
+                                        alt='暂无变量'
                                     />
                                 </Box>
                                 <div>暂无变量</div>
@@ -257,7 +256,7 @@ const Variables = () => {
                                     sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }}
                                     component={Paper}
                                 >
-                                    <Table sx={{ minWidth: 650 }} aria-label='simple table'>
+                                    <Table sx={{ minWidth: 650 }} aria-label='变量列表'>
                                         <TableHead
                                             sx={{
                                                 backgroundColor: customization.isDarkMode
@@ -270,8 +269,8 @@ const Variables = () => {
                                                 <StyledTableCell>名称</StyledTableCell>
                                                 <StyledTableCell>值</StyledTableCell>
                                                 <StyledTableCell>类型</StyledTableCell>
-                                                <StyledTableCell>末页 已更新</StyledTableCell>
-                                                <StyledTableCell>已创建</StyledTableCell>
+                                                <StyledTableCell>最近更新</StyledTableCell>
+                                                <StyledTableCell>创建时间</StyledTableCell>
                                                 <Available permissionId={'variables:update'}>
                                                     <StyledTableCell> </StyledTableCell>
                                                 </Available>
@@ -378,14 +377,20 @@ const Variables = () => {
                                                                 <Chip
                                                                     color={variable.type === 'static' ? 'info' : 'secondary'}
                                                                     size='small'
-                                                                    label={variable.type}
+                                                                    label={
+                                                                        variable.type === 'static'
+                                                                            ? '静态'
+                                                                            : variable.type === 'runtime'
+                                                                            ? '运行时'
+                                                                            : variable.type
+                                                                    }
                                                                 />
                                                             </StyledTableCell>
                                                             <StyledTableCell>
-                                                                {moment(variable.updatedDate).format('MMMM Do, YYYY HH:mm:ss')}
+                                                                {moment(variable.updatedDate).format('YYYY-MM-DD HH:mm:ss')}
                                                             </StyledTableCell>
                                                             <StyledTableCell>
-                                                                {moment(variable.createdDate).format('MMMM Do, YYYY HH:mm:ss')}
+                                                                {moment(variable.createdDate).format('YYYY-MM-DD HH:mm:ss')}
                                                             </StyledTableCell>
                                                             <Available permission={'variables:create,variables:update'}>
                                                                 <StyledTableCell>

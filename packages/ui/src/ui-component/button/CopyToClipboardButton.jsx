@@ -12,7 +12,7 @@ const CopyToClipboardButton = (props) => {
             onClick={props.onClick}
             size='small'
             sx={{ background: 'transparent', border: 'none' }}
-            title='Copy to clipboard'
+            title='复制到剪贴板'
         >
             <IconClipboard
                 style={{ width: '20px', height: '20px' }}

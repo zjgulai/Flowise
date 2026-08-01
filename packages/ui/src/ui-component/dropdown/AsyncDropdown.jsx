@@ -54,8 +54,8 @@ const fetchList = async ({ name, nodeData, previousNodes, currentNode }) => {
         .then(async function (response) {
             return response.data
         })
-        .catch(function (error) {
-            console.error(error)
+        .catch(function () {
+            return []
         })
     return lists
 }
@@ -93,7 +93,7 @@ export const AsyncDropdown = ({
         return options.find((option) => option.name === value)
     }
     const getDefaultOptionValue = () => (multiple ? [] : '')
-    const addNewOption = [{ label: '- Create New -', name: '-create-' }]
+    const addNewOption = [{ label: '- 新建 -', name: '-create-' }]
     let [internalValue, setInternalValue] = useState(value ?? 'choose an option')
     const { reactFlowInstance } = useContext(flowContext)
 
@@ -117,8 +117,8 @@ export const AsyncDropdown = ({
                 }
                 return returnList
             }
-        } catch (error) {
-            console.error(error)
+        } catch {
+            return []
         }
     }
 
@@ -244,7 +244,7 @@ export const AsyncDropdown = ({
                                                     key={option.name}
                                                     component='img'
                                                     src={option.imageSrc}
-                                                    alt={option.label || 'Selected Option'}
+                                                    alt={option.label || '已选选项'}
                                                     sx={{
                                                         width: 32,
                                                         height: 32,

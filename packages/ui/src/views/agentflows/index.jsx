@@ -216,11 +216,11 @@ const Agentflows = () => {
                         })
                     })
                 }
-            } catch (e) {
-                console.error(e)
+            } catch {
+                setError(new Error('agentflow_data_invalid'))
             }
         }
-    }, [getAllAgentflows.data])
+    }, [getAllAgentflows.data, setError])
 
     return (
         <MainCard>
@@ -252,7 +252,7 @@ const Agentflows = () => {
                                 value='v2'
                                 title='V2'
                             >
-                                <Chip sx={{ mr: 1 }} label='NEW' size='small' color='primary' />
+                                <Chip sx={{ mr: 1 }} label='新功能' size='small' color='primary' />
                                 V2
                             </ToggleButton>
                             <ToggleButton

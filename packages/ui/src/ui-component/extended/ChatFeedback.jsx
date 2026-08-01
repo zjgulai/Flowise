@@ -13,6 +13,7 @@ import { SwitchInput } from '@/ui-component/switch/Switch'
 // store
 import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackbarAction, SET_CHATFLOW } from '@/store/actions'
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // API
 import chatflowsApi from '@/api/chatflows'
@@ -45,7 +46,7 @@ const ChatFeedback = ({ dialogProps, onConfirm }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Chat Feedback Settings Saved',
+                    message: '对话反馈设置已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -61,9 +62,7 @@ const ChatFeedback = ({ dialogProps, onConfirm }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to save Chat Feedback Settings: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存对话反馈设置失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -92,10 +91,10 @@ const ChatFeedback = ({ dialogProps, onConfirm }) => {
 
     return (
         <Stack direction='column' spacing={2} sx={{ width: '100%' }}>
-            <SwitchInput label='Enable chat feedback' onChange={handleChange} value={chatFeedbackStatus} />
+            <SwitchInput label='启用对话反馈' onChange={handleChange} value={chatFeedbackStatus} />
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
                 <StyledButton variant='contained' onClick={onSave} sx={{ minWidth: 100 }}>
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </Stack>

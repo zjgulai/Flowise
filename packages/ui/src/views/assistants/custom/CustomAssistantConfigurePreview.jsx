@@ -55,6 +55,7 @@ import { SET_CHATFLOW, closeSnackbar as closeSnackbarAction, enqueueSnackbar as 
 
 // Utils
 import { initNode, showHideInputParams } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 import { toolAgentFlow } from './toolAgentFlow'
 
@@ -269,7 +270,7 @@ const CustomAssistantConfigurePreview = () => {
                     if (saveAssistantResp.data) {
                         setLoading(false)
                         enqueueSnackbar({
-                            message: 'Assistant saved successfully',
+                            message: '助手保存成功。',
                             options: {
                                 key: new Date().getTime() + Math.random(),
                                 variant: 'success',
@@ -285,9 +286,7 @@ const CustomAssistantConfigurePreview = () => {
             } catch (error) {
                 setLoading(false)
                 enqueueSnackbar({
-                    message: `Failed to save assistant: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `保存助手失败：${getErrorMessage(error, '未知错误')}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -331,8 +330,8 @@ const CustomAssistantConfigurePreview = () => {
                     id: `${toolId}-${toolId}-output-${tool.name}-Tool-${toolAgentId}-${toolAgentId}-input-tools-Tool`
                 }
                 edges.push(toolEdge)
-            } catch (error) {
-                console.error('Error adding tool', error)
+            } catch {
+                // Skip tools whose metadata cannot be converted into a flow node.
             }
         }
 
@@ -409,8 +408,8 @@ const CustomAssistantConfigurePreview = () => {
                     id: `${retrieverToolId}-${retrieverToolId}-output-retrieverTool-RetrieverTool|DynamicTool|Tool|StructuredTool|Runnable-${toolAgentId}-${toolAgentId}-input-tools-Tool`
                 }
                 edges.push(retrieverToolEdge)
-            } catch (error) {
-                console.error('Error adding doc store', error)
+            } catch {
+                // Skip document stores whose metadata cannot be converted into a flow node.
             }
         }
 
@@ -486,11 +485,8 @@ const CustomAssistantConfigurePreview = () => {
 
             return config
         } catch (error) {
-            console.error('Error preparing config', error)
             enqueueSnackbar({
-                message: `Failed to save assistant: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -525,7 +521,7 @@ const CustomAssistantConfigurePreview = () => {
             setViewLeadsDialogOpen(true)
         } else if (setting === 'chatflowConfiguration') {
             setChatflowConfigurationDialogProps({
-                title: `Assistant Configuration`,
+                title: '助手配置',
                 chatflow: canvas.chatflow
             })
             setChatflowConfigurationDialogOpen(true)
@@ -534,10 +530,10 @@ const CustomAssistantConfigurePreview = () => {
 
     const handleDeleteFlow = async () => {
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete ${selectedCustomAssistant.name}?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除助手',
+            description: `确定要删除“${selectedCustomAssistant.name}”吗？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -550,7 +546,7 @@ const CustomAssistantConfigurePreview = () => {
                 navigate(-1)
             } catch (error) {
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: `删除助手失败：${getErrorMessage(error, '未知错误')}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -574,8 +570,8 @@ const CustomAssistantConfigurePreview = () => {
                 name: 'instructions',
                 type: 'string'
             },
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setExpandDialogProps(dialogProps)
         setShowExpandDialog(true)
@@ -611,7 +607,7 @@ const CustomAssistantConfigurePreview = () => {
                 })
                 setSelectedDocumentStores(newSelectedDocumentStores)
                 enqueueSnackbar({
-                    message: 'Document Store Tool Description generated successfully',
+                    message: '文档库工具说明生成成功。',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -624,10 +620,9 @@ const CustomAssistantConfigurePreview = () => {
                 })
             }
         } catch (error) {
-            console.error('Error generating doc store tool desc', error)
             setLoading(false)
             enqueueSnackbar({
-                message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                message: `生成文档库工具说明失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -650,8 +645,8 @@ const CustomAssistantConfigurePreview = () => {
         }
 
         setAssistantPromptGeneratorDialogProps({
-            title: 'Generate Instructions',
-            description: 'You can generate a prompt template by sharing basic details about your task.',
+            title: '生成指令',
+            description: '提供任务的基本信息，即可生成提示词模板。',
             data: { selectedChatModel }
         })
         setAssistantPromptGeneratorDialogOpen(true)
@@ -659,7 +654,7 @@ const CustomAssistantConfigurePreview = () => {
 
     const onAPIDialogClick = () => {
         setAPIDialogProps({
-            title: 'Embed in website or use as API',
+            title: '嵌入网站或通过 API 使用',
             chatflowid: customAssistantFlowId,
             chatflowApiKeyId: canvas.chatflow.apikeyid,
             isSessionMemory: true
@@ -777,8 +772,9 @@ const CustomAssistantConfigurePreview = () => {
                 if (assistantDetails.tools) {
                     setSelectedTools(assistantDetails.tools)
                 }
-            } catch (error) {
-                console.error('Error parsing assistant details', error)
+            } catch {
+                setSelectedDocumentStores([])
+                setSelectedTools([])
             }
         }
 
@@ -790,7 +786,7 @@ const CustomAssistantConfigurePreview = () => {
             const chatflow = getSpecificChatflowApi.data
             dispatch({ type: SET_CHATFLOW, chatflow })
         } else if (getSpecificChatflowApi.error) {
-            setError(`Failed to retrieve: ${getSpecificChatflowApi.error.response.data.message}`)
+            setError(`获取失败：${getErrorMessage(getSpecificChatflowApi.error, '未知错误')}`)
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -863,7 +859,7 @@ const CustomAssistantConfigurePreview = () => {
                                                     <StyledFab
                                                         size='small'
                                                         color='secondary'
-                                                        aria-label='back'
+                                                        aria-label='返回'
                                                         title='返回'
                                                         onClick={() => navigate(-1)}
                                                     >
@@ -875,7 +871,7 @@ const CustomAssistantConfigurePreview = () => {
                                                 </Box>
                                                 <div style={{ flex: 1 }}></div>
                                                 {customAssistantFlowId && !loadingAssistant && (
-                                                    <ButtonBase title='API Endpoint' sx={{ borderRadius: '50%', mr: 2 }}>
+                                                    <ButtonBase title='API 端点' sx={{ borderRadius: '50%', mr: 2 }}>
                                                         <Avatar
                                                             variant='rounded'
                                                             sx={{
@@ -897,7 +893,7 @@ const CustomAssistantConfigurePreview = () => {
                                                     </ButtonBase>
                                                 )}
                                                 <Available permission={'assistants:create'}>
-                                                    <ButtonBase title={`Save`} sx={{ borderRadius: '50%', mr: 2 }}>
+                                                    <ButtonBase title='保存' sx={{ borderRadius: '50%', mr: 2 }}>
                                                         <Avatar
                                                             variant='rounded'
                                                             sx={{
@@ -976,7 +972,7 @@ const CustomAssistantConfigurePreview = () => {
                                         >
                                             <div style={{ display: 'flex', flexDirection: 'row' }}>
                                                 <Typography>
-                                                    Select Model<span style={{ color: 'red' }}>&nbsp;*</span>
+                                                    选择模型<span style={{ color: 'red' }}>&nbsp;*</span>
                                                 </Typography>
                                             </div>
                                             <Dropdown
@@ -1013,7 +1009,7 @@ const CustomAssistantConfigurePreview = () => {
                                         >
                                             <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
                                                 <Typography>
-                                                    Instructions<span style={{ color: 'red' }}>&nbsp;*</span>
+                                                    指令<span style={{ color: 'red' }}>&nbsp;*</span>
                                                 </Typography>
                                                 <div style={{ flex: 1 }}></div>
                                                 <IconButton
@@ -1030,14 +1026,14 @@ const CustomAssistantConfigurePreview = () => {
                                                 </IconButton>
                                                 {selectedChatModel?.name && (
                                                     <Button
-                                                        title='Generate instructions using model'
+                                                        title='使用模型生成指令'
                                                         sx={{ borderRadius: 20 }}
                                                         size='small'
                                                         variant='text'
                                                         onClick={() => generateInstruction()}
                                                         startIcon={<IconWand size={20} />}
                                                     >
-                                                        Generate
+                                                        生成
                                                     </Button>
                                                 )}
                                             </Stack>
@@ -1061,8 +1057,8 @@ const CustomAssistantConfigurePreview = () => {
                                             }}
                                         >
                                             <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                                                <Typography>Knowledge (Document Stores)</Typography>
-                                                <TooltipWithParser title='Give your assistant context about different document sources. Document stores must be upserted in advance.' />
+                                                <Typography>知识（文档库）</Typography>
+                                                <TooltipWithParser title='为助手提供来自不同文档库的上下文。使用前需先完成文档库数据写入。' />
                                             </Stack>
                                             <MultiDropdown
                                                 key={JSON.stringify(selectedDocumentStores)}
@@ -1080,9 +1076,9 @@ const CustomAssistantConfigurePreview = () => {
                                             {selectedDocumentStores.length > 0 && (
                                                 <Stack sx={{ mt: 3, position: 'relative', alignItems: 'center' }} direction='row'>
                                                     <Typography>
-                                                        Describe Knowledge<span style={{ color: 'red' }}>&nbsp;*</span>
+                                                        知识库说明<span style={{ color: 'red' }}>&nbsp;*</span>
                                                     </Typography>
-                                                    <TooltipWithParser title='Describe what the knowledge base is about, this is useful for the AI to know when and how to search for correct information' />
+                                                    <TooltipWithParser title='说明文档库包含的内容，帮助人工智能判断何时以及如何检索正确信息。' />
                                                 </Stack>
                                             )}
                                             {selectedDocumentStores.map((ds, index) => {
@@ -1117,14 +1113,14 @@ const CustomAssistantConfigurePreview = () => {
                                                             <div style={{ flex: 1 }}></div>
                                                             {selectedChatModel?.name && (
                                                                 <Button
-                                                                    title='Generate description using model'
+                                                                    title='使用模型生成说明'
                                                                     sx={{ borderRadius: 20 }}
                                                                     size='small'
                                                                     variant='text'
                                                                     onClick={() => generateDocStoreToolDesc(ds.id)}
                                                                     startIcon={<IconWand size={20} />}
                                                                 >
-                                                                    Generate
+                                                                    生成
                                                                 </Button>
                                                             )}
                                                         </Stack>
@@ -1141,8 +1137,8 @@ const CustomAssistantConfigurePreview = () => {
                                                             }}
                                                         />
                                                         <Stack sx={{ mt: 2, position: 'relative', alignItems: 'center' }} direction='row'>
-                                                            <Typography>Return Source Documents</Typography>
-                                                            <TooltipWithParser title='返回用于回答问题的实际源文档' />
+                                                            <Typography>返回来源文档</Typography>
+                                                            <TooltipWithParser title='返回用于回答问题的原始文档' />
                                                         </Stack>
                                                         <SwitchInput
                                                             value={ds.returnSourceDocuments ?? false}
@@ -1208,10 +1204,11 @@ const CustomAssistantConfigurePreview = () => {
                                                         <Box sx={{ pl: 2, pr: 2, pt: 2, pb: 0 }}>
                                                             <div style={{ display: 'flex', flexDirection: 'row' }}>
                                                                 <Typography>
-                                                                    Tool<span style={{ color: 'red' }}>&nbsp;*</span>
+                                                                    工具<span style={{ color: 'red' }}>&nbsp;*</span>
                                                                 </Typography>
                                                                 <div style={{ flex: 1 }}></div>
                                                                 <IconButton
+                                                                    aria-label='删除工具'
                                                                     color='error'
                                                                     sx={{ height: 15, width: 15, p: 0 }}
                                                                     onClick={() => {
@@ -1278,12 +1275,12 @@ const CustomAssistantConfigurePreview = () => {
                                             })}
                                             <Button
                                                 fullWidth
-                                                title='Add Tool'
+                                                title='添加工具'
                                                 sx={{ mt: 1, mb: 1, borderRadius: 20 }}
                                                 variant='outlined'
                                                 onClick={() => setSelectedTools([...selectedTools, {}])}
                                             >
-                                                Add Tool
+                                                添加工具
                                             </Button>
                                         </Box>
                                         {selectedChatModel && Object.keys(selectedChatModel).length > 0 && (
@@ -1300,7 +1297,7 @@ const CustomAssistantConfigurePreview = () => {
                                                     variant='contained'
                                                     onClick={onSaveAndProcess}
                                                 >
-                                                    Save Assistant
+                                                    保存助手
                                                 </Button>
                                             </Available>
                                         )}
@@ -1324,7 +1321,9 @@ const CustomAssistantConfigurePreview = () => {
                                                             height: pageHeight(),
                                                             showTitle: true,
                                                             backgroundColor: '#23262c',
-                                                            title: '  Preview',
+                                                            title: '  预览',
+                                                            welcomeMessage: '您好！有什么可以帮您？',
+                                                            errorMessage: '抱歉，处理请求时出现错误，请稍后重试。',
                                                             botMessage: {
                                                                 backgroundColor: '#32353b',
                                                                 textColor: '#ffffff'
@@ -1334,6 +1333,7 @@ const CustomAssistantConfigurePreview = () => {
                                                                 textColor: '#ffffff'
                                                             },
                                                             textInput: {
+                                                                placeholder: '请输入您的问题',
                                                                 backgroundColor: '#32353b',
                                                                 textColor: '#ffffff'
                                                             },
@@ -1359,7 +1359,9 @@ const CustomAssistantConfigurePreview = () => {
                                                             height: pageHeight(),
                                                             showTitle: true,
                                                             backgroundColor: '#fafafa',
-                                                            title: '  Preview',
+                                                            title: '  预览',
+                                                            welcomeMessage: '您好！有什么可以帮您？',
+                                                            errorMessage: '抱歉，处理请求时出现错误，请稍后重试。',
                                                             botMessage: {
                                                                 backgroundColor: '#ffffff',
                                                                 textColor: '#303235'
@@ -1369,6 +1371,7 @@ const CustomAssistantConfigurePreview = () => {
                                                                 textColor: '#303235'
                                                             },
                                                             textInput: {
+                                                                placeholder: '请输入您的问题',
                                                                 backgroundColor: '#ffffff',
                                                                 textColor: '#303235'
                                                             },
