@@ -201,3 +201,17 @@ date: 2026-07-10
 -   动态 metadata 审计仍是完整 G1 阻断：311/311 `INode` 节点可实例化且 name 唯一，但 311/311 节点和 114/114 credential 类含英文；6,517 个可见 metadata occurrence 中 6,417 个为英文，且 71 个节点存在 91 个未在本审计调用的 dynamic `loadMethods`。
 -   独立安全扫描确认当前树与本候选已知 token 格式命中为 `0`；同时发现早期上游版本标签可达的 2023 年历史提交含疑似真实 Provider 凭据。本批未打印或调用该值、未调用 Provider、未改写历史；待凭据所有者提供吊销／轮换和账单核查回执。
 -   本批边界：`production_write=false`、`provider_call=false`、`production_secrets_read=false`、`push=false`、`merge=false`、`image_build=false`、`deploy=false`。未完成动态 metadata 中文化、Firefox／10 主页面验收、远端 CI、不可变镜像、历史凭据吊销回执前，完整 G1 与 production promotion 均为 NO-GO。
+
+# 2026-08-01 G1-E 动态 metadata 中文展示候选闭环
+
+-   在同一独立 worktree 和分支上完成 fail-closed 展示投影：API 仅追加递归 `display*` 字段，`NodesPool`、原始 `name/type/category/default/loadMethod`、选项值和凭据类型均不变；UI 初始化、拖拽、导出、保存和 SDK `getFlowData` 会递归剥离展示字段。
+-   确定性 catalog 当前覆盖 15 个 Agentflow V2 节点的 910 条唯一文案、114 个凭据类的 487 条唯一文案、26 个类别和 20 个动态方法策略；validator 同时确认节点／凭据构造失败均为 0、Agentflow 相同 tuple 重复 19 条且无冲突、凭据重复 0。
+-   PC 展示链已接入 Add Nodes、V2/SDK 画布、NodeInfo、NodeInput/Output、凭据列表与编辑、异步下拉、Marketplace 以及文档库/RAG 配置；中英文搜索命中同一原始对象，分组、黑名单、连接和提交继续使用原始字段。
+-   对抗性复核补齐根节点 `displayHint`、10 个公开 `onFlowChange` 出口、`onFlowGenerated`、SDK `getFlowData`、`flowExport` 与复数 `outputs`。数组形态 `outputs` 按元数据递归投影并在持久化前清洗；对象形态 `outputs` 作为运行时业务数据保持逐字段等值，避免误删合法输出。
+-   最终复审关闭共享组件漏链：主 UI 与独立 Agentflow SDK 的静态／多选下拉均以模块私有 `WeakMap` 保留英文原文供检索，不增加可枚举或 JSON 字段，中文／英文／机器名均可搜索且提交值不变；两套 Agentflow V2 的预览边和已保存边仅在渲染层把 `proceed/Proceed/reject/Reject` 映射为“继续／拒绝”，`Canvas`、handle 与 `data.edgeLabel` 保持原值；损坏的多选 JSON 静默回退，不输出原始数据。
+-   当前稳定树回归通过：server metadata localization 4 suites／18 tests；UI 完整 Jest 20 suites／253 tests；Agentflow 完整 Jest 77 suites／1308 tests；隔离 E2E runner contract 13 suites／24 tests；静态安全 341／341；metadata validator 为 pass；135 个变更代码路径 ESLint 为 0 error，139 个支持格式路径 Prettier check 与 `git diff --check` 通过；UI/server/Agentflow production build 均为 exit 0，Agentflow build 转换 7218 modules。
+-   首轮隔离 Chrome 暴露 V2 画布仍调用 ReactFlow 弃用 `project` 的 console warning；已将主 UI 与独立 Agentflow 拖放路径迁移到 `screenToFlowPosition` 并补回归。最终稳定树隔离 Chrome 150／Node 24.18.0 run `9c162481-120b-49fc-9b19-b8941aa1ab45` 为 1 spec／3 tests 全绿，console error/warning 为 0，并验证节点／凭据 API、根节点 hint、复数 outputs、画布中英文搜索、拖拽载荷、保存请求、SQLite 回读和重载；首次文档请求强制 200，缓存重载允许 200/304，runner 最终 `phase=cleanup status=complete`，临时目录、监听端口与对应进程均不存在。
+-   精确 136 路径候选以二进制 diff SHA-256 `51c4b578006a2e0930e40a5ac41f6cb26ecf89c9138a34e31208cd3354c2a43e` 完成双重复核并原子提交为 `0388dad97ac41f2f101864503906fe7bb04450bf`；提交后从 `HEAD^..HEAD` 重算路径数和哈希均完全一致。独立代码审查为 0 个问题；安全审查为 CRITICAL/HIGH/MEDIUM `0/0/0`、LOW `1`，唯一 LOW 是 runner 当前只精确拦截外部 HTTP(S)、尚未把 `ws:`/`wss:` 纳入“全协议断网”保证，不阻断本次仅使用合成数据且未使用 WebSocket 的隔离候选。
+-   G1-E 本地候选判定为 `GO`；该结论只覆盖上述精确提交，不等同于远端 CI、镜像、生产部署或历史安全事件关账。首次提交尝试因 shell 使用 Node 22 被 engine 门禁拒绝，切换到仓库要求的 Node 24.18.0 后预提交格式化与 ESLint 门禁通过并完成提交。
+-   当前仍有 296 个非 Agentflow 节点和 71 个动态方法未进入中文 catalog；该候选只关闭 G1-E，不等于完整全中文。历史 Provider 凭据仍缺 owner/provider 侧吊销／轮换、使用与账单、暴露面回执，production promotion 继续 NO-GO。
+-   本批边界保持：`production_write=false`、`provider_call=false`、`production_secrets_read=false`、`push=false`、`merge=false`、`image_build=false`、`deploy=false`；浏览器截图随隔离临时目录清理，不作为 Playbook 正式截图。

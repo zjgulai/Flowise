@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改与生产验收执行计划
 date: 2026-07-10
-last_updated: 2026-07-12
+last_updated: 2026-08-01
 status: in_progress
 evidence_model: L0-L4
 ---
@@ -338,7 +338,28 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 
 ## Gate G1-D：后续生产边界
 
--   [!] 动态节点／凭据 metadata 仍未中文化：311/311 节点与 114/114 凭据类均含英文；因此不得标记为“完整全中文”，不得开始 Playbook 正式截图。
+-   [!] 动态 metadata 已完成 15 个 Agentflow V2 节点的 910 条唯一文案、26 个类别与 114/114 凭据类的 487 条唯一文案展示投影；其余 296 个非 Agentflow 节点和 71 个动态方法仍待分批覆盖，因此不得标记为“完整全中文”，不得开始 Playbook 正式截图。
 -   [!] 早期上游版本标签可达的 2023 年历史提交含疑似真实 Provider 凭据；当前树与候选命中为 `0`，但在凭据所有者提供已吊销／轮换和账单核查回执前，production promotion 保持 NO-GO；本批未调用 Provider、未改写 Git 历史。
 -   [ ] 新 exact SHA 的远端 CI、不可变 `linux/amd64` candidate image、同版本隔离培训环境与 10 个主页面 Chrome/Firefox PC 验收均属于后续独立门禁。
 -   [ ] 管理员凭据轮换不得写入 Git、日志或截图，必须通过受保护的生产运行时流程单独执行并保留脱敏回执。
+
+## Gate G1-E：动态节点／凭据元数据中文展示合同（本批）
+
+-   [x] 冻结兼容边界：`node.name/type/category`、`input.name/type/loadMethod`、`option.name`、credential component `name/credentialNames` 及默认值保持原值；不得用中文展示文案参与筛选、连接、执行或持久化判断。
+-   [x] 在节点与组件凭据 API 的 clone/filter 之后附加递归 `display*` 字段；运行时 `NodesPool` 原始实例保持只读，单项查询也不得把展示字段写回共享对象。
+-   [x] 为中文类别、节点、凭据、输入项、静态选项、警告、占位符和弃用提示建立确定性 catalog；未知或上游漂移文案必须显式回退并进入覆盖率报告，不得调用在线翻译服务。
+-   [x] PC 端 Add Nodes、Canvas/Agentflow V2、NodeInfo、NodeInput、Credential dialog、下拉搜索与旧流程回显统一优先读取 `display*`；分组、黑名单和提交值继续使用原始字段。
+-   [x] 将根节点 `hint`、复数 `outputs`、公开 flow callback、SDK `getFlowData` 和 `flowExport` 纳入同一清洗合同；仅数组形态 `outputs` 视为元数据，运行时对象形态保持原样。
+-   [x] 主 UI 与独立 Agentflow SDK 的静态／异步／多选下拉均支持中文展示文案、英文原文和机器名搜索；两套 Agentflow V2 的预览边与已保存边仅做中文展示映射，搜索辅助文本、边标签和 handle 均不得污染持久化数据。
+-   [x] 先收口 15 个现有 Agentflow V2 节点、全部类别及凭据入口的高频展示文案，再以覆盖率报告驱动余下节点批次；不得把局部覆盖误报为“完整全中文”。
+-   [x] 增加不可变性、机器字段等值、递归投影、中英文搜索、旧流程回退及 catalog 漂移测试；通过定向 Jest、ESLint、UI/server build、静态秘密扫描与隔离 PC 浏览器主链后再原子提交。
+-   [x] 已生成历史 Provider 凭据脱敏关账清单和可达性摘要；不包含原始值，且不授权 Provider 调用或 Git 历史重写。
+-   [x] 精确 136 路径候选已由独立代码与安全复核确认本地 GO，并以二进制 diff SHA-256 `51c4b578006a2e0930e40a5ac41f6cb26ecf89c9138a34e31208cd3354c2a43e` 原子提交为 `0388dad97ac41f2f101864503906fe7bb04450bf`；代码审查 0 个问题，安全审查无中高危、1 个非阻断 LOW，提交后路径数和哈希复算一致。
+-   [!] 所有者尚未提供吊销／轮换、使用与账单、暴露面核查回执；在受控回执完整前，production promotion 继续保持 NO-GO。
+
+## Gate G1-F：剩余 metadata 与发布前门禁（下一批）
+
+-   [ ] 按 PC 使用频率依次覆盖 Chat Models、Document Loaders、Vector Stores、Tools 等剩余 296 个节点，并用同一 source-hash catalog validator 拒绝漏项和上游漂移。
+-   [ ] 对全局 91 个动态方法完成策略盘点；保留本批 20 个精确策略，并为其余 71 个方法显式声明系统目录、Provider 透传或租户透传边界。
+-   [ ] 若下一批需要把隔离 E2E runner 声明为“所有网络协议完全断网”，先显式阻断 `ws:`/`wss:` 并补合同测试；否则继续把现有边界准确表述为外部 HTTP(S) 阻断。
+-   [ ] 在同版本隔离环境完成 Chrome／Firefox 的 10 个主页面 PC 验收；只有新精确 SHA、远端 CI、不可变镜像和历史凭据关账回执齐备后，才允许进入生产候选门禁。
