@@ -13,6 +13,11 @@ import documentStoreApi from '@/api/documentstore'
 import { baseURL } from '@/store/constant'
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 import useApi from '@/hooks/useApi'
+import {
+    getDocStoreComponentDisplayDescription,
+    getDocStoreComponentDisplayLabel,
+    matchesDocStoreComponentSearch
+} from './componentMetadataView'
 
 const DocumentLoaderListDialog = ({ show, dialogProps, onCancel, onDocLoaderSelected }) => {
     const portalElement = document.getElementById('portal')
@@ -28,7 +33,7 @@ const DocumentLoaderListDialog = ({ show, dialogProps, onCancel, onDocLoaderSele
     }
 
     function filterFlows(data) {
-        return data.name.toLowerCase().indexOf(searchValue.toLowerCase()) > -1
+        return matchesDocStoreComponentSearch(data, searchValue)
     }
 
     useEffect(() => {
@@ -168,11 +173,29 @@ const DocumentLoaderListDialog = ({ show, dialogProps, onCancel, onDocLoaderSele
                                         borderRadius: '50%',
                                         objectFit: 'contain'
                                     }}
-                                    alt={documentLoader.name}
+                                    alt={getDocStoreComponentDisplayLabel(documentLoader, documentLoader.name)}
                                     src={`${baseURL}/api/v1/node-icon/${documentLoader.name}`}
                                 />
                             </div>
-                            <Typography>{documentLoader.label}</Typography>
+                            <Box sx={{ minWidth: 0 }}>
+                                <Typography variant='h5'>
+                                    {getDocStoreComponentDisplayLabel(documentLoader, documentLoader.name)}
+                                </Typography>
+                                {getDocStoreComponentDisplayDescription(documentLoader) && (
+                                    <Typography
+                                        variant='body2'
+                                        sx={{
+                                            color: theme.palette.text.secondary,
+                                            display: '-webkit-box',
+                                            WebkitLineClamp: 2,
+                                            WebkitBoxOrient: 'vertical',
+                                            overflow: 'hidden'
+                                        }}
+                                    >
+                                        {getDocStoreComponentDisplayDescription(documentLoader)}
+                                    </Typography>
+                                )}
+                            </Box>
                         </ListItemButton>
                     ))}
                 </List>

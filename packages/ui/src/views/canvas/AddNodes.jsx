@@ -46,6 +46,7 @@ import utilNodesPNG from '@/assets/images/utilNodes.png'
 // const
 import { baseURL, AGENTFLOW_ICONS } from '@/store/constant'
 import { SET_COMPONENT_NODES } from '@/store/actions'
+import { getMetadataDisplayText, stripDisplayMetadata } from '@/utils/componentMetadataDisplay'
 
 // ==============================|| ADD NODES||============================== //
 function a11yProps(index) {
@@ -203,8 +204,20 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
         const nodesWithScores = nodes.map((nd) => {
             const nameScore = fuzzyScore(searchValue, nd.name)
             const labelScore = fuzzyScore(searchValue, nd.label)
+            const displayLabelScore = fuzzyScore(searchValue, nd.displayLabel)
             const categoryScore = fuzzyScore(searchValue, nd.category) * 0.5 // Lower weight for category
-            const maxScore = Math.max(nameScore, labelScore, categoryScore)
+            const displayCategoryScore = fuzzyScore(searchValue, nd.displayCategory) * 0.5
+            const descriptionScore = fuzzyScore(searchValue, nd.description) * 0.3
+            const displayDescriptionScore = fuzzyScore(searchValue, nd.displayDescription) * 0.3
+            const maxScore = Math.max(
+                nameScore,
+                labelScore,
+                displayLabelScore,
+                categoryScore,
+                displayCategoryScore,
+                descriptionScore,
+                displayDescriptionScore
+            )
 
             return { node: nd, score: maxScore }
         })
@@ -345,7 +358,7 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
     }
 
     const onDragStart = (event, node) => {
-        event.dataTransfer.setData('application/reactflow', JSON.stringify(node))
+        event.dataTransfer.setData('application/reactflow', JSON.stringify(stripDisplayMetadata(node)))
         event.dataTransfer.effectAllowed = 'move'
     }
 
@@ -628,7 +641,15 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                                             alignItems: 'center'
                                                                         }}
                                                                     >
-                                                                        <Typography variant='h5'>{category.split(';')[0]}</Typography>
+                                                                        <Typography variant='h5'>
+                                                                            {
+                                                                                getMetadataDisplayText(
+                                                                                    nodes[category][0],
+                                                                                    'category',
+                                                                                    category
+                                                                                ).split(';')[0]
+                                                                            }
+                                                                        </Typography>
                                                                         &nbsp;
                                                                         <Chip
                                                                             sx={{
@@ -645,11 +666,17 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                                                         : 'inherit'
                                                                             }}
                                                                             size='small'
-                                                                            label={category.split(';')[1]}
+                                                                            label={
+                                                                                category.split(';')[1] === 'DEPRECATING'
+                                                                                    ? '即将弃用'
+                                                                                    : category.split(';')[1]
+                                                                            }
                                                                         />
                                                                     </div>
                                                                 ) : (
-                                                                    <Typography variant='h5'>{category}</Typography>
+                                                                    <Typography variant='h5'>
+                                                                        {getMetadataDisplayText(nodes[category][0], 'category', category)}
+                                                                    </Typography>
                                                                 )}
                                                             </AccordionSummary>
                                                             <AccordionDetails>
@@ -698,7 +725,11 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                                                                     padding: 10,
                                                                                                     objectFit: 'contain'
                                                                                                 }}
-                                                                                                alt={node.name}
+                                                                                                alt={getMetadataDisplayText(
+                                                                                                    node,
+                                                                                                    'label',
+                                                                                                    node.name
+                                                                                                )}
                                                                                                 src={`${baseURL}/api/v1/node-icon/${node.name}`}
                                                                                             />
                                                                                         </div>
@@ -715,7 +746,13 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                                                                     alignItems: 'center'
                                                                                                 }}
                                                                                             >
-                                                                                                <span>{node.label}</span>
+                                                                                                <span>
+                                                                                                    {getMetadataDisplayText(
+                                                                                                        node,
+                                                                                                        'label',
+                                                                                                        node.label
+                                                                                                    )}
+                                                                                                </span>
                                                                                                 &nbsp;
                                                                                                 {node.badge && (
                                                                                                     <Chip
@@ -735,7 +772,11 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                                                                                     : 'inherit'
                                                                                                         }}
                                                                                                         size='small'
-                                                                                                        label={node.badge}
+                                                                                                        label={getMetadataDisplayText(
+                                                                                                            node,
+                                                                                                            'badge',
+                                                                                                            node.badge
+                                                                                                        )}
                                                                                                     />
                                                                                                 )}
                                                                                             </div>
@@ -751,7 +792,11 @@ const AddNodes = ({ nodesData, node, isAgentCanvas, isAgentflowv2, onFlowGenerat
                                                                                             )}
                                                                                         </>
                                                                                     }
-                                                                                    secondary={node.description}
+                                                                                    secondary={getMetadataDisplayText(
+                                                                                        node,
+                                                                                        'description',
+                                                                                        node.description
+                                                                                    )}
                                                                                 />
                                                                             </ListItem>
                                                                         </ListItemButton>

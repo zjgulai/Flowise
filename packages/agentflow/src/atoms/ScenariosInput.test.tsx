@@ -37,8 +37,9 @@ const scenarioInputParam: InputParam = {
     id: 'conditionAgentScenarios',
     name: 'conditionAgentScenarios',
     label: 'Scenarios',
+    displayLabel: '场景',
     type: 'array',
-    array: [{ id: 'scenario', name: 'scenario', label: 'Scenario', type: 'string', default: '' } as InputParam]
+    array: [{ id: 'scenario', name: 'scenario', label: 'Scenario', displayLabel: '场景描述', type: 'string', default: '' } as InputParam]
 }
 
 const mockNodeData = makeNodeData({
@@ -56,15 +57,19 @@ describe('ScenariosInput', () => {
     it('should render section header with label and required indicator', () => {
         render(<ScenariosInput inputParam={scenarioInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('Scenarios')).toBeInTheDocument()
+        expect(screen.getByText('场景')).toBeInTheDocument()
         expect(screen.getByText('*')).toBeInTheDocument()
     })
 
     it('should render description tooltip when inputParam has description', () => {
-        const paramWithDesc: InputParam = { ...scenarioInputParam, description: 'Define scenarios for splitting' }
+        const paramWithDesc: InputParam = {
+            ...scenarioInputParam,
+            description: 'Define scenarios for splitting',
+            displayDescription: '定义用于分流的场景'
+        }
         render(<ScenariosInput inputParam={paramWithDesc} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByTestId('tooltip-with-parser')).toBeInTheDocument()
+        expect(screen.getByTestId('tooltip-with-parser')).toHaveTextContent('定义用于分流的场景')
     })
 
     it('should render scenario items with "Scenario N" labels', () => {
@@ -77,27 +82,27 @@ describe('ScenariosInput', () => {
 
         render(<ScenariosInput inputParam={scenarioInputParam} data={data} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('Scenario 0')).toBeInTheDocument()
-        expect(screen.getByText('Scenario 1')).toBeInTheDocument()
+        expect(screen.getByText('场景 0')).toBeInTheDocument()
+        expect(screen.getByText('场景 1')).toBeInTheDocument()
     })
 
     it('should always render Else indicator', () => {
         render(<ScenariosInput inputParam={scenarioInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('Else')).toBeInTheDocument()
-        expect(screen.getByText('Executes when no scenarios match')).toBeInTheDocument()
+        expect(screen.getByText('否则')).toBeInTheDocument()
+        expect(screen.getByText('当所有场景均不匹配时执行')).toBeInTheDocument()
     })
 
     it('should render Add Scenario button', () => {
         render(<ScenariosInput inputParam={scenarioInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByRole('button', { name: /Add Scenario/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '添加场景' })).toBeInTheDocument()
     })
 
     it('should add a new scenario with default values', () => {
         render(<ScenariosInput inputParam={scenarioInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByRole('button', { name: /Add Scenario/i }))
+        fireEvent.click(screen.getByRole('button', { name: '添加场景' }))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
             inputParam: scenarioInputParam,
@@ -115,7 +120,7 @@ describe('ScenariosInput', () => {
 
         render(<ScenariosInput inputParam={scenarioInputParam} data={data} onDataChange={mockOnDataChange} />)
 
-        const deleteButtons = screen.getAllByTitle('Delete')
+        const deleteButtons = screen.getAllByTitle('删除')
         fireEvent.click(deleteButtons[0])
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
@@ -153,8 +158,8 @@ describe('ScenariosInput', () => {
 
         render(<ScenariosInput inputParam={scenarioInputParam} data={data} disabled={true} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByRole('button', { name: /Add Scenario/i })).toBeDisabled()
-        expect(screen.getByTitle('Delete')).toBeDisabled()
+        expect(screen.getByRole('button', { name: '添加场景' })).toBeDisabled()
+        expect(screen.getByTitle('删除')).toBeDisabled()
     })
 
     it('should respect minItems constraint', () => {
@@ -168,7 +173,7 @@ describe('ScenariosInput', () => {
 
         render(<ScenariosInput inputParam={inputParamWithMin} data={data} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByTitle('Delete')).toBeDisabled()
+        expect(screen.getByTitle('删除')).toBeDisabled()
     })
 
     it('should render fields for each scenario item', () => {
@@ -194,7 +199,7 @@ describe('ScenariosInput', () => {
 
         render(<ScenariosInput inputParam={scenarioInputParam} data={data} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByRole('button', { name: /Add Scenario/i }))
+        fireEvent.click(screen.getByRole('button', { name: '添加场景' }))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
             inputParam: scenarioInputParam,

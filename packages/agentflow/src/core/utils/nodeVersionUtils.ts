@@ -1,5 +1,6 @@
 import type { NodeData, NodeDataSchema } from '../types'
 
+import { getMetadataDisplayText } from './metadataDisplay'
 import { initNode } from './nodeFactory'
 
 export function isNodeOutdated(nodeData: NodeData, componentNode: NodeDataSchema): boolean {
@@ -9,16 +10,16 @@ export function isNodeOutdated(nodeData: NodeData, componentNode: NodeDataSchema
 
 export function getNodeVersionWarning(nodeData: NodeData, componentNode: NodeDataSchema): string | null {
     if (nodeData.version == null && componentNode.version != null) {
-        return `Node outdated\nUpdate to latest version ${componentNode.version}`
+        return `节点版本已过期\n请更新到最新版本 ${componentNode.version}`
     }
     if (nodeData.version != null && componentNode.version != null && componentNode.version > nodeData.version) {
-        return `Node version ${nodeData.version} outdated\nUpdate to latest version ${componentNode.version}`
+        return `节点版本 ${nodeData.version} 已过期\n请更新到最新版本 ${componentNode.version}`
     }
     if (componentNode.badge === 'DEPRECATING') {
-        return componentNode.deprecateMessage ?? 'This node will be deprecated in the next release. Change to a new node tagged with NEW'
+        return getMetadataDisplayText(componentNode, 'deprecateMessage') || '该节点将在下一版本弃用，请改用标记为“新增”的替代节点。'
     }
     if (typeof componentNode.warning === 'string' && componentNode.warning) {
-        return componentNode.warning
+        return getMetadataDisplayText(componentNode, 'warning', componentNode.warning)
     }
     return null
 }

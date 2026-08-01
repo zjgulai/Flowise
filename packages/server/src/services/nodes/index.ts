@@ -10,6 +10,7 @@ import { executeCustomNodeFunction } from '../../utils/executeCustomNodeFunction
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import logger from '../../utils/logger'
 import credentialsService from '../credentials'
+import { decorateDynamicOptions, decorateNodeMetadata } from '../component-metadata-localization'
 import { filterNodeByClient } from './filterNodeByClient'
 
 export { filterNodeByClient }
@@ -21,7 +22,7 @@ const getAllNodes = async (client?: ClientType) => {
         const dbResponse = []
         for (const nodeName in appServer.nodesPool.componentNodes) {
             const clonedNode = cloneDeep(appServer.nodesPool.componentNodes[nodeName])
-            dbResponse.push(filterNodeByClient(clonedNode, client))
+            dbResponse.push(decorateNodeMetadata(filterNodeByClient(clonedNode, client)))
         }
         return dbResponse
     } catch (error) {
@@ -38,7 +39,7 @@ const getAllNodesForCategory = async (category: string, client?: ClientType) => 
             const componentNode = appServer.nodesPool.componentNodes[nodeName]
             if (componentNode.category === category) {
                 const clonedNode = cloneDeep(componentNode)
-                dbResponse.push(filterNodeByClient(clonedNode, client))
+                dbResponse.push(decorateNodeMetadata(filterNodeByClient(clonedNode, client)))
             }
         }
         return dbResponse
@@ -56,7 +57,7 @@ const getNodeByName = async (nodeName: string, client?: ClientType) => {
         const appServer = getRunningExpressApp()
         if (Object.prototype.hasOwnProperty.call(appServer.nodesPool.componentNodes, nodeName)) {
             const clonedNode = cloneDeep(appServer.nodesPool.componentNodes[nodeName])
-            return filterNodeByClient(clonedNode, client)
+            return decorateNodeMetadata(filterNodeByClient(clonedNode, client))
         } else {
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Node ${nodeName} not found`)
         }
@@ -117,7 +118,7 @@ const getSingleNodeAsyncOptions = async (nodeName: string, requestBody: any, wor
                     cachePool: appServer.cachePool
                 })
 
-                return dbResponse
+                return decorateDynamicOptions(nodeName, methodName, dbResponse)
             } catch (error) {
                 return []
             }

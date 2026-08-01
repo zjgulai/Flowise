@@ -105,6 +105,70 @@ describe('NodeInputHandler – static types', () => {
         // Without AsyncInputComponent, async types render nothing
         expect(container.querySelector('input')).toBeNull()
     })
+
+    it('searches localized single options by raw English and saves the machine name', () => {
+        render(
+            <NodeInputHandler
+                inputParam={makeParam({
+                    type: 'options',
+                    options: [{ name: 'createChannel', label: 'Create Channel', displayLabel: '创建频道' }]
+                })}
+                data={baseNodeData}
+                isAdditionalParams
+                onDataChange={mockOnDataChange}
+            />
+        )
+
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Create Channel' } })
+        fireEvent.click(screen.getByText('创建频道'))
+
+        expect(mockOnDataChange).toHaveBeenCalledWith({
+            inputParam: expect.objectContaining({ name: 'myField', label: 'My Field' }),
+            newValue: 'createChannel'
+        })
+    })
+
+    it('searches localized multiOptions by raw English and saves only machine names', () => {
+        render(
+            <NodeInputHandler
+                inputParam={makeParam({
+                    type: 'multiOptions',
+                    options: [{ name: 'createChannel', label: 'Create Channel', displayLabel: '创建频道' }]
+                })}
+                data={baseNodeData}
+                isAdditionalParams
+                onDataChange={mockOnDataChange}
+            />
+        )
+
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Create Channel' } })
+        fireEvent.click(screen.getByText('创建频道'))
+
+        expect(mockOnDataChange).toHaveBeenCalledWith({
+            inputParam: expect.objectContaining({ name: 'myField', label: 'My Field' }),
+            newValue: '["createChannel"]'
+        })
+    })
+
+    it('silently recovers from malformed multiOptions JSON', () => {
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+
+        render(
+            <NodeInputHandler
+                inputParam={makeParam({
+                    type: 'multiOptions',
+                    options: [{ name: 'safeName', label: 'Safe Name', displayLabel: '安全名称' }]
+                })}
+                data={{ ...baseNodeData, inputs: { myField: '["unterminated"' } }}
+                isAdditionalParams
+                onDataChange={mockOnDataChange}
+            />
+        )
+
+        expect(screen.getByRole('combobox')).toHaveValue('')
+        expect(consoleError).not.toHaveBeenCalled()
+        consoleError.mockRestore()
+    })
 })
 
 describe('NodeInputHandler – expand dialog', () => {

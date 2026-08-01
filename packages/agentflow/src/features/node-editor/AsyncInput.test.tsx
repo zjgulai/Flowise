@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { NodeInputHandler } from '@/atoms'
-import type { InputParam, NodeData } from '@/core/types'
+import type { InputParam, NodeData, NodeDataSchema } from '@/core/types'
 
 import { AsyncInput } from './AsyncInput'
 
@@ -41,7 +41,14 @@ jest.mock('./CreateCredentialDialog', () => ({
 }))
 
 interface MockAsyncResult {
-    options: Array<{ label: string; name: string; imageSrc?: string; description?: string }>
+    options: Array<{
+        label: string
+        name: string
+        displayLabel?: string
+        imageSrc?: string
+        description?: string
+        displayDescription?: string
+    }>
     loading: boolean
     error: string | null
     refetch: () => void
@@ -64,10 +71,11 @@ jest.mock('@/infrastructure/api/hooks', () => ({
 
 let mockNodes: Array<{ id: string; type: string; position: { x: number; y: number }; data: Record<string, unknown> }> = []
 let mockEdges: Array<{ id: string; source: string; target: string; targetHandle?: string; type: string }> = []
+let mockComponentNodes: NodeDataSchema[] = []
 
 jest.mock('@/infrastructure/store', () => ({
     useAgentflowContext: () => ({
-        state: { nodes: mockNodes, edges: mockEdges }
+        state: { nodes: mockNodes, edges: mockEdges, componentNodes: mockComponentNodes }
     })
 }))
 
@@ -98,6 +106,7 @@ beforeEach(() => {
     jest.clearAllMocks()
     mockNodes = []
     mockEdges = []
+    mockComponentNodes = []
     mockUseAsyncOptions.mockReturnValue({ options: [], loading: true, error: null, refetch: mockRefetch })
 })
 
@@ -248,6 +257,24 @@ describe('AsyncInput', () => {
     })
 
     describe('AsyncInput (direct) – asyncOptions', () => {
+        it('shows the localized selected label and filters by either raw or localized option text', async () => {
+            mockUseAsyncOptions.mockReturnValue({
+                ...idleResult(),
+                options: [{ label: 'GPT-4o', displayLabel: 'GPT 四', name: 'gpt-4o' }]
+            })
+
+            render(<AsyncInput inputParam={makeParam({ type: 'asyncOptions' })} value='gpt-4o' disabled={false} onChange={jest.fn()} />)
+
+            const input = screen.getByRole('combobox')
+            expect(input).toHaveValue('GPT 四')
+
+            fireEvent.change(input, { target: { value: 'GPT-4o' } })
+            await waitFor(() => expect(screen.getByText('GPT 四')).toBeTruthy())
+
+            fireEvent.change(input, { target: { value: 'GPT 四' } })
+            await waitFor(() => expect(screen.getByText('GPT 四')).toBeTruthy())
+        })
+
         it('passes undefined params when nodeName and inputs are absent', () => {
             mockUseAsyncOptions.mockReturnValue(idleResult())
 
@@ -396,6 +423,22 @@ describe('AsyncInput', () => {
     })
 
     describe('AsyncInput (direct) – asyncMultiOptions', () => {
+        it('filters multi-select options by either raw or localized option text', async () => {
+            mockUseAsyncOptions.mockReturnValue({
+                ...idleResult(),
+                options: [{ label: 'Knowledge Tool', displayLabel: '知识工具', name: 'knowledge-tool' }]
+            })
+
+            render(<AsyncInput inputParam={makeParam({ type: 'asyncMultiOptions' })} value='' disabled={false} onChange={jest.fn()} />)
+
+            const input = screen.getByRole('combobox')
+            fireEvent.change(input, { target: { value: 'Knowledge Tool' } })
+            await waitFor(() => expect(screen.getByText('知识工具')).toBeTruthy())
+
+            fireEvent.change(input, { target: { value: '知识工具' } })
+            await waitFor(() => expect(screen.getByText('知识工具')).toBeTruthy())
+        })
+
         it('passes undefined params when nodeName and inputs are absent', () => {
             mockUseAsyncOptions.mockReturnValue(idleResult())
 
@@ -565,7 +608,7 @@ describe('AsyncInput', () => {
 
             fireEvent.mouseDown(screen.getByRole('combobox'))
             await waitFor(() => {
-                expect(screen.getByText('- Create New -')).toBeTruthy()
+                expect(screen.getByText('- 新建凭据 -')).toBeTruthy()
             })
         })
 
@@ -601,8 +644,8 @@ describe('AsyncInput', () => {
             )
 
             fireEvent.mouseDown(screen.getByRole('combobox'))
-            await waitFor(() => screen.getByText('- Create New -'))
-            fireEvent.click(screen.getByText('- Create New -'))
+            await waitFor(() => screen.getByText('- 新建凭据 -'))
+            fireEvent.click(screen.getByText('- 新建凭据 -'))
 
             expect(mockChange).not.toHaveBeenCalled()
             expect(screen.getByTestId('create-credential-dialog')).toBeTruthy()
@@ -628,8 +671,8 @@ describe('AsyncInput', () => {
 
             // Open dropdown and select "- Create New -"
             fireEvent.mouseDown(screen.getByRole('combobox'))
-            await waitFor(() => screen.getByText('- Create New -'))
-            fireEvent.click(screen.getByText('- Create New -'))
+            await waitFor(() => screen.getByText('- 新建凭据 -'))
+            fireEvent.click(screen.getByText('- 新建凭据 -'))
 
             // Click the Create button in the mocked dialog
             fireEvent.click(screen.getByText('Create'))
@@ -788,6 +831,41 @@ describe('AsyncInput', () => {
                 expect(screen.getByText('Start')).toBeTruthy()
                 expect(screen.getByText('Agent 0')).toBeTruthy()
             })
+        })
+
+        it('localizes only default ancestor labels while keeping the selected machine value raw', async () => {
+            const mockChange = jest.fn()
+            mockComponentNodes = [
+                { name: 'startAgentflow', label: 'Start', displayLabel: '开始' } as NodeDataSchema,
+                { name: 'agentAgentflow', label: 'Agent', displayLabel: '智能体' } as NodeDataSchema
+            ]
+            mockNodes = [
+                makeFlowNode('start_0', 'startAgentflow', 'Start'),
+                makeFlowNode('agent_0', 'agentAgentflow', 'Agent 0'),
+                makeFlowNode('custom_0', 'agentAgentflow', '我的处理器'),
+                makeFlowNode('loop_0', 'loopAgentflow', 'Loop 0')
+            ]
+            mockEdges = [makeEdge('start_0', 'agent_0'), makeEdge('agent_0', 'custom_0'), makeEdge('custom_0', 'loop_0')]
+
+            render(
+                <AsyncInput
+                    inputParam={makeParam({ type: 'asyncOptions', loadMethod: 'listPreviousNodes' })}
+                    value=''
+                    disabled={false}
+                    onChange={mockChange}
+                    nodeId='loop_0'
+                />
+            )
+
+            fireEvent.mouseDown(screen.getByRole('combobox'))
+            await waitFor(() => {
+                expect(screen.getByText('开始')).toBeTruthy()
+                expect(screen.getByText('智能体 0')).toBeTruthy()
+                expect(screen.getByText('我的处理器')).toBeTruthy()
+            })
+            fireEvent.click(screen.getByText('智能体 0'))
+
+            expect(mockChange).toHaveBeenCalledWith('agent_0-Agent 0')
         })
 
         it('shows no options when the loop node has no ancestors', async () => {

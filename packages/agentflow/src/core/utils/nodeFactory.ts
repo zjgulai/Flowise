@@ -2,6 +2,7 @@ import { getDefaultValueForType } from '../primitives'
 import type { FlowNode, InputParam, NodeData, NodeDataSchema, OutputAnchor } from '../types'
 
 import { buildDynamicOutputAnchors } from './dynamicOutputAnchors'
+import { stripDisplayMetadata } from './metadataDisplay'
 
 /**
  * Map from NodeData.type to the ReactFlow node type key.
@@ -105,7 +106,7 @@ function createAgentFlowOutputs(nodeData: NodeDataSchema, newNodeId: string): Ar
  * for display in the NodeInfoDialog.
  */
 function pickNodeData(raw: NodeDataSchema): Partial<NodeData> {
-    return {
+    return stripDisplayMetadata({
         name: raw.name,
         label: raw.label,
         type: raw.type,
@@ -124,7 +125,7 @@ function pickNodeData(raw: NodeDataSchema): Partial<NodeData> {
         badge: raw.badge,
         tags: raw.tags,
         documentation: raw.documentation
-    }
+    })
 }
 
 /**
@@ -215,10 +216,10 @@ export function initNode(nodeData: NodeDataSchema, newNodeId: string, isAgentflo
         id: newNodeId,
         name: nodeData.name,
         label: nodeData.label,
-        inputParams: inputDefinitions as NodeData['inputParams'], // schema definitions
+        inputParams: stripDisplayMetadata(inputDefinitions) as NodeData['inputParams'], // schema definitions
         inputs: { ...initialInputValues }, // key-value values
-        inputAnchors: inputAnchors as NodeData['inputAnchors'],
-        outputAnchors: outputAnchors as NodeData['outputAnchors']
+        inputAnchors: stripDisplayMetadata(inputAnchors) as NodeData['inputAnchors'],
+        outputAnchors: stripDisplayMetadata(outputAnchors) as NodeData['outputAnchors']
     }
 
     return initializedData

@@ -23,6 +23,7 @@ import { IconMinus, IconPlus, IconSearch, IconX } from '@tabler/icons-react'
 import { MainCard } from '@/atoms'
 import { tokens } from '@/core/theme/tokens'
 import type { NodeDataSchema } from '@/core/types'
+import { getMetadataDisplayText } from '@/core/utils'
 import { useApiContext } from '@/infrastructure/store'
 
 import { NodeListItem } from './NodeListItem'
@@ -146,7 +147,7 @@ function AddNodesDrawerComponent({ nodes, onDragStart, onNodeClick }: AddNodesDr
                 size='small'
                 color='primary'
                 aria-label='add'
-                title='Add Node'
+                title='添加节点'
                 onClick={handleToggle}
                 sx={{
                     position: 'absolute',
@@ -198,14 +199,14 @@ function AddNodesDrawerComponent({ nodes, onDragStart, onNodeClick }: AddNodesDr
                                 >
                                     <Box sx={{ p: 2, flexShrink: 0 }}>
                                         <Stack>
-                                            <Typography variant='h4'>Add Nodes</Typography>
+                                            <Typography variant='h4'>添加节点</Typography>
                                         </Stack>
                                         <OutlinedInput
                                             sx={{ width: '100%', pr: 2, pl: 2, my: 2 }}
                                             id='input-search-node'
                                             value={searchValue}
                                             onChange={handleSearchChange}
-                                            placeholder='Search nodes'
+                                            placeholder='搜索节点'
                                             startAdornment={
                                                 <InputAdornment position='start'>
                                                     <IconSearch stroke={1.5} size='1rem' color={theme.palette.grey[500]} />
@@ -223,7 +224,7 @@ function AddNodesDrawerComponent({ nodes, onDragStart, onNodeClick }: AddNodesDr
                                                             }
                                                         }}
                                                         onClick={handleClearSearch}
-                                                        title='Clear Search'
+                                                        title='清除搜索'
                                                     >
                                                         <IconX stroke={1.5} size='1rem' />
                                                     </InputAdornment>
@@ -278,7 +279,13 @@ function AddNodesDrawerComponent({ nodes, onDragStart, onNodeClick }: AddNodesDr
                                                                 aria-controls={`nodes-accordian-${category}`}
                                                                 id={`nodes-accordian-header-${category}`}
                                                             >
-                                                                <Typography variant='h5'>{category}</Typography>
+                                                                <Typography variant='h5'>
+                                                                    {getMetadataDisplayText(
+                                                                        filteredNodes[category][0],
+                                                                        'category',
+                                                                        category
+                                                                    )}
+                                                                </Typography>
                                                             </AccordionSummary>
                                                             <AccordionDetails sx={{ p: 0 }}>
                                                                 {filteredNodes[category].map((node, index) => (

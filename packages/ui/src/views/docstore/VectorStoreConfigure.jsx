@@ -42,6 +42,7 @@ import DynamicFeed from '@mui/icons-material/Filter1'
 // utils
 import { initNode, showHideInputParams, getFileName } from '@/utils/genericHelper'
 import useNotifier from '@/utils/useNotifier'
+import { getDocStoreComponentDisplayLabel } from './componentMetadataView'
 
 // const
 const steps = ['向量嵌入', '向量库', '记录管理器']
@@ -73,12 +74,15 @@ const VectorStoreConfigure = () => {
 
     const [showEmbeddingsListDialog, setShowEmbeddingsListDialog] = useState(false)
     const [selectedEmbeddingsProvider, setSelectedEmbeddingsProvider] = useState({})
+    const [selectedEmbeddingsMetadata, setSelectedEmbeddingsMetadata] = useState({})
 
     const [showVectorStoreListDialog, setShowVectorStoreListDialog] = useState(false)
     const [selectedVectorStoreProvider, setSelectedVectorStoreProvider] = useState({})
+    const [selectedVectorStoreMetadata, setSelectedVectorStoreMetadata] = useState({})
 
     const [showRecordManagerListDialog, setShowRecordManagerListDialog] = useState(false)
     const [selectedRecordManagerProvider, setSelectedRecordManagerProvider] = useState({})
+    const [selectedRecordManagerMetadata, setSelectedRecordManagerMetadata] = useState({})
     const [isRecordManagerUnavailable, setRecordManagerUnavailable] = useState(false)
 
     const [showUpsertHistoryDialog, setShowUpsertHistoryDialog] = useState(false)
@@ -123,6 +127,7 @@ const VectorStoreConfigure = () => {
             nodeData.inputs = documentStore.embeddingConfig.config
             nodeData.credential = documentStore.embeddingConfig.config.credential
         }
+        setSelectedEmbeddingsMetadata(component)
         setSelectedEmbeddingsProvider(nodeData)
         setShowEmbeddingsListDialog(false)
     }
@@ -140,6 +145,7 @@ const VectorStoreConfigure = () => {
         if (!nodeData.inputAnchors.find((anchor) => anchor.name === 'recordManager')) {
             setRecordManagerUnavailable(true)
             setSelectedRecordManagerProvider({})
+            setSelectedRecordManagerMetadata({})
         } else {
             setRecordManagerUnavailable(false)
         }
@@ -147,6 +153,7 @@ const VectorStoreConfigure = () => {
             nodeData.inputs = documentStore.vectorStoreConfig.config
             nodeData.credential = documentStore.vectorStoreConfig.config.credential
         }
+        setSelectedVectorStoreMetadata(component)
         setSelectedVectorStoreProvider(nodeData)
         setShowVectorStoreListDialog(false)
     }
@@ -165,6 +172,7 @@ const VectorStoreConfigure = () => {
             nodeData.inputs = documentStore.recordManagerConfig.config
             nodeData.credential = documentStore.recordManagerConfig.config.credential
         }
+        setSelectedRecordManagerMetadata(component)
         setSelectedRecordManagerProvider(nodeData)
         setShowRecordManagerListDialog(false)
     }
@@ -316,8 +324,11 @@ const VectorStoreConfigure = () => {
 
     const resetVectorStoreConfig = () => {
         setSelectedEmbeddingsProvider({})
+        setSelectedEmbeddingsMetadata({})
         setSelectedVectorStoreProvider({})
+        setSelectedVectorStoreMetadata({})
         setSelectedRecordManagerProvider({})
+        setSelectedRecordManagerMetadata({})
     }
 
     const getActiveStep = () => {
@@ -636,7 +647,10 @@ const VectorStoreConfigure = () => {
                                                                                 borderRadius: '50%',
                                                                                 objectFit: 'contain'
                                                                             }}
-                                                                            alt={selectedEmbeddingsProvider.label ?? '嵌入模型'}
+                                                                            alt={getDocStoreComponentDisplayLabel(
+                                                                                selectedEmbeddingsMetadata,
+                                                                                selectedEmbeddingsProvider.label ?? '嵌入模型'
+                                                                            )}
                                                                             src={`${baseURL}/api/v1/node-icon/${selectedEmbeddingsProvider?.name}`}
                                                                         />
                                                                     ) : (
@@ -644,7 +658,10 @@ const VectorStoreConfigure = () => {
                                                                     )}
                                                                 </div>
                                                                 <Typography sx={{ ml: 2 }} variant='h3'>
-                                                                    {selectedEmbeddingsProvider.label}
+                                                                    {getDocStoreComponentDisplayLabel(
+                                                                        selectedEmbeddingsMetadata,
+                                                                        selectedEmbeddingsProvider.label
+                                                                    )}
                                                                 </Typography>
                                                                 <div style={{ flex: 1 }}></div>
                                                                 <div
@@ -679,6 +696,7 @@ const VectorStoreConfigure = () => {
                                                                             key={index}
                                                                             data={selectedEmbeddingsProvider}
                                                                             inputParam={inputParam}
+                                                                            componentMetadata={selectedEmbeddingsMetadata}
                                                                             isAdditionalParams={inputParam.additionalParams}
                                                                             onNodeDataChange={handleEmbeddingsProviderDataChange}
                                                                         />
@@ -754,7 +772,10 @@ const VectorStoreConfigure = () => {
                                                                                 borderRadius: '50%',
                                                                                 objectFit: 'contain'
                                                                             }}
-                                                                            alt={selectedVectorStoreProvider.label ?? '向量库'}
+                                                                            alt={getDocStoreComponentDisplayLabel(
+                                                                                selectedVectorStoreMetadata,
+                                                                                selectedVectorStoreProvider.label ?? '向量库'
+                                                                            )}
                                                                             src={`${baseURL}/api/v1/node-icon/${selectedVectorStoreProvider?.name}`}
                                                                         />
                                                                     ) : (
@@ -762,7 +783,10 @@ const VectorStoreConfigure = () => {
                                                                     )}
                                                                 </div>
                                                                 <Typography sx={{ ml: 2 }} variant='h3'>
-                                                                    {selectedVectorStoreProvider.label}
+                                                                    {getDocStoreComponentDisplayLabel(
+                                                                        selectedVectorStoreMetadata,
+                                                                        selectedVectorStoreProvider.label
+                                                                    )}
                                                                 </Typography>
                                                                 <div style={{ flex: 1 }}></div>
                                                                 <div
@@ -797,6 +821,7 @@ const VectorStoreConfigure = () => {
                                                                             key={index}
                                                                             data={selectedVectorStoreProvider}
                                                                             inputParam={inputParam}
+                                                                            componentMetadata={selectedVectorStoreMetadata}
                                                                             isAdditionalParams={inputParam.additionalParams}
                                                                             onNodeDataChange={handleVectorStoreProviderDataChange}
                                                                         />
@@ -878,7 +903,10 @@ const VectorStoreConfigure = () => {
                                                                                 borderRadius: '50%',
                                                                                 objectFit: 'contain'
                                                                             }}
-                                                                            alt={selectedRecordManagerProvider.label ?? '记录管理器'}
+                                                                            alt={getDocStoreComponentDisplayLabel(
+                                                                                selectedRecordManagerMetadata,
+                                                                                selectedRecordManagerProvider.label ?? '记录管理器'
+                                                                            )}
                                                                             src={`${baseURL}/api/v1/node-icon/${selectedRecordManagerProvider?.name}`}
                                                                         />
                                                                     ) : (
@@ -886,7 +914,10 @@ const VectorStoreConfigure = () => {
                                                                     )}
                                                                 </div>
                                                                 <Typography sx={{ ml: 2 }} variant='h3'>
-                                                                    {selectedRecordManagerProvider.label}
+                                                                    {getDocStoreComponentDisplayLabel(
+                                                                        selectedRecordManagerMetadata,
+                                                                        selectedRecordManagerProvider.label
+                                                                    )}
                                                                 </Typography>
                                                                 <div style={{ flex: 1 }}></div>
                                                                 <div
@@ -921,6 +952,7 @@ const VectorStoreConfigure = () => {
                                                                             key={index}
                                                                             data={selectedRecordManagerProvider}
                                                                             inputParam={inputParam}
+                                                                            componentMetadata={selectedRecordManagerMetadata}
                                                                             isAdditionalParams={inputParam.additionalParams}
                                                                             onNodeDataChange={handleRecordManagerProviderDataChange}
                                                                         />

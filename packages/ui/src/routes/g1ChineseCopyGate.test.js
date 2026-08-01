@@ -11,6 +11,7 @@ const toRelativePath = (absolutePath) => {
 
 const SOURCE_EXTENSIONS = Object.freeze(['.js', '.jsx', '.ts', '.tsx'])
 const SOURCE_EXTENSION_SET = new Set(SOURCE_EXTENSIONS)
+const TEST_SOURCE_PATTERN = /\.(?:test|spec)\.(?:js|jsx|ts|tsx)$/
 const UI_SOURCE_DIRECTORY = resolve(__dirname, '..')
 const UI_COMPONENT_DIRECTORY = resolve(UI_SOURCE_DIRECTORY, 'ui-component')
 const VIEW_HEADER_BASENAME = resolve(UI_SOURCE_DIRECTORY, 'layout/MainLayout/ViewHeader')
@@ -27,7 +28,9 @@ const sourceFilesUnder = (relativeDirectory) => {
         readdirSync(currentDirectory, { withFileTypes: true }).flatMap((entry) => {
             const absolutePath = resolve(currentDirectory, entry.name)
             if (entry.isDirectory()) return walk(absolutePath)
-            return entry.isFile() && SOURCE_EXTENSION_SET.has(extname(entry.name)) ? [toRelativePath(absolutePath)] : []
+            return entry.isFile() && SOURCE_EXTENSION_SET.has(extname(entry.name)) && !TEST_SOURCE_PATTERN.test(entry.name)
+                ? [toRelativePath(absolutePath)]
+                : []
         })
 
     return walk(directory).sort()
@@ -797,6 +800,10 @@ describe('G1 Chinese copy extraction boundary', () => {
 
     it('enumerates JavaScript and TypeScript source extensions under module roots', () => {
         expect(REQUIRED_MODULES.Assistants).toContain('../views/assistants/custom/toolAgentFlow.js')
+    })
+
+    it('excludes test fixtures from production user-facing copy scans', () => {
+        expect(REQUIRED_MODULES['Document Stores']).not.toContain('../views/docstore/componentMetadataView.test.js')
     })
 
     it('recursively includes rendered shared UI dependencies', () => {

@@ -58,6 +58,7 @@ import {
 import useNotifier from '@/utils/useNotifier'
 import { usePrompt } from '@/utils/usePrompt'
 import { getErrorMessage } from '@/utils/getErrorMessage'
+import { parseFlowDataForCanvas, sanitizeFlowDisplayMetadata } from '@/utils/componentMetadataDisplay'
 
 // const
 import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
@@ -175,7 +176,7 @@ const AgentflowCanvas = () => {
 
     const handleLoadFlow = (file) => {
         try {
-            const flowData = JSON.parse(file)
+            const flowData = parseFlowDataForCanvas(file)
             const nodes = flowData.nodes || []
 
             setNodes(nodes)
@@ -236,7 +237,7 @@ const AgentflowCanvas = () => {
 
             const rfInstanceObject = reactFlowInstance.toObject()
             rfInstanceObject.nodes = nodes
-            const flowData = JSON.stringify(rfInstanceObject)
+            const flowData = JSON.stringify(sanitizeFlowDisplayMetadata(rfInstanceObject))
 
             if (!chatflow.id) {
                 const newChatflowBody = {
@@ -303,7 +304,6 @@ const AgentflowCanvas = () => {
     const onDrop = useCallback(
         (event) => {
             event.preventDefault()
-            const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect()
             let nodeData = event.dataTransfer.getData('application/reactflow')
 
             // check if the dropped element is valid
@@ -313,10 +313,8 @@ const AgentflowCanvas = () => {
 
             nodeData = JSON.parse(nodeData)
 
-            const position = reactFlowInstance.project({
-                x: event.clientX - reactFlowBounds.left - 100,
-                y: event.clientY - reactFlowBounds.top - 50
-            })
+            const cursorPosition = reactFlowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+            const position = { x: cursorPosition.x - 100, y: cursorPosition.y - 50 }
             const nodes = reactFlowInstance.getNodes()
 
             if (nodeData.name === 'startAgentflow' && nodes.find((node) => node.data.name === 'startAgentflow')) {
@@ -543,10 +541,11 @@ const AgentflowCanvas = () => {
     useEffect(() => {
         if (getSpecificChatflowApi.data) {
             const chatflow = getSpecificChatflowApi.data
-            const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+            const initialFlow = chatflow.flowData ? parseFlowDataForCanvas(chatflow.flowData) : { nodes: [], edges: [] }
+            const sanitizedChatflow = chatflow.flowData ? { ...chatflow, flowData: JSON.stringify(initialFlow) } : chatflow
             setNodes(initialFlow.nodes || [])
             setEdges(initialFlow.edges || [])
-            dispatch({ type: SET_CHATFLOW, chatflow })
+            dispatch({ type: SET_CHATFLOW, chatflow: sanitizedChatflow })
         } else if (getSpecificChatflowApi.error) {
             errorFailed(getErrorMessage(getSpecificChatflowApi.error, '获取流程失败，请稍后重试'))
         }
@@ -583,7 +582,9 @@ const AgentflowCanvas = () => {
     useEffect(() => {
         setChatflow(canvasDataStore.chatflow)
         if (canvasDataStore.chatflow) {
-            const flowData = canvasDataStore.chatflow.flowData ? JSON.parse(canvasDataStore.chatflow.flowData) : []
+            const flowData = canvasDataStore.chatflow.flowData
+                ? parseFlowDataForCanvas(canvasDataStore.chatflow.flowData)
+                : { nodes: [], edges: [] }
             checkIfSyncNodesAvailable(flowData.nodes || [])
         }
 

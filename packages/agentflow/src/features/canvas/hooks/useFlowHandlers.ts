@@ -1,7 +1,15 @@
 import { useCallback, useRef } from 'react'
 import { addEdge, applyEdgeChanges, applyNodeChanges, Connection, EdgeChange, Node, NodeChange } from 'reactflow'
 
-import { getNodeColor, getUniqueNodeId, getUniqueNodeLabel, initNode, isValidConnectionAgentflowV2, resolveNodeType } from '@/core'
+import {
+    emitSanitizedFlowChange,
+    getNodeColor,
+    getUniqueNodeId,
+    getUniqueNodeLabel,
+    initNode,
+    isValidConnectionAgentflowV2,
+    resolveNodeType
+} from '@/core'
 import { tokens } from '@/core/theme/tokens'
 import type { FlowDataCallback, FlowEdge, FlowNode, NodeDataSchema } from '@/core/types'
 import { checkNodePlacementConstraints } from '@/core/validation'
@@ -96,7 +104,7 @@ export function useFlowHandlers({
             setDirty(true)
 
             // Notify parent of flow change
-            onFlowChangeRef.current?.({
+            emitSanitizedFlowChange(onFlowChangeRef.current, {
                 nodes,
                 edges: updatedEdges,
                 viewport: getViewport()
@@ -116,7 +124,7 @@ export function useFlowHandlers({
                 setDirty(true)
                 // Compute the updated nodes by applying changes to current state
                 const updatedNodes = applyNodeChanges(changes, nodes) as FlowNode[]
-                onFlowChangeRef.current?.({
+                emitSanitizedFlowChange(onFlowChangeRef.current, {
                     nodes: updatedNodes,
                     edges,
                     viewport: getViewport()
@@ -136,7 +144,7 @@ export function useFlowHandlers({
                 return dragged ? { ...n, position: dragged.position } : n
             })
             setDirty(true)
-            onFlowChangeRef.current?.({
+            emitSanitizedFlowChange(onFlowChangeRef.current, {
                 nodes: updatedNodes as FlowNode[],
                 edges,
                 viewport: getViewport()
@@ -155,7 +163,7 @@ export function useFlowHandlers({
                 setDirty(true)
                 // Compute the updated edges by applying changes to current state
                 const updatedEdges = applyEdgeChanges(changes, edges) as FlowEdge[]
-                onFlowChangeRef.current?.({
+                emitSanitizedFlowChange(onFlowChangeRef.current, {
                     nodes,
                     edges: updatedEdges,
                     viewport: getViewport()
@@ -198,7 +206,7 @@ export function useFlowHandlers({
             setDirty(true)
 
             // Notify parent of flow change
-            onFlowChangeRef.current?.({
+            emitSanitizedFlowChange(onFlowChangeRef.current, {
                 nodes: updatedNodes,
                 edges,
                 viewport: getViewport()

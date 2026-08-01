@@ -1,11 +1,10 @@
 import PropTypes from 'prop-types'
 import { Handle, Position, useUpdateNodeInternals } from 'reactflow'
-import { useEffect, useRef, useState, useContext } from 'react'
+import { useEffect, useRef, useState, useContext, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
 import { cloneDeep } from 'lodash'
 import showdown from 'showdown'
-import parser from 'html-react-parser'
 
 // material-ui
 import { useTheme, styled } from '@mui/material/styles'
@@ -65,6 +64,7 @@ import { TimePicker } from '@/ui-component/picker/TimePicker'
 import { WeekDaysPicker } from '@/ui-component/picker/WeekDaysPicker'
 import { MonthDaysPicker } from '@/ui-component/picker/MonthDaysPicker'
 import { DatePicker } from '@/ui-component/picker/DatePicker'
+import { SafeHTML } from '@/ui-component/safe/SafeHTML'
 
 import ToolDialog from '@/views/tools/ToolDialog'
 import AssistantDialog from '@/views/assistants/openai/AssistantDialog'
@@ -94,6 +94,12 @@ import {
 } from '@/utils/genericHelper'
 import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
+import {
+    createMetadataDisplayView,
+    getMetadataDisplayText,
+    localizeOptionViews,
+    resolveCurrentMetadataItem
+} from '@/utils/componentMetadataDisplay'
 
 // const
 import { baseURL, FLOWISE_CREDENTIAL_ID } from '@/store/constant'
@@ -142,7 +148,15 @@ const NodeInputHandler = ({
 }) => {
     const { id: chatflowIdFromParams } = useParams()
     const canvasChatflow = useSelector((state) => state.canvas.chatflow)
+    const componentNodes = useSelector((state) => state.canvas.componentNodes)
     const chatflowId = chatflowIdFromParams || canvasChatflow?.id
+    const componentMetadata = componentNodes.find((node) => node.name === data.name)
+    const displayInputParam = inputParam ? resolveCurrentMetadataItem(componentMetadata, inputParam, parentParamForArray) : undefined
+    const displayInputAnchor = inputAnchor ? resolveCurrentMetadataItem(componentMetadata, inputAnchor) : undefined
+    const renderInputParam = useMemo(
+        () => (inputParam ? createMetadataDisplayView(inputParam, displayInputParam ?? inputParam) : inputParam),
+        [displayInputParam, inputParam]
+    )
 
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
@@ -325,6 +339,7 @@ const NodeInputHandler = ({
     const getDataGridColDef = (columns, inputParam) => {
         const colDef = []
         for (const column of columns) {
+            const displayColumn = displayInputParam?.datagrid?.find((candidate) => candidate.field === column.field) ?? column
             const stateNode = reactFlowInstance ? reactFlowInstance.getNodes().find((node) => node.data.name === 'seqState') : null
             if (column.type === 'asyncSingleSelect' && column.loadMethod && column.loadMethod.includes('loadStateKeys')) {
                 if (stateNode) {
@@ -347,7 +362,7 @@ const NodeInputHandler = ({
                                 colDef.push({
                                     ...column,
                                     field: column.field,
-                                    headerName: column.headerName,
+                                    headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName),
                                     type: 'singleSelect',
                                     editable: true,
                                     valueOptions: keys
@@ -361,7 +376,7 @@ const NodeInputHandler = ({
                     colDef.push({
                         ...column,
                         field: column.field,
-                        headerName: column.headerName,
+                        headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName),
                         type: 'singleSelect',
                         editable: true,
                         valueOptions: []
@@ -417,7 +432,7 @@ const NodeInputHandler = ({
                 colDef.push({
                     ...column,
                     field: column.field,
-                    headerName: column.headerName,
+                    headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName),
                     renderEditCell: ({ id, field, value }) => {
                         // eslint-disable-next-line react-hooks/rules-of-hooks
                         const apiRef = useGridApiContext()
@@ -461,7 +476,10 @@ const NodeInputHandler = ({
                     }
                 })
             } else {
-                colDef.push(column)
+                colDef.push({
+                    ...column,
+                    headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName)
+                })
             }
         }
         return colDef
@@ -484,7 +502,7 @@ const NodeInputHandler = ({
                 })
             }
         }
-        return [...preLoadOptions, ...inputParam.options]
+        return [...preLoadOptions, ...localizeOptionViews(inputParam.options, displayInputParam?.options)]
     }
 
     const getTabValue = (inputParam) => {
@@ -864,9 +882,14 @@ const NodeInputHandler = ({
                     </CustomWidthTooltip>
                     <Box sx={{ p: 2 }}>
                         <Typography>
-                            {inputAnchor.label}
+                            {getMetadataDisplayText(displayInputAnchor, 'label', inputAnchor.label)}
                             {!inputAnchor.optional && <span style={{ color: 'red' }}>&nbsp;*</span>}
-                            {inputAnchor.description && <TooltipWithParser style={{ marginLeft: 10 }} title={inputAnchor.description} />}
+                            {inputAnchor.description && (
+                                <TooltipWithParser
+                                    style={{ marginLeft: 10 }}
+                                    title={getMetadataDisplayText(displayInputAnchor, 'description', inputAnchor.description)}
+                                />
+                            )}
                         </Typography>
                     </Box>
                 </>
@@ -935,9 +958,14 @@ const NodeInputHandler = ({
                         )}
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <Typography>
-                                {inputParam.label}
+                                {getMetadataDisplayText(displayInputParam, 'label', inputParam.label)}
                                 {!inputParam.optional && <span style={{ color: 'red' }}>&nbsp;*</span>}
-                                {inputParam.description && <TooltipWithParser style={{ marginLeft: 10 }} title={inputParam.description} />}
+                                {inputParam.description && (
+                                    <TooltipWithParser
+                                        style={{ marginLeft: 10 }}
+                                        title={getMetadataDisplayText(displayInputParam, 'description', inputParam.description)}
+                                    />
+                                )}
                             </Typography>
                             <div style={{ flexGrow: 1 }}></div>
                             {inputParam.hint && !isAdditionalParams && (
@@ -947,9 +975,9 @@ const NodeInputHandler = ({
                                         height: 25,
                                         width: 25
                                     }}
-                                    title={inputParam.hint.label}
+                                    title={getMetadataDisplayText(displayInputParam?.hint, 'label', inputParam.hint.label)}
                                     color='secondary'
-                                    onClick={() => onInputHintDialogClicked(inputParam.hint)}
+                                    onClick={() => onInputHintDialogClicked(renderInputParam.hint)}
                                 >
                                     <IconBulb />
                                 </IconButton>
@@ -960,11 +988,11 @@ const NodeInputHandler = ({
                                     color='secondary'
                                     variant='text'
                                     onClick={() => {
-                                        onInputHintDialogClicked(inputParam.hint)
+                                        onInputHintDialogClicked(renderInputParam.hint)
                                     }}
                                     startIcon={<IconBulb size={17} />}
                                 >
-                                    {inputParam.hint.label}
+                                    {getMetadataDisplayText(displayInputParam?.hint, 'label', inputParam.hint.label)}
                                 </Button>
                             )}
                             {inputParam.acceptVariable && inputParam.type === 'string' && (
@@ -1012,7 +1040,7 @@ const NodeInputHandler = ({
                                     title='展开'
                                     color='primary'
                                     onClick={() =>
-                                        onExpandDialogClicked(data.inputs[inputParam.name] ?? inputParam.default ?? '', inputParam)
+                                        onExpandDialogClicked(data.inputs[inputParam.name] ?? inputParam.default ?? '', renderInputParam)
                                     }
                                 >
                                     <IconArrowsMaximize />
@@ -1033,14 +1061,17 @@ const NodeInputHandler = ({
                                 }}
                             >
                                 <IconAlertTriangle size={30} color='orange' />
-                                <span style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}>{parser(inputParam.warning)}</span>
+                                <SafeHTML
+                                    html={getMetadataDisplayText(displayInputParam, 'warning', inputParam.warning)}
+                                    style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}
+                                />
                             </div>
                         )}
                         {inputParam.type === 'credential' && (
                             <CredentialInputHandler
                                 disabled={disabled}
                                 data={data}
-                                inputParam={inputParam}
+                                inputParam={renderInputParam}
                                 onSelect={(newValue) => {
                                     data.credential = newValue
                                     data.inputs[FLOWISE_CREDENTIAL_ID] = newValue // in case data.credential is not updated
@@ -1061,7 +1092,13 @@ const NodeInputHandler = ({
                                 >
                                     <TabsList>
                                         {inputParam.tabs.map((inputChildParam, index) => (
-                                            <Tab key={index}>{inputChildParam.label}</Tab>
+                                            <Tab key={index}>
+                                                {getMetadataDisplayText(
+                                                    displayInputParam?.tabs?.find((tab) => tab.name === inputChildParam.name),
+                                                    'label',
+                                                    inputChildParam.label
+                                                )}
+                                            </Tab>
                                         ))}
                                     </TabsList>
                                 </Tabs>
@@ -1137,7 +1174,7 @@ const NodeInputHandler = ({
                                         height={inputParam.rows ? '100px' : '200px'}
                                         theme={customization.isDarkMode ? 'dark' : 'light'}
                                         lang={'js'}
-                                        placeholder={inputParam.placeholder}
+                                        placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                         onValueChange={(code) => (data.inputs[inputParam.name] = code)}
                                         basicSetup={{ highlightActiveLine: false, highlightActiveLineGutter: false }}
                                     />
@@ -1287,9 +1324,9 @@ const NodeInputHandler = ({
                             (window.location.href.includes('v2/agentcanvas') || window.location.href.includes('v2/marketplace')) ? (
                                 <RichInput
                                     key={data.inputs[inputParam.name]}
-                                    placeholder={inputParam.placeholder}
+                                    placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                     disabled={disabled}
-                                    inputParam={inputParam}
+                                    inputParam={renderInputParam}
                                     onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
                                     value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
                                     nodes={reactFlowInstance ? reactFlowInstance.getNodes() : []}
@@ -1299,9 +1336,9 @@ const NodeInputHandler = ({
                             ) : (
                                 <Input
                                     key={data.inputs[inputParam.name]}
-                                    placeholder={inputParam.placeholder}
+                                    placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                     disabled={disabled}
-                                    inputParam={inputParam}
+                                    inputParam={renderInputParam}
                                     onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
                                     value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
                                     nodes={[]}
@@ -1336,9 +1373,9 @@ const NodeInputHandler = ({
                                             }}
                                             variant='outlined'
                                             disabled={disabled}
-                                            onClick={() => onEditJSONClicked(data.inputs[inputParam.name] ?? '', inputParam)}
+                                            onClick={() => onEditJSONClicked(data.inputs[inputParam.name] ?? '', renderInputParam)}
                                         >
-                                            {inputParam.label}
+                                            {getMetadataDisplayText(displayInputParam, 'label', inputParam.label)}
                                         </Button>
                                         <FormatPromptValuesDialog
                                             show={showFormatPromptValuesDialog}
@@ -1421,7 +1458,7 @@ const NodeInputHandler = ({
                             <TimePicker
                                 disabled={disabled}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
-                                placeholder={inputParam.placeholder}
+                                placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                 onChange={(newValue) => handleDataChange({ inputParam, newValue })}
                             />
                         )}
@@ -1429,7 +1466,7 @@ const NodeInputHandler = ({
                             <WeekDaysPicker
                                 disabled={disabled}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
-                                options={inputParam.options}
+                                options={localizeOptionViews(inputParam.options, displayInputParam?.options)}
                                 onChange={(newValue) => handleDataChange({ inputParam, newValue })}
                             />
                         )}
@@ -1444,11 +1481,13 @@ const NodeInputHandler = ({
                             <DatePicker
                                 disabled={disabled}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
-                                placeholder={inputParam.placeholder}
+                                placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                 onChange={(newValue) => handleDataChange({ inputParam, newValue })}
                             />
                         )}
-                        {inputParam.type === 'array' && <ArrayRenderer inputParam={inputParam} data={data} disabled={disabled} />}
+                        {inputParam.type === 'array' && (
+                            <ArrayRenderer inputParam={inputParam} displayLabel={renderInputParam.label} data={data} disabled={disabled} />
+                        )}
                         {/* CUSTOM INPUT LOGIC */}
                         {inputParam.type.includes('conditionFunction') && (
                             <>
@@ -1462,7 +1501,7 @@ const NodeInputHandler = ({
                                     variant='outlined'
                                     onClick={() => onConditionDialogClicked(inputParam)}
                                 >
-                                    {inputParam.label}
+                                    {getMetadataDisplayText(displayInputParam, 'label', inputParam.label)}
                                 </Button>
                             </>
                         )}

@@ -2,49 +2,49 @@ import { useMemo } from 'react'
 
 import type { VariableItem } from '@/atoms/VariablePicker'
 import { getAgentflowIcon } from '@/core/node-config'
-import { getDefinedStateKeys, getUpstreamNodes } from '@/core/utils'
+import { getDefinedStateKeys, getUpstreamNodes, resolveInstanceDisplayLabel } from '@/core/utils'
 import { useAgentflowContext } from '@/infrastructure/store'
 
 // ── Static global variables (matches original suggestionOption.js) ───────────
 
 const GLOBAL_VARIABLES: VariableItem[] = [
-    { label: 'question', description: "User's question from chatbox", category: 'Chat Context', value: '{{question}}' },
+    { label: 'question', description: '用户在聊天框中输入的问题', category: '对话上下文', value: '{{question}}' },
     {
         label: 'chat_history',
-        description: 'Past conversation history between user and AI',
-        category: 'Chat Context',
+        description: '用户与 AI 之间的历史对话',
+        category: '对话上下文',
         value: '{{chat_history}}'
     },
     {
         label: 'current_date_time',
-        description: 'Current date and time',
-        category: 'Chat Context',
+        description: '当前日期和时间',
+        category: '对话上下文',
         value: '{{current_date_time}}'
     },
     {
         label: 'runtime_messages_length',
-        description: 'Total messages between LLM and Agent',
-        category: 'Chat Context',
+        description: '大模型与智能体之间的消息总数',
+        category: '对话上下文',
         value: '{{runtime_messages_length}}'
     },
     {
         label: 'loop_count',
-        description: 'Current loop count',
-        category: 'Chat Context',
+        description: '当前循环次数',
+        category: '对话上下文',
         value: '{{loop_count}}'
     },
     {
         label: 'file_attachment',
-        description: 'Files uploaded from the chat',
-        category: 'Chat Context',
+        description: '通过聊天上传的文件',
+        category: '对话上下文',
         value: '{{file_attachment}}'
     },
-    { label: '$flow.sessionId', description: 'Current session ID', category: 'Flow Variables', value: '{{$flow.sessionId}}' },
-    { label: '$flow.chatId', description: 'Current chat ID', category: 'Flow Variables', value: '{{$flow.chatId}}' },
+    { label: '$flow.sessionId', description: '当前会话 ID', category: '流程变量', value: '{{$flow.sessionId}}' },
+    { label: '$flow.chatId', description: '当前聊天 ID', category: '流程变量', value: '{{$flow.chatId}}' },
     {
         label: '$flow.chatflowId',
-        description: 'Current chatflow ID',
-        category: 'Flow Variables',
+        description: '当前对话流程 ID',
+        category: '流程变量',
         value: '{{$flow.chatflowId}}'
     }
 ]
@@ -65,7 +65,7 @@ const GLOBAL_VARIABLES: VariableItem[] = [
  */
 export function useAvailableVariables(nodeId: string): VariableItem[] {
     const { state } = useAgentflowContext()
-    const { nodes, edges } = state
+    const { nodes, edges, componentNodes } = state
 
     return useMemo(() => {
         const items: VariableItem[] = [...GLOBAL_VARIABLES]
@@ -75,8 +75,8 @@ export function useAvailableVariables(nodeId: string): VariableItem[] {
         if (currentNode?.extent === 'parent') {
             items.unshift({
                 label: '$iteration',
-                description: 'Iteration item. For JSON, use dot notation: $iteration.name',
-                category: 'Iteration',
+                description: '当前迭代项。JSON 数据请使用点号访问，例如 $iteration.name',
+                category: '迭代',
                 value: '{{$iteration}}'
             })
         }
@@ -92,10 +92,12 @@ export function useAvailableVariables(nodeId: string): VariableItem[] {
                 node.data.id
 
             const agentflowIcon = getAgentflowIcon(node.data.name)
+            const component = componentNodes.find((candidate) => candidate.name === node.data.name)
+            const nodeDisplayLabel = resolveInstanceDisplayLabel(node.data, component) || node.data.name
             items.push({
                 label: displayName,
-                description: `Output from ${node.data.label ?? node.data.name}`,
-                category: 'Node Outputs',
+                description: `来自${nodeDisplayLabel}的输出`,
+                category: '节点输出',
                 value: `{{${node.id}}}`,
                 icon: agentflowIcon?.icon,
                 iconColor: agentflowIcon?.color
@@ -107,12 +109,12 @@ export function useAvailableVariables(nodeId: string): VariableItem[] {
         for (const key of stateKeys) {
             items.push({
                 label: `$flow.state.${key}`,
-                description: `Current value of the state variable with specified key`,
-                category: 'Flow State',
+                description: '指定键对应的流程状态当前值',
+                category: '流程状态',
                 value: `{{$flow.state.${key}}}`
             })
         }
 
         return items
-    }, [nodeId, nodes, edges])
+    }, [nodeId, nodes, edges, componentNodes])
 }

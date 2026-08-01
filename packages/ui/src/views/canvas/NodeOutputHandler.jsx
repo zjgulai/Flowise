@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types'
 import { Handle, Position, useUpdateNodeInternals } from 'reactflow'
 import { useEffect, useRef, useState, useContext } from 'react'
+import { useSelector } from 'react-redux'
 
 // material-ui
 import { useTheme, styled } from '@mui/material/styles'
@@ -9,6 +10,7 @@ import { tooltipClasses } from '@mui/material/Tooltip'
 import { flowContext } from '@/store/context/ReactFlowContext'
 import { isValidConnection } from '@/utils/genericHelper'
 import { Dropdown } from '@/ui-component/dropdown/Dropdown'
+import { getMetadataDisplayText, localizeOptionViews, resolveCurrentMetadataItem } from '@/utils/componentMetadataDisplay'
 
 const CustomWidthTooltip = styled(({ className, ...props }) => <Tooltip {...props} classes={{ popper: className }} />)({
     [`& .${tooltipClasses.tooltip}`]: {
@@ -27,6 +29,9 @@ const NodeOutputHandler = ({ outputAnchor, data, disabled = false }) => {
     const [offsetTop, setOffsetTop] = useState(0)
     const [dropdownValue, setDropdownValue] = useState(null)
     const { reactFlowInstance } = useContext(flowContext)
+    const componentNodes = useSelector((state) => state.canvas.componentNodes)
+    const componentMetadata = componentNodes.find((node) => node.name === data.name)
+    const displayOutputAnchor = resolveCurrentMetadataItem(componentMetadata, outputAnchor)
 
     const getAvailableOptions = (options = []) => {
         return options.filter((option) => !option.hidden && !option.isAnchor)
@@ -86,7 +91,7 @@ const NodeOutputHandler = ({ outputAnchor, data, disabled = false }) => {
                         />
                     </CustomWidthTooltip>
                     <Box sx={{ p: 2, textAlign: 'end' }}>
-                        <Typography>{outputAnchor.label}</Typography>
+                        <Typography>{getMetadataDisplayText(displayOutputAnchor, 'label', outputAnchor.label)}</Typography>
                     </Box>
                 </>
             )}
@@ -95,7 +100,7 @@ const NodeOutputHandler = ({ outputAnchor, data, disabled = false }) => {
                 outputAnchor.options &&
                 getAnchorOptions(outputAnchor.options).length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        {getAnchorOptions(outputAnchor.options).map((option, index) => {
+                        {localizeOptionViews(getAnchorOptions(outputAnchor.options), displayOutputAnchor?.options).map((option, index) => {
                             return (
                                 <div key={option.id} style={{ display: 'flex', flexDirection: 'row' }}>
                                     <CustomWidthTooltip placement='right' title={option.type}>
@@ -210,7 +215,7 @@ const NodeOutputHandler = ({ outputAnchor, data, disabled = false }) => {
                                 disabled={disabled}
                                 disableClearable={true}
                                 name={outputAnchor.name}
-                                options={getAvailableOptions(outputAnchor.options)}
+                                options={localizeOptionViews(getAvailableOptions(outputAnchor.options), displayOutputAnchor?.options)}
                                 onSelect={(newValue) => {
                                     setDropdownValue(newValue)
                                     data.outputs[outputAnchor.name] = newValue

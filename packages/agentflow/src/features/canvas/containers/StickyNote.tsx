@@ -3,6 +3,7 @@ import { memo, useRef, useState } from 'react'
 import { Box, TextField } from '@mui/material'
 
 import type { NodeData } from '@/core/types'
+import { getMetadataDisplayText } from '@/core/utils'
 import { useAgentflowContext, useConfigContext } from '@/infrastructure/store'
 
 import { NodeToolbarActions } from '../components/NodeToolbarActions'
@@ -18,10 +19,13 @@ export interface StickyNoteProps {
  */
 function StickyNoteComponent({ data }: StickyNoteProps) {
     const { isDarkMode } = useConfigContext()
-    const { updateNodeData } = useAgentflowContext()
+    const { state, updateNodeData } = useAgentflowContext()
     const ref = useRef<HTMLDivElement>(null)
 
     const [inputParam] = data.inputParams || []
+    const currentInputParam = state.componentNodes
+        ?.find((component) => component.name === data.name)
+        ?.inputs?.find((param) => param.name === inputParam?.name)
     const [isHovered, setIsHovered] = useState(false)
 
     const { stateColor, backgroundColor } = useNodeColors({
@@ -56,7 +60,11 @@ function StickyNoteComponent({ data }: StickyNoteProps) {
                         key={data.id}
                         multiline
                         rows={3}
-                        placeholder={inputParam?.placeholder || 'Add a note...'}
+                        placeholder={getMetadataDisplayText(
+                            currentInputParam,
+                            'placeholder',
+                            getMetadataDisplayText(inputParam, 'placeholder', '添加备注……')
+                        )}
                         value={
                             (data.inputs?.[inputParam?.name || 'note'] as string | undefined) ??
                             (inputParam?.default as string | undefined) ??

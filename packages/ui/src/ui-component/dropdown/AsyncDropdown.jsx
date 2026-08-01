@@ -4,7 +4,7 @@ import PropTypes from 'prop-types'
 import axios from 'axios'
 
 // Material
-import Autocomplete, { autocompleteClasses } from '@mui/material/Autocomplete'
+import Autocomplete, { autocompleteClasses, createFilterOptions } from '@mui/material/Autocomplete'
 import { Popper, CircularProgress, TextField, Box, Typography, Tooltip } from '@mui/material'
 import { useTheme, styled } from '@mui/material/styles'
 
@@ -15,6 +15,9 @@ import credentialsApi from '@/api/credentials'
 import { baseURL } from '@/store/constant'
 import { flowContext } from '@/store/context/ReactFlowContext'
 import { getAvailableNodesForVariable } from '@/utils/genericHelper'
+import { getMetadataDisplayText, getMetadataOptionSearchText } from '@/utils/componentMetadataDisplay'
+
+const filterMetadataOptions = createFilterOptions({ stringify: getMetadataOptionSearchText })
 
 const StyledPopper = styled(Popper)({
     boxShadow: '0px 8px 10px -5px rgb(0 0 0 / 20%), 0px 16px 24px 2px rgb(0 0 0 / 14%), 0px 6px 30px 5px rgb(0 0 0 / 12%)',
@@ -194,6 +197,10 @@ export const AsyncDropdown = ({
                     setOpen(false)
                 }}
                 options={options}
+                filterOptions={filterMetadataOptions}
+                getOptionLabel={(option) =>
+                    typeof option === 'string' ? option : getMetadataDisplayText(option, 'label', option.label || option.name || '')
+                }
                 value={findMatchingOptions(options, internalValue) || getDefaultOptionValue()}
                 onChange={(e, selection) => {
                     if (multiple) {
@@ -244,7 +251,7 @@ export const AsyncDropdown = ({
                                                     key={option.name}
                                                     component='img'
                                                     src={option.imageSrc}
-                                                    alt={option.label || '已选选项'}
+                                                    alt={getMetadataDisplayText(option, 'label', option.label || '已选选项')}
                                                     sx={{
                                                         width: 32,
                                                         height: 32,
@@ -286,7 +293,7 @@ export const AsyncDropdown = ({
                         {option.imageSrc && (
                             <img
                                 src={option.imageSrc}
-                                alt={option.description}
+                                alt={getMetadataDisplayText(option, 'description', option.description)}
                                 style={{
                                     width: 30,
                                     height: 30,
@@ -296,9 +303,11 @@ export const AsyncDropdown = ({
                             />
                         )}
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <Typography variant='h5'>{option.label}</Typography>
+                            <Typography variant='h5'>{getMetadataDisplayText(option, 'label', option.label)}</Typography>
                             {option.description && (
-                                <Typography sx={{ color: customization.isDarkMode ? '#9e9e9e' : '' }}>{option.description}</Typography>
+                                <Typography sx={{ color: customization.isDarkMode ? '#9e9e9e' : '' }}>
+                                    {getMetadataDisplayText(option, 'description', option.description)}
+                                </Typography>
                             )}
                         </div>
                     </Box>

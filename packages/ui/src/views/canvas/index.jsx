@@ -52,6 +52,7 @@ import {
 import useNotifier from '@/utils/useNotifier'
 import { usePrompt } from '@/utils/usePrompt'
 import { getErrorMessage } from '@/utils/getErrorMessage'
+import { parseFlowDataForCanvas, sanitizeFlowDisplayMetadata } from '@/utils/componentMetadataDisplay'
 
 // const
 import { FLOWISE_CREDENTIAL_ID } from '@/store/constant'
@@ -166,7 +167,7 @@ const Canvas = () => {
 
     const handleLoadFlow = (file) => {
         try {
-            const flowData = JSON.parse(file)
+            const flowData = parseFlowDataForCanvas(file)
             const nodes = flowData.nodes || []
 
             setNodes(nodes)
@@ -226,7 +227,7 @@ const Canvas = () => {
 
             const rfInstanceObject = reactFlowInstance.toObject()
             rfInstanceObject.nodes = nodes
-            const flowData = JSON.stringify(rfInstanceObject)
+            const flowData = JSON.stringify(sanitizeFlowDisplayMetadata(rfInstanceObject))
 
             if (!chatflow.id) {
                 const newChatflowBody = {
@@ -284,10 +285,8 @@ const Canvas = () => {
 
             nodeData = JSON.parse(nodeData)
 
-            const position = reactFlowInstance.screenToFlowPosition({
-                x: event.clientX - 100,
-                y: event.clientY - 50
-            })
+            const cursorPosition = reactFlowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+            const position = { x: cursorPosition.x - 100, y: cursorPosition.y - 50 }
 
             const newNodeId = getUniqueNodeId(nodeData, reactFlowInstance.getNodes())
 
@@ -414,11 +413,12 @@ const Canvas = () => {
                 navigate('/unauthorized')
                 return
             }
-            const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
+            const initialFlow = chatflow.flowData ? parseFlowDataForCanvas(chatflow.flowData) : { nodes: [], edges: [] }
+            const sanitizedChatflow = chatflow.flowData ? { ...chatflow, flowData: JSON.stringify(initialFlow) } : chatflow
             setLasUpdatedDateTime(chatflow.updatedDate)
             setNodes(initialFlow.nodes || [])
             setEdges(initialFlow.edges || [])
-            dispatch({ type: SET_CHATFLOW, chatflow })
+            dispatch({ type: SET_CHATFLOW, chatflow: sanitizedChatflow })
         } else if (getSpecificChatflowApi.error) {
             errorFailed(getErrorMessage(getSpecificChatflowApi.error, `获取${canvasTitle}失败，请稍后重试`))
         }
@@ -486,7 +486,9 @@ const Canvas = () => {
     useEffect(() => {
         setChatflow(canvasDataStore.chatflow)
         if (canvasDataStore.chatflow) {
-            const flowData = canvasDataStore.chatflow.flowData ? JSON.parse(canvasDataStore.chatflow.flowData) : []
+            const flowData = canvasDataStore.chatflow.flowData
+                ? parseFlowDataForCanvas(canvasDataStore.chatflow.flowData)
+                : { nodes: [], edges: [] }
             checkIfUpsertAvailable(flowData.nodes || [], flowData.edges || [])
             checkIfSyncNodesAvailable(flowData.nodes || [])
         }

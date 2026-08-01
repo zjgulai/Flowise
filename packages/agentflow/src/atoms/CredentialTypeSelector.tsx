@@ -4,6 +4,7 @@ import { Box, InputAdornment, List, ListItemButton, OutlinedInput, Typography } 
 import { useTheme } from '@mui/material/styles'
 import { IconKey, IconSearch, IconX } from '@tabler/icons-react'
 
+import { getMetadataDisplayText } from '@/core/primitives'
 import type { ComponentCredentialSchema } from '@/core/types'
 
 export interface CredentialTypeSelectorProps {
@@ -20,7 +21,11 @@ export function CredentialTypeSelector({ schemas, apiBaseUrl, onSelect }: Creden
     const theme = useTheme()
     const [searchValue, setSearchValue] = useState('')
 
-    const filtered = schemas.filter((s) => s.label.toLowerCase().includes(searchValue.toLowerCase()))
+    const filtered = schemas.filter((schema) =>
+        [schema.name, schema.label, schema.displayLabel]
+            .filter((value): value is string => typeof value === 'string')
+            .some((value) => value.toLowerCase().includes(searchValue.toLowerCase()))
+    )
 
     return (
         <>
@@ -29,7 +34,7 @@ export function CredentialTypeSelector({ schemas, apiBaseUrl, onSelect }: Creden
                     sx={{ width: '100%', pr: 2, pl: 2 }}
                     value={searchValue}
                     onChange={(e) => setSearchValue(e.target.value)}
-                    placeholder='Search credential'
+                    placeholder='搜索凭据'
                     startAdornment={
                         <InputAdornment position='start'>
                             <IconSearch stroke={1.5} size='1rem' color={theme.palette.grey[500]} />
@@ -39,7 +44,7 @@ export function CredentialTypeSelector({ schemas, apiBaseUrl, onSelect }: Creden
                         <InputAdornment
                             position='end'
                             sx={{ cursor: 'pointer', color: theme.palette.grey[500], '&:hover': { color: theme.palette.grey[900] } }}
-                            title='Clear Search'
+                            title='清除搜索'
                         >
                             <IconX stroke={1.5} size='1rem' onClick={() => setSearchValue('')} style={{ cursor: 'pointer' }} />
                         </InputAdornment>
@@ -77,7 +82,7 @@ export function CredentialTypeSelector({ schemas, apiBaseUrl, onSelect }: Creden
                         }}
                     >
                         <CredentialIcon name={schema.name} apiBaseUrl={apiBaseUrl} />
-                        <Typography>{schema.label}</Typography>
+                        <Typography>{getMetadataDisplayText(schema, 'label', schema.label)}</Typography>
                     </ListItemButton>
                 ))}
             </List>

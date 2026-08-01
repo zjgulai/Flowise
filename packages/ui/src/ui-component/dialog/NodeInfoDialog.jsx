@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useDispatch } from 'react-redux'
+import { useDispatch, useSelector } from 'react-redux'
 import { useEffect } from 'react'
 import PropTypes from 'prop-types'
 
@@ -16,11 +16,14 @@ import { baseURL, AGENTFLOW_ICONS } from '@/store/constant'
 // API
 import configApi from '@/api/config'
 import useApi from '@/hooks/useApi'
+import { getMetadataDisplayText, resolveCurrentMetadataItem, resolveInstanceDisplayLabel } from '@/utils/componentMetadataDisplay'
 
 const NodeInfoDialog = ({ show, dialogProps, onCancel }) => {
     const portalElement = document.getElementById('portal')
     const dispatch = useDispatch()
     const theme = useTheme()
+    const componentNodes = useSelector((state) => state.canvas.componentNodes)
+    const componentMetadata = dialogProps.componentMetadata ?? componentNodes.find((node) => node.name === dialogProps.data?.name)
 
     const getNodeConfigApi = useApi(configApi.getNodeConfig)
 
@@ -96,13 +99,13 @@ const NodeInfoDialog = ({ show, dialogProps, onCancel }) => {
                                         borderRadius: '50%',
                                         objectFit: 'contain'
                                     }}
-                                    alt={dialogProps.data.name}
+                                    alt={resolveInstanceDisplayLabel(dialogProps.data, componentMetadata)}
                                     src={`${baseURL}/api/v1/node-icon/${dialogProps.data.name}`}
                                 />
                             </div>
                         )}
                         <div style={{ display: 'flex', flexDirection: 'column', marginLeft: 10 }}>
-                            {dialogProps.data.label}
+                            {resolveInstanceDisplayLabel(dialogProps.data, componentMetadata)}
                             <div style={{ display: 'flex', flexDirection: 'row' }}>
                                 <div
                                     style={{
@@ -161,7 +164,7 @@ const NodeInfoDialog = ({ show, dialogProps, onCancel }) => {
                                                 fontSize: '0.825rem'
                                             }}
                                         >
-                                            {dialogProps.data.badge}
+                                            {getMetadataDisplayText(componentMetadata, 'badge', dialogProps.data.badge)}
                                         </span>
                                     </div>
                                 )}
@@ -221,7 +224,7 @@ const NodeInfoDialog = ({ show, dialogProps, onCancel }) => {
                             marginBottom: 10
                         }}
                     >
-                        <span>{dialogProps.data.description}</span>
+                        <span>{getMetadataDisplayText(componentMetadata, 'description', dialogProps.data.description)}</span>
                     </div>
                 )}
                 {getNodeConfigApi.data && getNodeConfigApi.data.length > 0 && (
@@ -229,9 +232,20 @@ const NodeInfoDialog = ({ show, dialogProps, onCancel }) => {
                         rows={getNodeConfigApi.data.map((obj) => {
                             // eslint-disable-next-line
                             const { node, nodeId, ...rest } = obj
-                            return rest
+                            const configName = rest.name?.endsWith('Config') ? rest.name.slice(0, -'Config'.length) : rest.name
+                            const currentMetadata = resolveCurrentMetadataItem(componentMetadata, { name: configName })
+                            const displayLabel =
+                                typeof rest.displayLabel === 'string' && rest.displayLabel
+                                    ? rest.displayLabel
+                                    : getMetadataDisplayText(currentMetadata, 'label', rest.label)
+                            return {
+                                ...rest,
+                                label: rest.name?.endsWith('Config') ? `${displayLabel}配置` : displayLabel
+                            }
                         })}
-                        columns={Object.keys(getNodeConfigApi.data[0]).slice(-3)}
+                        columns={Object.keys(getNodeConfigApi.data[0])
+                            .filter((key) => key !== 'displayLabel')
+                            .slice(-3)}
                     />
                 )}
             </DialogContent>

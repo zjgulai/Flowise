@@ -52,7 +52,57 @@ describe('StructuredOutputBuilder', () => {
         id: 'structured-output',
         name: 'llmStructuredOutput',
         label: 'JSON Structured Output',
-        type: 'array'
+        displayLabel: 'JSON 结构化输出',
+        type: 'array',
+        array: [
+            { id: 'key', name: 'key', label: 'Key', displayLabel: '键', type: 'string' },
+            {
+                id: 'type',
+                name: 'type',
+                label: 'Type',
+                displayLabel: '类型',
+                type: 'options',
+                options: [
+                    { label: 'String', displayLabel: '字符串', name: 'string' },
+                    { label: 'String Array', displayLabel: '字符串数组', name: 'stringArray' },
+                    { label: 'Number', displayLabel: '数字', name: 'number' },
+                    { label: 'Boolean', displayLabel: '布尔值', name: 'boolean' },
+                    { label: 'Enum', displayLabel: '枚举', name: 'enum' },
+                    { label: 'JSON Array', displayLabel: 'JSON 数组', name: 'jsonArray' }
+                ]
+            },
+            {
+                id: 'enumValues',
+                name: 'enumValues',
+                label: 'Enum Values',
+                displayLabel: '枚举值',
+                type: 'string',
+                description: 'Enum values. Separated by comma',
+                displayDescription: '枚举值，使用逗号分隔',
+                placeholder: 'value1, value2, value3',
+                displayPlaceholder: '值1, 值2, 值3'
+            },
+            {
+                id: 'jsonSchema',
+                name: 'jsonSchema',
+                label: 'JSON Schema',
+                displayLabel: 'JSON 架构',
+                type: 'code',
+                description: 'JSON schema for the structured output',
+                displayDescription: '结构化输出所使用的 JSON 架构',
+                placeholder: '{ "answer": { "type": "string" } }',
+                displayPlaceholder: '{ "答案": { "类型": "字符串" } }'
+            },
+            {
+                id: 'description',
+                name: 'description',
+                label: 'Description',
+                displayLabel: '说明',
+                type: 'string',
+                placeholder: 'Description of the key',
+                displayPlaceholder: '键的说明'
+            }
+        ] as InputParam[]
     }
 
     const mockNodeData: NodeData = {
@@ -71,9 +121,9 @@ describe('StructuredOutputBuilder', () => {
     it('should render section header and empty state with only Add button', () => {
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('JSON Structured Output')).toBeInTheDocument()
+        expect(screen.getByText('JSON 结构化输出')).toBeInTheDocument()
         expect(screen.queryByText('0')).not.toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /Add JSON Structured Output/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '添加JSON 结构化输出' })).toBeInTheDocument()
     })
 
     it('should render existing entries with field labels', () => {
@@ -94,9 +144,9 @@ describe('StructuredOutputBuilder', () => {
         expect(screen.getByText('1')).toBeInTheDocument()
 
         // Field labels (2 entries × Key + Type + Description each)
-        expect(screen.getAllByText('Key')).toHaveLength(2)
-        expect(screen.getAllByText('Type')).toHaveLength(2)
-        expect(screen.getAllByText('Description')).toHaveLength(2)
+        expect(screen.getAllByText('键')).toHaveLength(2)
+        expect(screen.getAllByText('类型')).toHaveLength(2)
+        expect(screen.getAllByText('说明')).toHaveLength(2)
 
         // Key inputs
         const keyInputs = [screen.getByTestId('key-input-0'), screen.getByTestId('key-input-1')]
@@ -111,6 +161,7 @@ describe('StructuredOutputBuilder', () => {
         const descInputs = [screen.getByTestId('description-input-0'), screen.getByTestId('description-input-1')]
         expect(descInputs[0].querySelector('input')).toHaveValue('User name')
         expect(descInputs[1].querySelector('input')).toHaveValue('User age')
+        expect(descInputs[0].querySelector('input')).toHaveAttribute('placeholder', '键的说明')
     })
 
     // --- Add ---
@@ -118,7 +169,7 @@ describe('StructuredOutputBuilder', () => {
     it('should add a new entry with default type "string"', () => {
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByRole('button', { name: /Add JSON Structured Output/i }))
+        fireEvent.click(screen.getByRole('button', { name: '添加JSON 结构化输出' }))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
             inputParam: mockInputParam,
@@ -136,7 +187,7 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByRole('button', { name: /Add JSON Structured Output/i }))
+        fireEvent.click(screen.getByRole('button', { name: '添加JSON 结构化输出' }))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
             inputParam: mockInputParam,
@@ -162,7 +213,7 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        const deleteButtons = screen.getAllByTitle('Delete')
+        const deleteButtons = screen.getAllByTitle('删除')
         fireEvent.click(deleteButtons[0])
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
@@ -206,7 +257,7 @@ describe('StructuredOutputBuilder', () => {
 
         const typeSelect = screen.getByRole('combobox')
         fireEvent.mouseDown(typeSelect)
-        fireEvent.click(screen.getByText('Number'))
+        fireEvent.click(screen.getByText('数字'))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
             inputParam: mockInputParam,
@@ -226,8 +277,9 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('Enum Values')).toBeInTheDocument()
+        expect(screen.getByText('枚举值')).toBeInTheDocument()
         expect(screen.getByTestId('enum-values-0')).toBeInTheDocument()
+        expect(screen.getByTestId('enum-values-0').querySelector('input')).toHaveAttribute('placeholder', '值1, 值2, 值3')
         expect(screen.queryByTestId('code-input')).not.toBeInTheDocument()
     })
 
@@ -241,7 +293,7 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('JSON Schema')).toBeInTheDocument()
+        expect(screen.getByText('JSON 架构')).toBeInTheDocument()
         expect(screen.getByTestId('code-input')).toBeInTheDocument()
         expect(screen.queryByTestId('enum-values-0')).not.toBeInTheDocument()
     })
@@ -256,8 +308,8 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        expect(screen.queryByText('Enum Values')).not.toBeInTheDocument()
-        expect(screen.queryByText('JSON Schema')).not.toBeInTheDocument()
+        expect(screen.queryByText('枚举值')).not.toBeInTheDocument()
+        expect(screen.queryByText('JSON 架构')).not.toBeInTheDocument()
     })
 
     it('should clear enumValues when switching type away from enum', () => {
@@ -272,7 +324,7 @@ describe('StructuredOutputBuilder', () => {
 
         const typeSelect = screen.getByRole('combobox')
         fireEvent.mouseDown(typeSelect)
-        fireEvent.click(screen.getByText('String'))
+        fireEvent.click(screen.getByText('字符串'))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
             inputParam: mockInputParam,
@@ -294,8 +346,8 @@ describe('StructuredOutputBuilder', () => {
             <StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} disabled={true} onDataChange={mockOnDataChange} />
         )
 
-        expect(screen.getByRole('button', { name: /Add JSON Structured Output/i })).toBeDisabled()
-        expect(screen.getByTitle('Delete')).toBeDisabled()
+        expect(screen.getByRole('button', { name: '添加JSON 结构化输出' })).toBeDisabled()
+        expect(screen.getByTitle('删除')).toBeDisabled()
         expect(screen.getByTestId('key-input-0').querySelector('input')).toBeDisabled()
     })
 
@@ -316,7 +368,7 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={inputParamWithMin} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        expect(screen.queryByTitle('Delete')).not.toBeInTheDocument()
+        expect(screen.queryByTitle('删除')).not.toBeInTheDocument()
     })
 
     // --- maxItems ---
@@ -336,7 +388,7 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={inputParamWithMax} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByRole('button', { name: /Add JSON Structured Output/i })).toBeDisabled()
+        expect(screen.getByRole('button', { name: '添加JSON 结构化输出' })).toBeDisabled()
     })
 
     // --- Description required asterisk ---
@@ -351,7 +403,7 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        const descLabel = screen.getByText('Description')
+        const descLabel = screen.getByText('说明')
         const asterisk = descLabel.parentElement?.querySelector('span')
         expect(asterisk).toHaveTextContent('*')
     })
@@ -368,7 +420,7 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('Enum Values')).toBeInTheDocument()
+        expect(screen.getByText('枚举值')).toBeInTheDocument()
         expect(screen.getByTestId('tooltip-with-parser')).toBeInTheDocument()
     })
 
@@ -382,9 +434,9 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('JSON Schema')).toBeInTheDocument()
+        expect(screen.getByText('JSON 架构')).toBeInTheDocument()
         expect(screen.getByTestId('tooltip-with-parser')).toBeInTheDocument()
-        expect(screen.getByTitle('Expand')).toBeInTheDocument()
+        expect(screen.getByTitle('展开')).toBeInTheDocument()
     })
 
     // --- Expand dialog for JSON Schema ---
@@ -399,7 +451,7 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByTitle('Expand'))
+        fireEvent.click(screen.getByTitle('展开'))
 
         expect(screen.getByTestId('expand-dialog')).toBeInTheDocument()
         expect(screen.getByTestId('expand-value')).toHaveTextContent('{"a":"b"}')
@@ -415,7 +467,7 @@ describe('StructuredOutputBuilder', () => {
 
         render(<StructuredOutputBuilder inputParam={mockInputParam} data={dataWithEntries} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByTitle('Expand'))
+        fireEvent.click(screen.getByTitle('展开'))
         fireEvent.click(screen.getByText('Save'))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({

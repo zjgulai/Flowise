@@ -397,6 +397,7 @@ export interface IOverrideConfig {
     node: string
     nodeId: string
     label: string
+    displayLabel?: string
     name: string
     type: string
     schema?: ICommonObject[] | Record<string, string>

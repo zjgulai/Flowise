@@ -61,6 +61,35 @@ describe('useAsyncOptions', () => {
         expect(result.current.error).toBeNull()
     })
 
+    it('preserves only the controlled display fields without changing raw option identity', async () => {
+        mockGetChatModels.mockResolvedValue([
+            {
+                name: 'deepseek-chat',
+                label: 'DeepSeek Chat',
+                description: 'Chat model',
+                displayLabel: 'DeepSeek 对话',
+                displayDescription: '对话模型',
+                displayWarning: 'must not pass through',
+                secret: 'must not pass through'
+            }
+        ])
+
+        const { result } = renderHook(() => useAsyncOptions({ loadMethod: 'listModels' }))
+
+        await waitFor(() => expect(result.current.loading).toBe(false))
+        expect(result.current.options).toEqual([
+            {
+                name: 'deepseek-chat',
+                label: 'DeepSeek Chat',
+                description: 'Chat model',
+                displayLabel: 'DeepSeek 对话',
+                displayDescription: '对话模型'
+            }
+        ])
+        expect(result.current.options[0]).not.toHaveProperty('secret')
+        expect(result.current.options[0]).not.toHaveProperty('displayWarning')
+    })
+
     it('listTools: populates options on success', async () => {
         mockGetAllTools.mockResolvedValue([{ name: 'calculator', label: 'Calculator' }])
 

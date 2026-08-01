@@ -95,9 +95,20 @@ export function searchNodes(nodes: NodeDataSchema[], searchValue: string): NodeD
     const nodesWithScores = nodes.map((nd) => {
         const nameScore = fuzzyScore(searchValue, nd.name)
         const labelScore = fuzzyScore(searchValue, nd.label)
+        const displayLabelScore = fuzzyScore(searchValue, nd.displayLabel || '')
         const categoryScore = fuzzyScore(searchValue, nd.category || '') * 0.5 // Lower weight for category
+        const displayCategoryScore = fuzzyScore(searchValue, nd.displayCategory || '') * 0.5
         const descriptionScore = fuzzyScore(searchValue, nd.description || '') * 0.3 // Even lower for description
-        const maxScore = Math.max(nameScore, labelScore, categoryScore, descriptionScore)
+        const displayDescriptionScore = fuzzyScore(searchValue, nd.displayDescription || '') * 0.3
+        const maxScore = Math.max(
+            nameScore,
+            labelScore,
+            displayLabelScore,
+            categoryScore,
+            displayCategoryScore,
+            descriptionScore,
+            displayDescriptionScore
+        )
 
         return { node: nd, score: maxScore }
     })

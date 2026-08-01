@@ -6,6 +6,8 @@ import { IconX } from '@tabler/icons-react'
 import type { EdgeData } from '@/core/types'
 import { useAgentflowContext } from '@/infrastructure/store'
 
+import { getEdgeDisplayLabel } from '../components/edgeDisplayLabel'
+
 interface EdgeLabelProps {
     transform: string
     isHumanInput?: boolean
@@ -130,7 +132,7 @@ function AgentFlowEdgeComponent({
                     <EdgeLabel
                         isHumanInput={data?.isHumanInput}
                         color={data?.sourceColor || '#ae53ba'}
-                        label={data.edgeLabel}
+                        label={getEdgeDisplayLabel(data.edgeLabel, data?.isHumanInput) ?? data.edgeLabel}
                         transform={`translate(-50%, 0%) translate(${sourceX}px,${sourceY}px)`}
                     />
                 </EdgeLabelRenderer>

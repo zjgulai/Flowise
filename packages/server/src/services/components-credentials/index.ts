@@ -3,6 +3,7 @@ import { StatusCodes } from 'http-status-codes'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { getErrorMessage } from '../../errors/utils'
+import { decorateCredentialMetadata } from '../component-metadata-localization'
 
 // Get all component credentials
 const getAllComponentsCredentials = async (): Promise<any> => {
@@ -11,7 +12,7 @@ const getAllComponentsCredentials = async (): Promise<any> => {
         const dbResponse = []
         for (const credName in appServer.nodesPool.componentCredentials) {
             const clonedCred = cloneDeep(appServer.nodesPool.componentCredentials[credName])
-            dbResponse.push(clonedCred)
+            dbResponse.push(decorateCredentialMetadata(clonedCred))
         }
         return dbResponse
     } catch (error) {
@@ -27,7 +28,7 @@ const getComponentByName = async (credentialName: string) => {
         const appServer = getRunningExpressApp()
         if (!credentialName.includes('&amp;')) {
             if (Object.prototype.hasOwnProperty.call(appServer.nodesPool.componentCredentials, credentialName)) {
-                return appServer.nodesPool.componentCredentials[credentialName]
+                return decorateCredentialMetadata(appServer.nodesPool.componentCredentials[credentialName])
             } else {
                 throw new InternalFlowiseError(
                     StatusCodes.NOT_FOUND,
@@ -38,7 +39,7 @@ const getComponentByName = async (credentialName: string) => {
             const dbResponse = []
             for (const name of credentialName.split('&amp;')) {
                 if (Object.prototype.hasOwnProperty.call(appServer.nodesPool.componentCredentials, name)) {
-                    dbResponse.push(appServer.nodesPool.componentCredentials[name])
+                    dbResponse.push(decorateCredentialMetadata(appServer.nodesPool.componentCredentials[name]))
                 } else {
                     throw new InternalFlowiseError(
                         StatusCodes.NOT_FOUND,

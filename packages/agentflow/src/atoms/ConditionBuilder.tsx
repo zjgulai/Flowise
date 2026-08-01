@@ -4,10 +4,11 @@ import { Box, Button, Chip, IconButton, Typography } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 import { IconPlus, IconTrash } from '@tabler/icons-react'
 
-import { getDefaultValueForType } from '@/core/primitives'
+import { getDefaultValueForType, getMetadataDisplayText } from '@/core/primitives'
 import type { InputParam, NodeData } from '@/core/types'
 
 import { NodeInputHandler } from './NodeInputHandler'
+import { TooltipWithParser } from './TooltipWithParser'
 import { useStableKeys } from './useStableKeys'
 import type { VariableItem } from './VariablePicker'
 
@@ -34,6 +35,9 @@ export function ConditionBuilder({
     variableItems
 }: ConditionBuilderProps) {
     const theme = useTheme()
+    const displayLabel = getMetadataDisplayText(inputParam, 'label', '条件')
+    const displayDescription = getMetadataDisplayText(inputParam, 'description')
+    const displayWarning = getMetadataDisplayText(inputParam, 'warning')
 
     const arrayItems = useMemo(
         () => (Array.isArray(data.inputs?.[inputParam.name]) ? (data.inputs[inputParam.name] as Record<string, unknown>[]) : []),
@@ -92,6 +96,13 @@ export function ConditionBuilder({
 
     return (
         <>
+            <Box sx={{ p: 2, pb: 0 }}>
+                <Typography>
+                    {displayLabel}
+                    {displayDescription && <TooltipWithParser title={displayDescription} />}
+                    {displayWarning && <TooltipWithParser title={displayWarning} />}
+                </Typography>
+            </Box>
             {arrayItems.map((itemValues, index) => {
                 const itemData: NodeData = {
                     ...data,
@@ -112,7 +123,7 @@ export function ConditionBuilder({
                         }}
                     >
                         <IconButton
-                            title='Delete'
+                            title='删除'
                             onClick={() => handleDeleteItem(index)}
                             disabled={disabled || !canDeleteItem}
                             sx={{
@@ -131,7 +142,7 @@ export function ConditionBuilder({
                             <IconTrash />
                         </IconButton>
 
-                        <Chip label={`Condition ${index}`} size='small' sx={{ position: 'absolute', right: 55, top: 16 }} />
+                        <Chip label={`条件 ${index}`} size='small' sx={{ position: 'absolute', right: 55, top: 16 }} />
 
                         {itemParameters[index]
                             ?.filter((param) => param.display !== false)
@@ -164,10 +175,10 @@ export function ConditionBuilder({
                 }}
             >
                 <Typography variant='body2' color='text.secondary' fontWeight={500}>
-                    Else
+                    否则
                 </Typography>
                 <Typography variant='caption' color='text.secondary'>
-                    Executes when no conditions match
+                    当所有条件均不匹配时执行
                 </Typography>
             </Box>
 
@@ -181,7 +192,7 @@ export function ConditionBuilder({
                     startIcon={<IconPlus />}
                     onClick={handleAddItem}
                 >
-                    Add Condition
+                    添加条件
                 </Button>
             </Box>
         </>

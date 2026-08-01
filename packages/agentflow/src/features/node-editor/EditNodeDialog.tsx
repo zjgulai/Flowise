@@ -7,7 +7,13 @@ import { IconCheck, IconInfoCircle, IconPencil, IconX } from '@tabler/icons-reac
 
 import { ConditionBuilder, MessagesInput, NodeInputHandler, ScenariosInput, StructuredOutputBuilder } from '@/atoms'
 import type { EditDialogProps, InputParam, NodeData } from '@/core/types'
-import { applyVisibleFieldDefaults, buildDynamicOutputAnchors, evaluateFieldVisibility } from '@/core/utils'
+import {
+    applyVisibleFieldDefaults,
+    buildDynamicOutputAnchors,
+    evaluateFieldVisibility,
+    getMetadataDisplayText,
+    resolveInstanceDisplayLabel
+} from '@/core/utils'
 import { useAgentflowContext, useConfigContext } from '@/infrastructure/store'
 
 import { AsyncInput } from './AsyncInput'
@@ -45,7 +51,7 @@ function computeArrayItemParameters(params: InputParam[], inputs: Record<string,
 function EditNodeDialogComponent({ show, dialogProps, onCancel }: EditNodeDialogProps) {
     const theme = useTheme()
     const { isDarkMode } = useConfigContext()
-    const { state: _state, updateNodeData } = useAgentflowContext()
+    const { state, updateNodeData } = useAgentflowContext()
     const nodeNameRef = useRef<HTMLInputElement>(null)
     const updateNodeInternals = useUpdateNodeInternals()
 
@@ -54,6 +60,9 @@ function EditNodeDialogComponent({ show, dialogProps, onCancel }: EditNodeDialog
     const [isEditingNodeName, setEditingNodeName] = useState(false)
     const [nodeName, setNodeName] = useState('')
     const [arrayItemParameters, setArrayItemParameters] = useState<Record<string, InputParam[][]>>({})
+    const currentComponent = state.componentNodes?.find((component) => component.name === data?.name)
+    const displayNodeName = resolveInstanceDisplayLabel({ label: nodeName }, currentComponent)
+    const displayHint = getMetadataDisplayText(currentComponent, 'hint', data?.hint ?? currentComponent?.hint)
 
     const isConditionNode = data?.name === 'conditionAgentflow'
     const isConditionAgentNode = data?.name === 'conditionAgentAgentflow'
@@ -211,11 +220,11 @@ function EditNodeDialogComponent({ show, dialogProps, onCancel }: EditNodeDialog
                                     }}
                                     variant='h4'
                                 >
-                                    {nodeName}
+                                    {displayNodeName}
                                 </Typography>
 
                                 {data?.id && (
-                                    <ButtonBase title='Edit Name' sx={{ borderRadius: '50%' }}>
+                                    <ButtonBase title='编辑名称' sx={{ borderRadius: '50%' }}>
                                         <Avatar
                                             variant='rounded'
                                             sx={{
@@ -257,7 +266,7 @@ function EditNodeDialogComponent({ show, dialogProps, onCancel }: EditNodeDialog
                                         }
                                     }}
                                 />
-                                <ButtonBase title='Save Name' sx={{ borderRadius: '50%' }}>
+                                <ButtonBase title='保存名称' sx={{ borderRadius: '50%' }}>
                                     <Avatar
                                         variant='rounded'
                                         sx={{
@@ -283,7 +292,7 @@ function EditNodeDialogComponent({ show, dialogProps, onCancel }: EditNodeDialog
                                         <IconCheck stroke={1.5} size='1rem' />
                                     </Avatar>
                                 </ButtonBase>
-                                <ButtonBase title='Cancel' sx={{ borderRadius: '50%' }}>
+                                <ButtonBase title='取消' sx={{ borderRadius: '50%' }}>
                                     <Avatar
                                         variant='rounded'
                                         sx={{
@@ -308,7 +317,7 @@ function EditNodeDialogComponent({ show, dialogProps, onCancel }: EditNodeDialog
                     </Box>
                 )}
 
-                {data?.hint && (
+                {displayHint && (
                     <Stack
                         direction='row'
                         alignItems='center'
@@ -333,7 +342,7 @@ function EditNodeDialogComponent({ show, dialogProps, onCancel }: EditNodeDialog
                                 lineHeight: 1.2
                             }}
                         >
-                            {data.hint}
+                            {displayHint}
                         </Typography>
                     </Stack>
                 )}

@@ -38,6 +38,7 @@ import { useError } from '@/store/context/ErrorContext'
 import { initNode, showHideInputParams } from '@/utils/genericHelper'
 import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
+import { createDocStoreInputView, getDocStoreComponentDisplayLabel } from './componentMetadataView'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -149,10 +150,10 @@ const LoaderConfigPreviewChunks = () => {
                     !selectedDocumentLoader.inputs['FLOWISE_CREDENTIAL_ID']
                 ) {
                     canSubmit = false
-                    missingFields.push(inputParam.label || inputParam.name)
+                    missingFields.push(createDocStoreInputView(inputParam, getNodeDetailsApi.data)?.label || inputParam.name)
                 } else if (inputParam.type !== 'credential' && !selectedDocumentLoader.inputs[inputParam.name]) {
                     canSubmit = false
-                    missingFields.push(inputParam.label || inputParam.name)
+                    missingFields.push(createDocStoreInputView(inputParam, getNodeDetailsApi.data)?.label || inputParam.name)
                 }
             }
         }
@@ -332,7 +333,7 @@ const LoaderConfigPreviewChunks = () => {
 
             // Set options
             const options = getNodesByCategoryApi.data.map((splitter) => ({
-                label: splitter.label,
+                label: getDocStoreComponentDisplayLabel(splitter, splitter.label),
                 name: splitter.name
             }))
             options.unshift({ label: '无', name: 'none' })
@@ -398,7 +399,7 @@ const LoaderConfigPreviewChunks = () => {
                                         <IconArrowLeft />
                                     </StyledFab>
                                     <Typography sx={{ ml: 2, mr: 2 }} variant='h3'>
-                                        {selectedDocumentLoader?.label}
+                                        {getDocStoreComponentDisplayLabel(getNodeDetailsApi.data, selectedDocumentLoader?.label)}
                                     </Typography>
                                     <div
                                         style={{
@@ -421,7 +422,10 @@ const LoaderConfigPreviewChunks = () => {
                                                     borderRadius: '50%',
                                                     objectFit: 'contain'
                                                 }}
-                                                alt={selectedDocumentLoader?.name ?? '文档加载器'}
+                                                alt={getDocStoreComponentDisplayLabel(
+                                                    getNodeDetailsApi.data,
+                                                    selectedDocumentLoader?.label ?? '文档加载器'
+                                                )}
                                                 src={`${baseURL}/api/v1/node-icon/${selectedDocumentLoader?.name}`}
                                             />
                                         ) : (
@@ -458,8 +462,14 @@ const LoaderConfigPreviewChunks = () => {
                                                 size='small'
                                                 label={
                                                     selectedDocumentLoader?.label?.toLowerCase().includes('loader')
-                                                        ? selectedDocumentLoader.label + '名称'
-                                                        : selectedDocumentLoader?.label + '加载器名称'
+                                                        ? getDocStoreComponentDisplayLabel(
+                                                              getNodeDetailsApi.data,
+                                                              selectedDocumentLoader.label
+                                                          ) + '名称'
+                                                        : getDocStoreComponentDisplayLabel(
+                                                              getNodeDetailsApi.data,
+                                                              selectedDocumentLoader?.label
+                                                          ) + '加载器名称'
                                                 }
                                                 value={loaderName}
                                                 onChange={(e) => setLoaderName(e.target.value)}
@@ -473,6 +483,7 @@ const LoaderConfigPreviewChunks = () => {
                                                     <DocStoreInputHandler
                                                         key={index}
                                                         inputParam={inputParam}
+                                                        componentMetadata={getNodeDetailsApi.data}
                                                         data={selectedDocumentLoader}
                                                         onNodeDataChange={handleDocumentLoaderDataChange}
                                                     />
@@ -534,6 +545,9 @@ const LoaderConfigPreviewChunks = () => {
                                                         key={index}
                                                         data={selectedTextSplitter}
                                                         inputParam={inputParam}
+                                                        componentMetadata={(getNodesByCategoryApi.data ?? []).find(
+                                                            (splitter) => splitter.name === selectedTextSplitter.name
+                                                        )}
                                                         onNodeDataChange={handleTextSplitterDataChange}
                                                     />
                                                 ))}

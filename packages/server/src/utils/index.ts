@@ -1365,10 +1365,12 @@ export const findAvailableConfigs = (reactFlowNodes: IReactFlowNode[], component
                     if (Object.prototype.hasOwnProperty.call(componentCredentials, name)) {
                         const inputs = componentCredentials[name]?.inputs ?? []
                         for (const input of inputs) {
+                            const displayLabel = (input as unknown as { displayLabel?: unknown }).displayLabel
                             obj = {
                                 node: flowNode.data.label,
                                 nodeId: flowNode.data.id,
                                 label: input.label,
+                                ...(typeof displayLabel === 'string' && displayLabel ? { displayLabel } : {}),
                                 name: input.name,
                                 type: input.type === 'password' ? 'string' : input.type
                             }

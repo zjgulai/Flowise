@@ -4,6 +4,7 @@ import { Box, Button, Chip, IconButton, Typography } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 import { IconPlus, IconTrash } from '@tabler/icons-react'
 
+import { getMetadataDisplayText } from '@/core/primitives'
 import type { InputParam, NodeData } from '@/core/types'
 
 import { NodeInputHandler } from './NodeInputHandler'
@@ -25,6 +26,8 @@ export interface ScenariosInputProps {
  */
 export function ScenariosInput({ inputParam, data, disabled = false, onDataChange }: ScenariosInputProps) {
     const theme = useTheme()
+    const displayLabel = getMetadataDisplayText(inputParam, 'label', '场景')
+    const displayDescription = getMetadataDisplayText(inputParam, 'description')
 
     const arrayItems = useMemo(
         () => (Array.isArray(data.inputs?.[inputParam.name]) ? (data.inputs[inputParam.name] as Record<string, unknown>[]) : []),
@@ -79,9 +82,9 @@ export function ScenariosInput({ inputParam, data, disabled = false, onDataChang
     return (
         <Box sx={{ p: 2 }}>
             <Typography>
-                {inputParam.label}
+                {displayLabel}
                 {!inputParam.optional && <span style={{ color: theme.palette.error.main }}>&nbsp;*</span>}
-                {inputParam.description && <TooltipWithParser title={inputParam.description} />}
+                {displayDescription && <TooltipWithParser title={displayDescription} />}
             </Typography>
 
             {arrayItems.map((itemValues, index) => {
@@ -104,7 +107,7 @@ export function ScenariosInput({ inputParam, data, disabled = false, onDataChang
                         }}
                     >
                         <IconButton
-                            title='Delete'
+                            title='删除'
                             onClick={() => handleDeleteItem(index)}
                             disabled={disabled || !canDeleteItem}
                             sx={{
@@ -123,7 +126,7 @@ export function ScenariosInput({ inputParam, data, disabled = false, onDataChang
                             <IconTrash />
                         </IconButton>
 
-                        <Chip label={`Scenario ${index}`} size='small' sx={{ position: 'absolute', right: 55, top: 16 }} />
+                        <Chip label={`场景 ${index}`} size='small' sx={{ position: 'absolute', right: 55, top: 16 }} />
 
                         {(inputParam.array || [])
                             .filter((param) => param.display !== false)
@@ -155,10 +158,10 @@ export function ScenariosInput({ inputParam, data, disabled = false, onDataChang
                 }}
             >
                 <Typography variant='body2' color='text.secondary' fontWeight={500}>
-                    Else
+                    否则
                 </Typography>
                 <Typography variant='caption' color='text.secondary'>
-                    Executes when no scenarios match
+                    当所有场景均不匹配时执行
                 </Typography>
             </Box>
 
@@ -171,7 +174,7 @@ export function ScenariosInput({ inputParam, data, disabled = false, onDataChang
                 startIcon={<IconPlus />}
                 onClick={handleAddItem}
             >
-                Add Scenario
+                添加场景
             </Button>
         </Box>
     )

@@ -20,6 +20,7 @@ import { baseURL } from '@/store/constant'
 import { IconTrash, IconCopy, IconInfoCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { flowContext } from '@/store/context/ReactFlowContext'
 import LlamaindexPNG from '@/assets/images/llamaindex.png'
+import { getMetadataDisplayText, resolveInstanceDisplayLabel } from '@/utils/componentMetadataDisplay'
 
 // ===========================|| CANVAS NODE ||=========================== //
 
@@ -27,6 +28,7 @@ const CanvasNode = ({ data }) => {
     const theme = useTheme()
     const canvas = useSelector((state) => state.canvas)
     const { deleteNode, duplicateNode } = useContext(flowContext)
+    const componentNode = canvas.componentNodes.find((node) => node.name === data.name)
 
     const [showDialog, setShowDialog] = useState(false)
     const [dialogProps, setDialogProps] = useState({})
@@ -71,7 +73,6 @@ const CanvasNode = ({ data }) => {
     }
 
     useEffect(() => {
-        const componentNode = canvas.componentNodes.find((nd) => nd.name === data.name)
         if (componentNode) {
             if (!data.version) {
                 setWarningMessage(nodeVersionEmptyMessage(componentNode.version))
@@ -79,16 +80,15 @@ const CanvasNode = ({ data }) => {
                 setWarningMessage(nodeOutdatedMessage(data.version, componentNode.version))
             } else if (componentNode.badge === 'DEPRECATING') {
                 setWarningMessage(
-                    componentNode?.deprecateMessage ??
-                        'This node will be deprecated in the next release. Change to a new node tagged with NEW'
+                    getMetadataDisplayText(componentNode, 'deprecateMessage', '此节点将在下一版本中弃用，请改用带有“新增”标记的新节点。')
                 )
             } else if (componentNode.warning) {
-                setWarningMessage(componentNode.warning)
+                setWarningMessage(getMetadataDisplayText(componentNode, 'warning', componentNode.warning))
             } else {
                 setWarningMessage('')
             }
         }
-    }, [canvas.componentNodes, data.name, data.version])
+    }, [componentNode, data.version])
 
     return (
         <>
@@ -136,7 +136,7 @@ const CanvasNode = ({ data }) => {
                             <IconButton
                                 title='提示'
                                 onClick={() => {
-                                    setInfoDialogProps({ data })
+                                    setInfoDialogProps({ data, componentMetadata: componentNode })
                                     setShowInfoDialog(true)
                                 }}
                                 sx={{ height: '35px', width: '35px', '&:hover': { color: theme?.palette.secondary.main } }}
@@ -177,7 +177,7 @@ const CanvasNode = ({ data }) => {
                                         mr: 2
                                     }}
                                 >
-                                    {data.label}
+                                    {resolveInstanceDisplayLabel(data, componentNode)}
                                 </Typography>
                             </Box>
                             <div style={{ flexGrow: 1 }}></div>

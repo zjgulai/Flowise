@@ -1,6 +1,6 @@
 import { makeNodeDataSchema } from '@test-utils/factories'
 
-import { debounce, fuzzyScore, searchNodes } from './search'
+import { debounce, fuzzyScore, groupNodesByCategory, searchNodes } from './search'
 
 describe('fuzzyScore', () => {
     it('should return 0 for empty search term', () => {
@@ -108,6 +108,52 @@ describe('searchNodes', () => {
         const results = searchNodes(nodes, 'autonomous')
         expect(results.length).toBeGreaterThanOrEqual(1)
         expect(results[0].name).toBe('agentAgentflow')
+    })
+
+    it('should return the same node for its raw English and localized Chinese labels', () => {
+        const localizedNode = makeNodeDataSchema({
+            name: 'httpAgentflow',
+            label: 'HTTP Request',
+            displayLabel: 'HTTP 请求',
+            category: 'Agent Flows',
+            displayCategory: '智能体流程',
+            description: 'Make HTTP calls',
+            displayDescription: '发起 HTTP 调用'
+        })
+
+        expect(searchNodes([localizedNode], 'HTTP Request')).toEqual([localizedNode])
+        expect(searchNodes([localizedNode], '请求')).toEqual([localizedNode])
+    })
+
+    it('should search localized category and description fields', () => {
+        const localizedNode = makeNodeDataSchema({
+            name: 'toolAgentflow',
+            label: 'Tool',
+            displayLabel: '工具',
+            category: 'Agent Flows',
+            displayCategory: '智能体流程',
+            description: 'Execute a tool',
+            displayDescription: '执行已配置工具'
+        })
+
+        expect(searchNodes([localizedNode], '智能体流程')).toEqual([localizedNode])
+        expect(searchNodes([localizedNode], '已配置')).toEqual([localizedNode])
+    })
+
+    it('should keep grouping keyed by the raw category instead of the display category', () => {
+        const localizedNode = makeNodeDataSchema({
+            name: 'agentAgentflow',
+            label: 'Agent',
+            displayLabel: '智能体',
+            category: 'Agent Flows',
+            displayCategory: '智能体流程'
+        })
+
+        const grouped = groupNodesByCategory([localizedNode])
+
+        expect(Object.keys(grouped)).toEqual(['Agent Flows'])
+        expect(grouped['Agent Flows']).toEqual([localizedNode])
+        expect(grouped).not.toHaveProperty('智能体流程')
     })
 })
 

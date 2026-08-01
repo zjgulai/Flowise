@@ -10,12 +10,14 @@ import { IconPencil, IconX, IconCheck, IconInfoCircle } from '@tabler/icons-reac
 import { useTheme } from '@mui/material/styles'
 import { flowContext } from '@/store/context/ReactFlowContext'
 import { applyVisibleInputDefaults, showHideInputParams } from '@/utils/genericHelper'
+import { getMetadataDisplayText, resolveInstanceDisplayLabel } from '@/utils/componentMetadataDisplay'
 
 const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
     const portalElement = document.getElementById('portal')
     const dispatch = useDispatch()
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
+    const componentNodes = useSelector((state) => state.canvas.componentNodes)
     const nodeNameRef = useRef()
     const { reactFlowInstance } = useContext(flowContext)
     const updateNodeInternals = useUpdateNodeInternals()
@@ -24,6 +26,8 @@ const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
     const [data, setData] = useState({})
     const [isEditingNodeName, setEditingNodeName] = useState(null)
     const [nodeName, setNodeName] = useState('')
+    const componentMetadata = componentNodes.find((component) => component.name === data.name)
+    const displayNodeName = resolveInstanceDisplayLabel({ label: nodeName }, componentMetadata)
 
     const onNodeLabelChange = () => {
         reactFlowInstance.setNodes((nds) =>
@@ -83,14 +87,16 @@ const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
         }
         if (dialogProps.data) {
             setData(dialogProps.data)
-            if (dialogProps.data.label) setNodeName(dialogProps.data.label)
+            if (dialogProps.data.label) {
+                setNodeName(dialogProps.data.label)
+            }
         }
 
         return () => {
             setInputParams([])
             setData({})
         }
-    }, [dialogProps])
+    }, [componentNodes, dialogProps])
 
     useEffect(() => {
         if (show) dispatch({ type: SHOW_CANVAS_DIALOG })
@@ -121,7 +127,7 @@ const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
                                     }}
                                     variant='h4'
                                 >
-                                    {nodeName}
+                                    {displayNodeName}
                                 </Typography>
 
                                 {data?.id && (
@@ -162,7 +168,6 @@ const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
                                     defaultValue={nodeName}
                                     onKeyDown={(e) => {
                                         if (e.key === 'Enter') {
-                                            data.label = nodeNameRef.current.value
                                             setNodeName(nodeNameRef.current.value)
                                             onNodeLabelChange()
                                             setEditingNodeName(false)
@@ -188,7 +193,6 @@ const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
                                         }}
                                         color='inherit'
                                         onClick={() => {
-                                            data.label = nodeNameRef.current.value
                                             setNodeName(nodeNameRef.current.value)
                                             onNodeLabelChange()
                                             setEditingNodeName(false)
@@ -247,7 +251,7 @@ const EditNodeDialog = ({ show, dialogProps, onCancel }) => {
                                 lineHeight: 1.2
                             }}
                         >
-                            {data.hint}
+                            {getMetadataDisplayText(componentMetadata, 'hint', data.hint)}
                         </Typography>
                     </Stack>
                 )}

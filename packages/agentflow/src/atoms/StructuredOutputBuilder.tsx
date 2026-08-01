@@ -5,6 +5,7 @@ import { useTheme } from '@mui/material/styles'
 import { IconArrowsMaximize, IconPlus, IconTrash } from '@tabler/icons-react'
 
 import { ExpandTextDialog } from '@/atoms'
+import { getMetadataDisplayText } from '@/core/primitives'
 import type { InputParam, NodeData } from '@/core/types'
 
 import { CodeInput } from './CodeInput'
@@ -12,12 +13,12 @@ import { TooltipWithParser } from './TooltipWithParser'
 import { useStableKeys } from './useStableKeys'
 
 const OUTPUT_TYPES = [
-    { label: 'String', value: 'string' },
-    { label: 'String Array', value: 'stringArray' },
-    { label: 'Number', value: 'number' },
-    { label: 'Boolean', value: 'boolean' },
-    { label: 'Enum', value: 'enum' },
-    { label: 'JSON Array', value: 'jsonArray' }
+    { label: '字符串', value: 'string' },
+    { label: '字符串数组', value: 'stringArray' },
+    { label: '数字', value: 'number' },
+    { label: '布尔值', value: 'boolean' },
+    { label: '枚举', value: 'enum' },
+    { label: 'JSON 数组', value: 'jsonArray' }
 ] as const
 
 type OutputType = (typeof OUTPUT_TYPES)[number]['value']
@@ -44,6 +45,38 @@ export interface StructuredOutputBuilderProps {
  */
 export function StructuredOutputBuilder({ inputParam, data, disabled = false, onDataChange }: StructuredOutputBuilderProps) {
     const theme = useTheme()
+    const displayLabel = getMetadataDisplayText(inputParam, 'label', '结构化输出')
+    const displayDescription = getMetadataDisplayText(inputParam, 'description')
+    const displayWarning = getMetadataDisplayText(inputParam, 'warning')
+    const childParams = useMemo(() => new Map((inputParam.array ?? []).map((param) => [param.name, param])), [inputParam.array])
+    const keyParam = childParams.get('key')
+    const typeParam = childParams.get('type')
+    const enumValuesParam = childParams.get('enumValues')
+    const jsonSchemaParam = childParams.get('jsonSchema')
+    const descriptionParam = childParams.get('description')
+    const keyLabel = getMetadataDisplayText(keyParam, 'label', '字段名')
+    const typeLabel = getMetadataDisplayText(typeParam, 'label', '类型')
+    const enumValuesLabel = getMetadataDisplayText(enumValuesParam, 'label', '枚举值')
+    const enumValuesDescription = getMetadataDisplayText(enumValuesParam, 'description', '多个枚举值请使用英文逗号分隔')
+    const enumValuesPlaceholder = getMetadataDisplayText(enumValuesParam, 'placeholder', '值1, 值2, 值3')
+    const jsonSchemaLabel = getMetadataDisplayText(jsonSchemaParam, 'label', 'JSON Schema')
+    const jsonSchemaDescription = getMetadataDisplayText(jsonSchemaParam, 'description', '结构化输出使用的 JSON Schema')
+    const jsonSchemaPlaceholder = getMetadataDisplayText(
+        jsonSchemaParam,
+        'placeholder',
+        '{ "key": { "type": "string", "description": "..." } }'
+    )
+    const descriptionLabel = getMetadataDisplayText(descriptionParam, 'label', '说明')
+    const descriptionPlaceholder = getMetadataDisplayText(descriptionParam, 'placeholder', '请输入字段说明')
+    const outputTypes = useMemo(() => {
+        const catalogOptions = typeParam?.options
+            ?.filter((option): option is Exclude<(typeof typeParam.options)[number], string> => typeof option !== 'string')
+            .map((option) => ({
+                label: getMetadataDisplayText(option, 'label', option.label),
+                value: option.name as OutputType
+            }))
+        return catalogOptions?.length ? catalogOptions : OUTPUT_TYPES
+    }, [typeParam])
 
     const entries = useMemo(
         () => (Array.isArray(data.inputs?.[inputParam.name]) ? (data.inputs[inputParam.name] as StructuredOutputEntry[]) : []),
@@ -92,7 +125,11 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
         <>
             {/* Section header */}
             <Box sx={{ p: 2, pb: 0 }}>
-                <Typography>{inputParam.label}</Typography>
+                <Typography>
+                    {displayLabel}
+                    {displayDescription && <TooltipWithParser title={displayDescription} />}
+                    {displayWarning && <TooltipWithParser title={displayWarning} />}
+                </Typography>
             </Box>
 
             {entries.map((entry, index) => (
@@ -111,7 +148,7 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                     {/* Delete button */}
                     {isDeleteVisible && (
                         <IconButton
-                            title='Delete'
+                            title='删除'
                             disabled={disabled}
                             onClick={() => handleDeleteEntry(index)}
                             sx={{
@@ -134,7 +171,7 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                     <Box sx={{ p: 2 }}>
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <Typography>
-                                Key
+                                {keyLabel}
                                 <span style={{ color: theme.palette.error.main }}>&nbsp;*</span>
                             </Typography>
                         </div>
@@ -153,7 +190,7 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                     <Box sx={{ p: 2 }}>
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <Typography>
-                                Type
+                                {typeLabel}
                                 <span style={{ color: theme.palette.error.main }}>&nbsp;*</span>
                             </Typography>
                         </div>
@@ -166,7 +203,7 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                             sx={{ mt: 1 }}
                             data-testid={`type-select-${index}`}
                         >
-                            {OUTPUT_TYPES.map((t) => (
+                            {outputTypes.map((t) => (
                                 <MenuItem key={t.value} value={t.value}>
                                     {t.label}
                                 </MenuItem>
@@ -178,8 +215,8 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                     {entry.type === 'enum' && (
                         <Box sx={{ p: 2 }}>
                             <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
-                                <Typography>Enum Values</Typography>
-                                <TooltipWithParser title='Enum values. Separated by comma' />
+                                <Typography>{enumValuesLabel}</Typography>
+                                <TooltipWithParser title={enumValuesDescription} />
                             </div>
                             <TextField
                                 fullWidth
@@ -187,7 +224,7 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                                 value={entry.enumValues ?? ''}
                                 disabled={disabled}
                                 onChange={(e) => handleFieldChange(index, 'enumValues', e.target.value)}
-                                placeholder='value1, value2, value3'
+                                placeholder={enumValuesPlaceholder}
                                 sx={{ mt: 1 }}
                                 data-testid={`enum-values-${index}`}
                             />
@@ -198,13 +235,13 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                     {entry.type === 'jsonArray' && (
                         <Box sx={{ p: 2 }}>
                             <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
-                                <Typography>JSON Schema</Typography>
-                                <TooltipWithParser title='JSON schema for the structured output' />
+                                <Typography>{jsonSchemaLabel}</Typography>
+                                <TooltipWithParser title={jsonSchemaDescription} />
                                 <div style={{ flexGrow: 1 }} />
                                 <IconButton
                                     size='small'
                                     sx={{ height: 25, width: 25 }}
-                                    title='Expand'
+                                    title='展开'
                                     color='primary'
                                     disabled={disabled}
                                     onClick={() => setExpandOpen({ index })}
@@ -226,7 +263,7 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                     <Box sx={{ p: 2 }}>
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <Typography>
-                                Description
+                                {descriptionLabel}
                                 <span style={{ color: theme.palette.error.main }}>&nbsp;*</span>
                             </Typography>
                         </div>
@@ -236,7 +273,7 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                             value={entry.description ?? ''}
                             disabled={disabled}
                             onChange={(e) => handleFieldChange(index, 'description', e.target.value)}
-                            placeholder='Description of the key'
+                            placeholder={descriptionPlaceholder}
                             sx={{ mt: 1 }}
                             data-testid={`description-input-${index}`}
                         />
@@ -255,7 +292,7 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                     startIcon={<IconPlus />}
                     onClick={handleAddEntry}
                 >
-                    Add {inputParam.label}
+                    添加{displayLabel}
                 </Button>
             </Box>
 
@@ -264,8 +301,8 @@ export function StructuredOutputBuilder({ inputParam, data, disabled = false, on
                 <ExpandTextDialog
                     open
                     value={entries[expandOpen.index]?.jsonSchema ?? ''}
-                    title='JSON Schema'
-                    placeholder='{ "key": { "type": "string", "description": "..." } }'
+                    title={jsonSchemaLabel}
+                    placeholder={jsonSchemaPlaceholder}
                     disabled={disabled}
                     inputType='code'
                     language='json'

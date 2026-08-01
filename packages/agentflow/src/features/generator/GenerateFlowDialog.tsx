@@ -20,7 +20,8 @@ import { useTheme } from '@mui/material/styles'
 import { IconSparkles } from '@tabler/icons-react'
 
 import { tokens } from '@/core/theme/tokens'
-import type { FlowData } from '@/core/types'
+import type { ChatModel, FlowData } from '@/core/types'
+import { getMetadataDisplayText } from '@/core/utils'
 import { useApiContext, useConfigContext } from '@/infrastructure/store'
 
 import { defaultSuggestions, SuggestionChips } from './SuggestionChips'
@@ -32,12 +33,6 @@ export interface GenerateFlowDialogProps {
     onClose: () => void
     /** Callback when flow is generated successfully */
     onGenerated: (nodes: FlowData['nodes'], edges: FlowData['edges']) => void
-}
-
-interface ChatModel {
-    name: string
-    label: string
-    description?: string
 }
 
 /**
@@ -102,14 +97,20 @@ function GenerateFlowDialogComponent({ open, onClose, onGenerated }: GenerateFlo
         try {
             setLoadingModels(true)
             const models = await chatflowsApi.getChatModels()
-            setChatModels(models)
+            const normalizedModels = models.map((model) => ({
+                name: model.name,
+                label: model.label,
+                ...(typeof model.description === 'string' ? { description: model.description } : {}),
+                ...(typeof model.displayLabel === 'string' ? { displayLabel: model.displayLabel } : {}),
+                ...(typeof model.displayDescription === 'string' ? { displayDescription: model.displayDescription } : {})
+            }))
+            setChatModels(normalizedModels)
             // Select first model by default
             if (models.length > 0 && !selectedModel) {
                 setSelectedModel(models[0].name)
             }
-        } catch (err) {
-            console.error('Failed to load chat models:', err)
-            setError('Failed to load chat models. Please try again.')
+        } catch {
+            setError('加载模型失败，请稍后重试。')
         } finally {
             setLoadingModels(false)
         }
@@ -138,15 +139,10 @@ function GenerateFlowDialogComponent({ open, onClose, onGenerated }: GenerateFlo
                 onGenerated(result.nodes, result.edges)
                 onClose()
             } else {
-                setError('Failed to generate flow. Please try again.')
+                setError('生成流程失败，请重试。')
             }
-        } catch (err: unknown) {
-            const errorMessage =
-                err instanceof Error
-                    ? err.message
-                    : (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-                      'Failed to generate flow. Please try again.'
-            setError(errorMessage)
+        } catch {
+            setError('生成流程失败，请稍后重试。')
         } finally {
             setLoading(false)
         }
@@ -163,7 +159,7 @@ function GenerateFlowDialogComponent({ open, onClose, onGenerated }: GenerateFlo
             aria-labelledby='generate-flow-dialog-title'
         >
             <DialogTitle sx={{ fontSize: tokens.typography.fontSize.lg }} id='generate-flow-dialog-title'>
-                What would you like to build?
+                想构建什么流程？
             </DialogTitle>
             <DialogContent>
                 {loading ? (
@@ -177,7 +173,7 @@ function GenerateFlowDialogComponent({ open, onClose, onGenerated }: GenerateFlo
                         }}
                     >
                         <Typography variant='h5' sx={{ mt: 2 }}>
-                            Generating your Agentflow...
+                            正在生成智能体流程……
                         </Typography>
                         <Box sx={{ width: '100%', mt: 3 }}>
                             <LinearProgress
@@ -200,8 +196,7 @@ function GenerateFlowDialogComponent({ open, onClose, onGenerated }: GenerateFlo
                 ) : (
                     <>
                         <Typography color='text.secondary'>
-                            Enter your prompt to generate an agentflow. Performance may vary with different models. Only nodes and edges are
-                            generated, you will need to fill in the input fields for each node.
+                            输入需求描述以生成智能体流程。不同模型的效果可能不同。系统仅生成节点和连接，仍需为每个节点填写输入参数。
                         </Typography>
 
                         <SuggestionChips suggestions={defaultSuggestions} onSelect={handleSuggestionSelect} disabled={loading} />
@@ -213,7 +208,7 @@ function GenerateFlowDialogComponent({ open, onClose, onGenerated }: GenerateFlo
                             rows={8}
                             disabled={loading}
                             value={prompt}
-                            placeholder='Describe your agent here'
+                            placeholder='请描述需要生成的智能体流程'
                             onChange={(e) => {
                                 setPrompt(e.target.value)
                                 setError(null)
@@ -222,31 +217,42 @@ function GenerateFlowDialogComponent({ open, onClose, onGenerated }: GenerateFlo
 
                         <FormControl fullWidth sx={{ mt: 2 }}>
                             <InputLabel id='model-select-label'>
-                                Select model to generate agentflow <span style={{ color: 'red' }}>*</span>
+                                选择用于生成流程的模型 <span style={{ color: 'red' }}>*</span>
                             </InputLabel>
                             <Select
                                 labelId='model-select-label'
                                 id='model-select'
                                 value={selectedModel}
-                                label='Select model to generate agentflow *'
+                                label='选择用于生成流程的模型 *'
                                 onChange={(e) => setSelectedModel(e.target.value)}
                                 disabled={loading || loadingModels}
                             >
-                                {chatModels.map((model) => (
-                                    <MenuItem key={model.name} value={model.name}>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <img
-                                                src={`${apiBaseUrl}/api/v1/node-icon/${model.name}`}
-                                                alt={model.label}
-                                                style={{ width: 24, height: 24, borderRadius: '50%' }}
-                                                onError={(e) => {
-                                                    ;(e.target as HTMLImageElement).style.display = 'none'
-                                                }}
-                                            />
-                                            {model.label}
-                                        </Box>
-                                    </MenuItem>
-                                ))}
+                                {chatModels.map((model) => {
+                                    const modelDisplayLabel = getMetadataDisplayText(model, 'label', model.label)
+                                    const modelDisplayDescription = getMetadataDisplayText(model, 'description', model.description)
+                                    return (
+                                        <MenuItem key={model.name} value={model.name}>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                <img
+                                                    src={`${apiBaseUrl}/api/v1/node-icon/${model.name}`}
+                                                    alt={modelDisplayLabel}
+                                                    style={{ width: 24, height: 24, borderRadius: '50%' }}
+                                                    onError={(e) => {
+                                                        ;(e.target as HTMLImageElement).style.display = 'none'
+                                                    }}
+                                                />
+                                                <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                                                    <Typography>{modelDisplayLabel}</Typography>
+                                                    {modelDisplayDescription && (
+                                                        <Typography variant='caption' color='text.secondary'>
+                                                            {modelDisplayDescription}
+                                                        </Typography>
+                                                    )}
+                                                </Box>
+                                            </Box>
+                                        </MenuItem>
+                                    )
+                                })}
                             </Select>
                         </FormControl>
 
@@ -262,7 +268,7 @@ function GenerateFlowDialogComponent({ open, onClose, onGenerated }: GenerateFlo
                 {!loading && (
                     <>
                         <Button onClick={onClose} color='inherit'>
-                            Cancel
+                            取消
                         </Button>
                         <Button
                             variant='contained'
@@ -277,7 +283,7 @@ function GenerateFlowDialogComponent({ open, onClose, onGenerated }: GenerateFlo
                                 }
                             }}
                         >
-                            Generate
+                            生成
                         </Button>
                     </>
                 )}

@@ -1,0 +1,53 @@
+export const ZH_CN_AGENTFLOW_B: ReadonlyArray<readonly [string, string]> = [
+    ['node.customFunctionAgentflow.root.description@460c35bf17ee', '执行自定义函数'],
+    ['node.customFunctionAgentflow.root.label@266d0e51646f', '自定义函数'],
+    [
+        'node.customFunctionAgentflow.root/inputs/customFunctionInputVariables.description@86bd890b6b15',
+        '输入变量可在函数中通过 $ 前缀引用。例如：$foo'
+    ],
+    ['node.customFunctionAgentflow.root/inputs/customFunctionInputVariables.label@cb40898aea05', '输入变量'],
+    ['node.customFunctionAgentflow.root/inputs/customFunctionInputVariables/array/variableName.label@27c2ee034842', '变量名称'],
+    ['node.customFunctionAgentflow.root/inputs/customFunctionInputVariables/array/variableValue.label@dbe7fbf4dd6a', '变量值'],
+    [
+        'node.customFunctionAgentflow.root/inputs/customFunctionJavascriptFunction.description@26a875d0e2ba',
+        '要执行的函数。必须返回字符串，或返回可转换为字符串的对象。'
+    ],
+    ['node.customFunctionAgentflow.root/inputs/customFunctionJavascriptFunction.label@662aa658bb14', 'JavaScript 函数'],
+    ['node.customFunctionAgentflow.root/inputs/customFunctionUpdateState.description@e1092381d050', '在工作流执行过程中更新运行时状态'],
+    ['node.customFunctionAgentflow.root/inputs/customFunctionUpdateState.label@12cccc3a460b', '更新流程状态'],
+    ['node.customFunctionAgentflow.root/inputs/customFunctionUpdateState/array/key.label@99a52df3ff3d', '键'],
+    ['node.customFunctionAgentflow.root/inputs/customFunctionUpdateState/array/value.label@8e37953d23da', '值'],
+    ['node.directReplyAgentflow.root.description@2db1f8db55c5', '直接向用户回复消息'],
+    ['node.directReplyAgentflow.root.label@f61f2231f4ae', '直接回复'],
+    ['node.directReplyAgentflow.root/inputs/directReplyMessage.label@2f77668a9dfb', '消息'],
+    ['node.retrieverAgentflow.root.description@a0d7ad0ea2c4', '从向量数据库中检索信息'],
+    ['node.retrieverAgentflow.root.label@ac722b3e8e29', '检索器'],
+    ['node.retrieverAgentflow.root/inputs/outputFormat.label@ef22a51c869f', '输出格式'],
+    ['node.retrieverAgentflow.root/inputs/outputFormat/options/text.label@71988c4d8e08', '文本'],
+    ['node.retrieverAgentflow.root/inputs/outputFormat/options/textWithMetadata.label@ac5993ee6cdd', '含元数据的文本'],
+    [
+        'node.retrieverAgentflow.root/inputs/retrieverKnowledgeDocumentStores.description@2f92fbed3da0',
+        '用于检索信息的文档库。使用前必须先完成数据写入（Upsert）。'
+    ],
+    ['node.retrieverAgentflow.root/inputs/retrieverKnowledgeDocumentStores.label@b97a7390b610', '知识（文档库）'],
+    ['node.retrieverAgentflow.root/inputs/retrieverKnowledgeDocumentStores/array/documentStore.label@31019271716f', '文档库'],
+    ['node.retrieverAgentflow.root/inputs/retrieverQuery.label@371e5f4e040f', '检索查询'],
+    ['node.retrieverAgentflow.root/inputs/retrieverQuery.placeholder@b604078cdf40', '在此输入查询内容'],
+    ['node.retrieverAgentflow.root/inputs/retrieverUpdateState.description@e1092381d050', '在工作流执行过程中更新运行时状态'],
+    ['node.retrieverAgentflow.root/inputs/retrieverUpdateState.label@12cccc3a460b', '更新流程状态'],
+    ['node.retrieverAgentflow.root/inputs/retrieverUpdateState/array/key.label@99a52df3ff3d', '键'],
+    ['node.retrieverAgentflow.root/inputs/retrieverUpdateState/array/value.label@8e37953d23da', '值'],
+    ['node.stickyNoteAgentflow.root.description@dd0fafdc51c9', '为智能体流程添加备注'],
+    ['node.stickyNoteAgentflow.root.label@0a36a185df71', '便签'],
+    ['node.stickyNoteAgentflow.root/inputs/note.placeholder@ec33c8a201e6', '在此输入内容'],
+    ['node.toolAgentflow.root.description@8571182246ab', '工具使 LLM 能够与外部系统交互'],
+    ['node.toolAgentflow.root.label@2e53bdcd0740', '工具'],
+    ['node.toolAgentflow.root/inputs/toolAgentflowSelectedTool.label@2e53bdcd0740', '工具'],
+    ['node.toolAgentflow.root/inputs/toolInputArgs.label@38b50a670e13', '工具输入参数'],
+    ['node.toolAgentflow.root/inputs/toolInputArgs/array/inputArgName.label@9f782d2bdd73', '输入参数名称'],
+    ['node.toolAgentflow.root/inputs/toolInputArgs/array/inputArgValue.label@dec22ca46d81', '输入参数值'],
+    ['node.toolAgentflow.root/inputs/toolUpdateState.description@e1092381d050', '在工作流执行过程中更新运行时状态'],
+    ['node.toolAgentflow.root/inputs/toolUpdateState.label@12cccc3a460b', '更新流程状态'],
+    ['node.toolAgentflow.root/inputs/toolUpdateState/array/key.label@99a52df3ff3d', '键'],
+    ['node.toolAgentflow.root/inputs/toolUpdateState/array/value.label@8e37953d23da', '值']
+]

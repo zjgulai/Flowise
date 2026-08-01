@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types'
 import { useState } from 'react'
+import { useSelector } from 'react-redux'
 
 // material-ui
 import { styled, useTheme } from '@mui/material/styles'
@@ -14,6 +15,7 @@ import AdditionalParamsDialog from '@/ui-component/dialog/AdditionalParamsDialog
 // const
 import { baseURL } from '@/store/constant'
 import LlamaindexPNG from '@/assets/images/llamaindex.png'
+import { resolveInstanceDisplayLabel } from '@/utils/componentMetadataDisplay'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -33,6 +35,8 @@ const CardWrapper = styled(MainCard)(({ theme }) => ({
 
 const MarketplaceCanvasNode = ({ data }) => {
     const theme = useTheme()
+    const componentNodes = useSelector((state) => state.canvas.componentNodes)
+    const componentNode = componentNodes.find((node) => node.name === data.name)
 
     const [showDialog, setShowDialog] = useState(false)
     const [dialogProps, setDialogProps] = useState({})
@@ -85,7 +89,7 @@ const MarketplaceCanvasNode = ({ data }) => {
                                     fontWeight: 500
                                 }}
                             >
-                                {data.label}
+                                {resolveInstanceDisplayLabel(data, componentNode)}
                             </Typography>
                         </Box>
                         <div style={{ flexGrow: 1 }}></div>

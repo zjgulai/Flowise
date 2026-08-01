@@ -1,18 +1,26 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, it } from 'node:test'
 
 import {
     APPROVED_SPECS,
     assertCleanupProcessSucceeded,
+    assertIsolatedChildEnvironment,
     assertLoopbackHttpUrl,
+    assertNoPackageEnvironmentFile,
+    buildAutNetworkGuardSupportSource,
     buildChildEnvironment,
+    buildCypressArguments,
     cleanupRunResources,
+    enforceAutRequestPolicy,
     formatCleanupEvent,
     formatFailureEvent,
     isOwnedTempPath,
+    isAllowedAutRequestUrl,
     parseRunnerArgs,
     resolveFinalExitCode,
     toExitCode,
@@ -49,15 +57,141 @@ describe('assertLoopbackHttpUrl', () => {
 
 describe('isolated child environment', () => {
     it('enables local owner provisioning only inside the isolated loopback harness', () => {
-        const environment = buildChildEnvironment({
+        const expected = {
             baseUrl: 'http://127.0.0.1:3010',
             runId: 'test-run',
             tempDirectory: '/safe/tmp/flowise-e2e-test-run'
-        })
+        }
+        const environment = buildChildEnvironment(expected)
 
         assert.equal(environment.ADMIN_ONLY_MODE, 'false')
         assert.equal(environment.FLOWISE_E2E_ISOLATED, '1')
         assert.equal(environment.APP_URL, 'http://127.0.0.1:3010')
+        assert.equal(environment.DATABASE_TYPE, 'sqlite')
+        assert.equal(environment.DATABASE_PATH, expected.tempDirectory)
+        assert.equal(environment.OFFLINE, 'true')
+        assert.equal(environment.SECRETKEY_PATH, expected.tempDirectory)
+        assert.equal(environment.NODE_OPTIONS, undefined)
+        assert.doesNotThrow(() => assertIsolatedChildEnvironment(environment, expected))
+    })
+
+    it('fails closed if a critical final value is polluted before spawn', () => {
+        const expected = {
+            baseUrl: 'http://127.0.0.1:3010',
+            runId: 'test-run',
+            tempDirectory: '/safe/tmp/flowise-e2e-test-run'
+        }
+        const criticalPollutions = [
+            ['DATABASE_TYPE', 'postgres'],
+            ['DATABASE_PATH', '/not-the-owned-temp-directory'],
+            ['OFFLINE', 'false'],
+            ['SECRETKEY_PATH', '/not-the-owned-temp-directory'],
+            ['APP_URL', 'https://remote.example.invalid'],
+            ['FLOWISE_E2E_ISOLATED', '0']
+        ]
+
+        for (const [key, value] of criticalPollutions) {
+            const environment = { ...buildChildEnvironment(expected), [key]: value }
+            assert.throws(
+                () => assertIsolatedChildEnvironment(environment, expected),
+                (error) => error.message === 'child-environment-isolation-failed' && !error.message.includes(value)
+            )
+        }
+
+        const environment = { ...buildChildEnvironment(expected), DATABASE_PASSWORD: 'must-not-leak' }
+        assert.throws(
+            () => assertIsolatedChildEnvironment(environment, expected),
+            (error) => error.message === 'child-environment-isolation-failed' && !error.message.includes('must-not-leak')
+        )
+    })
+})
+
+describe('package environment file guard', () => {
+    it('fails closed when packages/server/.env exists without exposing its path or contents', async () => {
+        const directory = await mkdtemp(path.join(os.tmpdir(), 'flowise-e2e-env-test-'))
+        const environmentFile = path.join(directory, '.env')
+        const sensitiveValue = 'DATABASE_PASSWORD=must-not-appear'
+
+        try {
+            await writeFile(environmentFile, sensitiveValue, { encoding: 'utf8', mode: 0o600 })
+            await assert.rejects(
+                assertNoPackageEnvironmentFile(environmentFile),
+                (error) =>
+                    error.message === 'local-environment-file-present' &&
+                    !error.message.includes(environmentFile) &&
+                    !error.message.includes(sensitiveValue)
+            )
+        } finally {
+            await rm(directory, { recursive: true, force: true })
+        }
+    })
+
+    it('accepts only a confirmed missing environment file and masks inspection failures', async () => {
+        await assert.doesNotReject(
+            assertNoPackageEnvironmentFile('/not-present', async () => {
+                throw Object.assign(new Error('sensitive filesystem detail'), { code: 'ENOENT' })
+            })
+        )
+        await assert.rejects(
+            assertNoPackageEnvironmentFile('/unreadable', async () => {
+                throw Object.assign(new Error('sensitive filesystem detail'), { code: 'EACCES' })
+            }),
+            (error) => error.message === 'local-environment-file-check-failed' && !error.message.includes('sensitive')
+        )
+    })
+})
+
+describe('AUT network isolation guard', () => {
+    const baseUrl = 'http://127.0.0.1:3010'
+
+    it('allows the exact AUT origin and browser-internal non-HTTP protocols', () => {
+        assert.equal(isAllowedAutRequestUrl(`${baseUrl}/api/v1/ping`, baseUrl), true)
+        assert.equal(isAllowedAutRequestUrl('data:text/plain,local', baseUrl), true)
+        assert.equal(isAllowedAutRequestUrl('blob:http://127.0.0.1:3010/local-id', baseUrl), true)
+    })
+
+    it('rejects HTTP(S) external requests even when no Origin or Referer context exists', () => {
+        assert.equal(isAllowedAutRequestUrl('https://external.example.invalid/no-request-headers', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('http://127.0.0.1:3011/other-local-service', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('not a URL', baseUrl), false)
+
+        let destroyed = false
+        const requestWithoutHeaders = {
+            url: 'https://external.example.invalid/no-request-headers',
+            destroy() {
+                destroyed = true
+            }
+        }
+        assert.equal(enforceAutRequestPolicy(requestWithoutHeaders, baseUrl), false)
+        assert.equal(destroyed, true)
+    })
+
+    it('injects the generated support guard into every Cypress launch', () => {
+        const supportFile = '/safe/tmp/flowise-e2e-run/network-guard-support.js'
+        const originalSupportFile = '/workspace/packages/server/cypress/support/e2e.ts'
+        const supportSource = buildAutNetworkGuardSupportSource({ baseUrl, originalSupportFile })
+        const args = buildCypressArguments({
+            browser: 'chrome',
+            specs: ['cypress/e2e/4-pc-core/pc-core-continuity.cy.js'],
+            supportFile
+        })
+
+        assert.match(supportSource, new RegExp(`import ${JSON.stringify(originalSupportFile)}`))
+        assert.match(supportSource, /cy\.intercept\(\{ url: '\*\*', middleware: true \}/)
+        assert.match(supportSource, /request\.destroy\(\)/)
+        assert.doesNotMatch(supportSource, /request\.continue\(\)/)
+        assert.doesNotMatch(supportSource, /request\.headers|referer/i)
+        assert.deepEqual(args, [
+            'exec',
+            'cypress',
+            'run',
+            '--config',
+            `supportFile=${supportFile}`,
+            '--spec',
+            'cypress/e2e/4-pc-core/pc-core-continuity.cy.js',
+            '--browser',
+            'chrome'
+        ])
     })
 })
 
@@ -131,12 +265,20 @@ describe('PC core continuity specification contract', () => {
         }
         assert.match(source, /Cypress\.config\('baseUrl'\)/)
         assert.match(source, /Cypress\.env\('runId'\)/)
-        assert.match(source, /isPageInitiatedRequest/)
-        assert.match(source, /request\.headers\.origin/)
-        assert.match(source, /request\.headers\.referer/)
+        assert.match(source, /requestUrl\.origin !== baseUrl\.origin/)
+        assert.doesNotMatch(source, /request\.headers\.(?:origin|referer)/)
         assert.match(source, /afterEach\(/)
         assert.match(source, /createdChatflowIds/)
         assert.match(source, /createdDocumentStoreIds/)
+        assert.match(source, /\/api\/v1\/nodes\?client=agentflowv2/)
+        assert.match(source, /\/api\/v1\/components-credentials/)
+        assert.match(source, /displayLabel: '智能体'/)
+        assert.match(source, /'displayHint'/)
+        assert.match(source, /__metadataHintInjection/)
+        assert.match(source, /请确保已在大模型／智能体节点中启用记忆，以保留对话历史/)
+        assert.match(source, /application\/reactflow/)
+        assert.match(source, /assertFlowMetadataClean/)
+        assert.match(source, /button\[title="保存智能体流程"\]/)
         for (const forbiddenPath of ['prediction', 'chatmessage', 'vector', 'assistant', 'webhook']) {
             assert.match(source, new RegExp(forbiddenPath))
         }

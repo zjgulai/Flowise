@@ -9,12 +9,12 @@ import { DROP_OFFSET_X, DROP_OFFSET_Y, useDragAndDrop } from './useDragAndDrop'
 
 // --- Mocks ---
 const mockSetDirty = jest.fn()
-const mockProject = jest.fn((pos: { x: number; y: number }) => pos)
+const mockScreenToFlowPosition = jest.fn((pos: { x: number; y: number }) => pos)
 
 jest.mock('reactflow', () => ({
     ...jest.requireActual('reactflow'),
     useReactFlow: () => ({
-        project: mockProject
+        screenToFlowPosition: mockScreenToFlowPosition
     })
 }))
 
@@ -94,12 +94,31 @@ describe('useDragAndDrop', () => {
             })
 
             expect(event.preventDefault).toHaveBeenCalled()
-            expect(mockProject).toHaveBeenCalledWith({
-                x: 300 - 50 - DROP_OFFSET_X, // clientX - left - offset
-                y: 400 - 50 - DROP_OFFSET_Y // clientY - top - offset
+            expect(mockScreenToFlowPosition).toHaveBeenCalledWith({
+                x: 300,
+                y: 400
             })
             expect(setLocalNodes).toHaveBeenCalled()
             expect(mockSetDirty).toHaveBeenCalledWith(true)
+        })
+
+        it('converts the cursor from screen space before subtracting flow-unit offsets at non-100% zoom', () => {
+            mockScreenToFlowPosition.mockImplementationOnce(({ x, y }) => ({ x: x / 2, y: y / 2 }))
+            const { result } = renderUseDragAndDrop()
+            const event = makeDragEvent(JSON.stringify(nodeData))
+
+            act(() => {
+                result.current.handleDrop(event)
+            })
+
+            expect(mockScreenToFlowPosition).toHaveBeenCalledWith({ x: 300, y: 400 })
+            expect(checkNodePlacementConstraints).toHaveBeenCalledWith(nodes, 'llmAgentflow', {
+                x: 300 / 2 - DROP_OFFSET_X,
+                y: 400 / 2 - DROP_OFFSET_Y
+            })
+            const updater = setLocalNodes.mock.calls[0][0]
+            const [addedNode] = updater([])
+            expect(addedNode.position).toEqual({ x: 50, y: 150 })
         })
 
         it('should use functional updater to append node', () => {
@@ -131,7 +150,7 @@ describe('useDragAndDrop', () => {
             expect(mockSetDirty).not.toHaveBeenCalled()
         })
 
-        it('should early return when reactFlowBounds is null', () => {
+        it('should early return when the canvas wrapper is unavailable', () => {
             reactFlowWrapper.current = null
             const { result } = renderUseDragAndDrop()
             const event = makeDragEvent(JSON.stringify(nodeData))

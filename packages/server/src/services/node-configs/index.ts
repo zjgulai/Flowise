@@ -4,12 +4,13 @@ import { IReactFlowNode } from '../../Interface'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { getErrorMessage } from '../../errors/utils'
+import { decorateComponentCredentials } from '../component-metadata-localization'
 
 const getAllNodeConfigs = async (requestBody: any) => {
     try {
         const appServer = getRunningExpressApp()
         const nodes = [{ data: requestBody }] as IReactFlowNode[]
-        const dbResponse = findAvailableConfigs(nodes, appServer.nodesPool.componentCredentials)
+        const dbResponse = findAvailableConfigs(nodes, decorateComponentCredentials(appServer.nodesPool.componentCredentials))
         return dbResponse
     } catch (error) {
         throw new InternalFlowiseError(

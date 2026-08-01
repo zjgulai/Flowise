@@ -5,6 +5,7 @@ import { Box, Typography } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 
 import type { NodeData } from '@/core/types'
+import { resolveCurrentComponent, resolveInstanceDisplayLabel } from '@/core/utils'
 import { useAgentflowContext, useApiContext, useConfigContext } from '@/infrastructure/store'
 
 import { NodeIcon } from '../components/NodeIcon'
@@ -54,6 +55,8 @@ function IterationNodeComponent({ data }: IterationNodeProps) {
 
     const outputAnchors = data.outputAnchors ?? []
     const minHeight = Math.max(getMinimumNodeHeight(outputAnchors.length), 250)
+    const componentNode = resolveCurrentComponent(state.componentNodes, data)
+    const displayLabel = resolveInstanceDisplayLabel(data, componentNode)
 
     useEffect(() => {
         if (state.reactFlowInstance) {
@@ -103,7 +106,7 @@ function IterationNodeComponent({ data }: IterationNodeProps) {
                             ml: 1
                         }}
                     >
-                        {data.label}
+                        {displayLabel}
                     </Typography>
                 </Box>
             </NodeToolbar>

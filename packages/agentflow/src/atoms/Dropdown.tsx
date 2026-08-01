@@ -1,6 +1,10 @@
+import { useMemo } from 'react'
+
 import { Box, FormControl, Popper, TextField, Typography } from '@mui/material'
-import Autocomplete, { autocompleteClasses } from '@mui/material/Autocomplete'
+import Autocomplete, { autocompleteClasses, createFilterOptions } from '@mui/material/Autocomplete'
 import { styled, useTheme } from '@mui/material/styles'
+
+import { getMetadataOptionSearchText } from '@/core/primitives'
 
 const StyledPopper = styled(Popper)({
     boxShadow: '0px 8px 10px -5px rgb(0 0 0 / 20%), 0px 16px 24px 2px rgb(0 0 0 / 14%), 0px 6px 30px 5px rgb(0 0 0 / 12%)',
@@ -24,12 +28,20 @@ export interface DropdownOption {
 export interface DropdownProps {
     name?: string
     value: string
-    options: DropdownOption[]
+    options: ReadonlyArray<DropdownOption | string | null | undefined>
     onSelect: (value: string) => void
     disabled?: boolean
     loading?: boolean
     freeSolo?: boolean
     disableClearable?: boolean
+}
+
+const filterMetadataOptions = createFilterOptions<DropdownOption>({ stringify: getMetadataOptionSearchText })
+
+const getSafeOptionLabel = (option: DropdownOption | string): string => {
+    if (typeof option === 'string') return option
+    if (typeof option.label === 'string') return option.label
+    return typeof option.name === 'string' ? option.name : ''
 }
 
 /**
@@ -48,8 +60,18 @@ export function Dropdown({
 }: DropdownProps) {
     const theme = useTheme()
 
+    const normalizedOptions = useMemo(
+        () =>
+            options.flatMap((option): DropdownOption[] => {
+                if (typeof option === 'string') return option ? [{ label: option, name: option }] : []
+                if (!option || typeof option !== 'object' || typeof option.name !== 'string' || !option.name) return []
+                return [option]
+            }),
+        [options]
+    )
+
     const resolvedValue = value ?? 'choose an option'
-    const findMatchingOption = (val: string) => options.find((option) => option.name === val) ?? null
+    const findMatchingOption = (val: string) => normalizedOptions.find((option) => option.name === val) ?? null
 
     return (
         <FormControl sx={{ mt: 1, width: '100%' }} size='small'>
@@ -60,12 +82,13 @@ export function Dropdown({
                 disableClearable={disableClearable}
                 size='small'
                 loading={loading}
-                options={options}
+                options={normalizedOptions}
+                filterOptions={filterMetadataOptions}
                 value={findMatchingOption(resolvedValue)}
-                getOptionLabel={(option) => (typeof option === 'string' ? option : option.label)}
+                getOptionLabel={getSafeOptionLabel}
                 isOptionEqualToValue={(option, val) => option.name === val.name}
                 onChange={(_e, selection) => {
-                    const newValue = selection && typeof selection !== 'string' ? selection.name : ''
+                    const newValue = selection && typeof selection !== 'string' && typeof selection.name === 'string' ? selection.name : ''
                     onSelect(newValue)
                 }}
                 PopperComponent={StyledPopper}
@@ -89,7 +112,7 @@ export function Dropdown({
                                     <Box
                                         component='img'
                                         src={matchingOption.imageSrc}
-                                        alt={matchingOption.label || 'Selected Option'}
+                                        alt={getSafeOptionLabel(matchingOption) || 'Selected Option'}
                                         sx={{
                                             width: 32,
                                             height: 32,
@@ -103,10 +126,10 @@ export function Dropdown({
                 }}
                 renderOption={(props, option) => (
                     <Box component='li' {...props} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {option.imageSrc && (
+                        {typeof option.imageSrc === 'string' && option.imageSrc && (
                             <img
                                 src={option.imageSrc}
-                                alt={option.label}
+                                alt={getSafeOptionLabel(option)}
                                 style={{
                                     width: 30,
                                     height: 30,
@@ -116,8 +139,8 @@ export function Dropdown({
                             />
                         )}
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <Typography variant='h5'>{option.label}</Typography>
-                            {option.description && (
+                            <Typography variant='h5'>{getSafeOptionLabel(option)}</Typography>
+                            {typeof option.description === 'string' && option.description && (
                                 <Typography sx={{ color: theme.palette.text.secondary }}>{option.description}</Typography>
                             )}
                         </div>

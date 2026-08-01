@@ -37,6 +37,8 @@
         "release:manifest": "node scripts/release-manifest.mjs",
         "release:baseline": "node scripts/release-baseline.mjs",
         "release:slim-probe": "bash scripts/verify-runtime-without-compilers.sh",
+        "metadata:i18n:extract": "node scripts/metadata-i18n/extract.mjs",
+        "metadata:i18n:validate": "node scripts/metadata-i18n/validate.mjs",
         "test:release": "node --test scripts/release-manifest.test.mjs scripts/release-baseline.test.mjs scripts/publish-verified-image.test.mjs scripts/deployment-bundle.test.mjs && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_flowise_production_release.py scripts/integration/test_flowise_legacy_bootstrap_docker.py",
         "migration:create": "pnpm typeorm migration:create",
         "changeset": "changeset",

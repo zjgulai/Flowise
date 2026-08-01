@@ -1,6 +1,8 @@
 import { uniq, get, isEqual } from 'lodash'
 import moment from 'moment'
 
+import { sanitizeFlowDisplayMetadata, stripDisplayMetadata } from './componentMetadataDisplay'
+
 export const getUniqueNodeId = (nodeData, nodes) => {
     let suffix = 0
 
@@ -115,7 +117,8 @@ export const initializeDefaultNodeData = (nodeParams) => {
     return initialValues
 }
 
-export const initNode = (nodeData, newNodeId, isAgentflow) => {
+export const initNode = (componentNodeData, newNodeId, isAgentflow) => {
+    const nodeData = stripDisplayMetadata(componentNodeData)
     const inputAnchors = []
     const inputParams = []
     const incoming = nodeData.inputs ? nodeData.inputs.length : 0
@@ -592,7 +595,7 @@ export const generateExportFlowData = (flowData) => {
         nodes[i].selected = false
         const node = nodes[i]
 
-        const newNodeData = {
+        const newNodeData = stripDisplayMetadata({
             id: node.data.id,
             label: node.data.label,
             version: node.data.version,
@@ -611,7 +614,7 @@ export const generateExportFlowData = (flowData) => {
             outputAnchors: node.data.outputAnchors,
             outputs: node.data.outputs,
             selected: false
-        }
+        })
 
         // Remove password, file & folder
         if (node.data.inputs && Object.keys(node.data.inputs).length) {
@@ -632,7 +635,7 @@ export const generateExportFlowData = (flowData) => {
         nodes,
         edges
     }
-    return exportJson
+    return sanitizeFlowDisplayMetadata(exportJson)
 }
 
 export const getAvailableNodesForVariable = (nodes, edges, target, targetHandle, includesStart = false) => {

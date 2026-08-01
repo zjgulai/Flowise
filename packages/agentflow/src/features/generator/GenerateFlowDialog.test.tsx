@@ -44,7 +44,14 @@ describe('GenerateFlowDialog', () => {
     }
 
     const chatModels = [
-        { name: 'gpt-4', label: 'GPT-4' },
+        {
+            name: 'gpt-4',
+            label: 'GPT-4',
+            displayLabel: 'GPT 四',
+            description: 'Fast model',
+            displayDescription: '快速模型',
+            secret: 'must not be rendered'
+        },
         { name: 'claude', label: 'Claude' }
     ]
 
@@ -59,12 +66,12 @@ describe('GenerateFlowDialog', () => {
 
     it('should not render dialog content when open is false', () => {
         render(<GenerateFlowDialog {...defaultProps} open={false} />)
-        expect(screen.queryByText('What would you like to build?')).not.toBeInTheDocument()
+        expect(screen.queryByText('想构建什么流程？')).not.toBeInTheDocument()
     })
 
     it('should render dialog when open is true', async () => {
         render(<GenerateFlowDialog {...defaultProps} />)
-        expect(screen.getByText('What would you like to build?')).toBeInTheDocument()
+        expect(screen.getByText('想构建什么流程？')).toBeInTheDocument()
         await waitFor(() => expect(mockGetChatModels).toHaveBeenCalled())
     })
 
@@ -76,20 +83,22 @@ describe('GenerateFlowDialog', () => {
     it('should auto-select first model', async () => {
         render(<GenerateFlowDialog {...defaultProps} />)
         await waitFor(() => {
-            expect(screen.getByText('GPT-4')).toBeInTheDocument()
+            expect(screen.getByText('GPT 四')).toBeInTheDocument()
+            expect(screen.getByText('快速模型')).toBeInTheDocument()
+            expect(screen.getByAltText('GPT 四')).toBeInTheDocument()
+            expect(screen.queryByText('must not be rendered')).not.toBeInTheDocument()
         })
     })
 
     it('should show error when chat models fail to load', async () => {
-        const spy = jest.spyOn(console, 'error').mockImplementation(() => {})
         mockGetChatModels.mockRejectedValue(new Error('fail'))
 
         render(<GenerateFlowDialog {...defaultProps} />)
 
         await waitFor(() => {
-            expect(screen.getByText('Failed to load chat models. Please try again.')).toBeInTheDocument()
+            expect(screen.getByText('加载模型失败，请稍后重试。')).toBeInTheDocument()
         })
-        spy.mockRestore()
+        expect(screen.queryByText('fail')).not.toBeInTheDocument()
     })
 
     describe('with models loaded', () => {
@@ -101,17 +110,17 @@ describe('GenerateFlowDialog', () => {
         it('should have generate button disabled when prompt is empty', async () => {
             await renderAndWaitForModels()
 
-            const generateBtn = screen.getByRole('button', { name: /generate/i })
+            const generateBtn = screen.getByRole('button', { name: '生成' })
             expect(generateBtn).toBeDisabled()
         })
 
         it('should enable generate button when prompt and model are set', async () => {
             await renderAndWaitForModels()
 
-            const input = screen.getByPlaceholderText('Describe your agent here')
+            const input = screen.getByPlaceholderText('请描述需要生成的智能体流程')
             fireEvent.change(input, { target: { value: 'Build an agent' } })
 
-            const generateBtn = screen.getByRole('button', { name: /generate/i })
+            const generateBtn = screen.getByRole('button', { name: '生成' })
             expect(generateBtn).not.toBeDisabled()
         })
 
@@ -120,21 +129,25 @@ describe('GenerateFlowDialog', () => {
 
             fireEvent.click(screen.getByTestId('suggestion-0'))
 
-            const input = screen.getByPlaceholderText('Describe your agent here') as HTMLTextAreaElement
+            const input = screen.getByPlaceholderText('请描述需要生成的智能体流程') as HTMLTextAreaElement
             expect(input.value).toBe('Test suggestion')
         })
 
         it('should call onGenerated and onClose on successful generation', async () => {
             await renderAndWaitForModels()
 
-            const input = screen.getByPlaceholderText('Describe your agent here')
+            const input = screen.getByPlaceholderText('请描述需要生成的智能体流程')
             fireEvent.change(input, { target: { value: 'Build an agent' } })
 
-            fireEvent.click(screen.getByRole('button', { name: /generate/i }))
+            fireEvent.click(screen.getByRole('button', { name: '生成' }))
 
             await waitFor(() => {
                 expect(defaultProps.onGenerated).toHaveBeenCalledWith([{ id: 'n1' }], [{ id: 'e1' }])
                 expect(defaultProps.onClose).toHaveBeenCalled()
+            })
+            expect(mockGenerateAgentflow).toHaveBeenCalledWith({
+                question: 'Build an agent',
+                selectedChatModel: { name: 'gpt-4' }
             })
         })
 
@@ -143,13 +156,13 @@ describe('GenerateFlowDialog', () => {
 
             await renderAndWaitForModels()
 
-            fireEvent.change(screen.getByPlaceholderText('Describe your agent here'), {
+            fireEvent.change(screen.getByPlaceholderText('请描述需要生成的智能体流程'), {
                 target: { value: 'Build an agent' }
             })
-            fireEvent.click(screen.getByRole('button', { name: /generate/i }))
+            fireEvent.click(screen.getByRole('button', { name: '生成' }))
 
             await waitFor(() => {
-                expect(screen.getByText('Failed to generate flow. Please try again.')).toBeInTheDocument()
+                expect(screen.getByText('生成流程失败，请重试。')).toBeInTheDocument()
             })
             expect(defaultProps.onGenerated).not.toHaveBeenCalled()
         })
@@ -159,13 +172,14 @@ describe('GenerateFlowDialog', () => {
 
             await renderAndWaitForModels()
 
-            fireEvent.change(screen.getByPlaceholderText('Describe your agent here'), {
+            fireEvent.change(screen.getByPlaceholderText('请描述需要生成的智能体流程'), {
                 target: { value: 'Build an agent' }
             })
-            fireEvent.click(screen.getByRole('button', { name: /generate/i }))
+            fireEvent.click(screen.getByRole('button', { name: '生成' }))
 
             await waitFor(() => {
-                expect(screen.getByText('API error')).toBeInTheDocument()
+                expect(screen.getByText('生成流程失败，请稍后重试。')).toBeInTheDocument()
+                expect(screen.queryByText('API error')).not.toBeInTheDocument()
             })
         })
 
@@ -176,13 +190,14 @@ describe('GenerateFlowDialog', () => {
 
             await renderAndWaitForModels()
 
-            fireEvent.change(screen.getByPlaceholderText('Describe your agent here'), {
+            fireEvent.change(screen.getByPlaceholderText('请描述需要生成的智能体流程'), {
                 target: { value: 'Build an agent' }
             })
-            fireEvent.click(screen.getByRole('button', { name: /generate/i }))
+            fireEvent.click(screen.getByRole('button', { name: '生成' }))
 
             await waitFor(() => {
-                expect(screen.getByText('Server validation error')).toBeInTheDocument()
+                expect(screen.getByText('生成流程失败，请稍后重试。')).toBeInTheDocument()
+                expect(screen.queryByText('Server validation error')).not.toBeInTheDocument()
             })
         })
 
@@ -190,7 +205,7 @@ describe('GenerateFlowDialog', () => {
             const { rerender } = render(<GenerateFlowDialog {...defaultProps} />)
             await waitFor(() => expect(mockGetChatModels).toHaveBeenCalled())
 
-            fireEvent.change(screen.getByPlaceholderText('Describe your agent here'), {
+            fireEvent.change(screen.getByPlaceholderText('请描述需要生成的智能体流程'), {
                 target: { value: 'Some prompt' }
             })
 
@@ -200,13 +215,13 @@ describe('GenerateFlowDialog', () => {
             // Re-open dialog
             rerender(<GenerateFlowDialog {...defaultProps} open={true} />)
 
-            const input = screen.getByPlaceholderText('Describe your agent here') as HTMLTextAreaElement
+            const input = screen.getByPlaceholderText('请描述需要生成的智能体流程') as HTMLTextAreaElement
             expect(input.value).toBe('')
         })
 
         it('should show cancel button when not loading', async () => {
             await renderAndWaitForModels()
-            const cancelBtn = screen.getByRole('button', { name: /cancel/i })
+            const cancelBtn = screen.getByRole('button', { name: '取消' })
             expect(cancelBtn).toBeInTheDocument()
             fireEvent.click(cancelBtn)
             expect(defaultProps.onClose).toHaveBeenCalled()
@@ -221,14 +236,14 @@ describe('GenerateFlowDialog', () => {
                 render(<GenerateFlowDialog {...defaultProps} />)
                 await waitFor(() => expect(mockGetChatModels).toHaveBeenCalled())
 
-                fireEvent.change(screen.getByPlaceholderText('Describe your agent here'), {
+                fireEvent.change(screen.getByPlaceholderText('请描述需要生成的智能体流程'), {
                     target: { value: 'Build an agent' }
                 })
-                fireEvent.click(screen.getByRole('button', { name: /generate/i }))
+                fireEvent.click(screen.getByRole('button', { name: '生成' }))
 
                 // Wait for loading state
                 await waitFor(() => {
-                    expect(screen.getByText('Generating your Agentflow...')).toBeInTheDocument()
+                    expect(screen.getByText('正在生成智能体流程……')).toBeInTheDocument()
                 })
 
                 // Advance fake timers to trigger progress intervals
@@ -266,13 +281,13 @@ describe('GenerateFlowDialog', () => {
 
             await renderAndWaitForModels()
 
-            fireEvent.change(screen.getByPlaceholderText('Describe your agent here'), {
+            fireEvent.change(screen.getByPlaceholderText('请描述需要生成的智能体流程'), {
                 target: { value: 'Build an agent' }
             })
-            fireEvent.click(screen.getByRole('button', { name: /generate/i }))
+            fireEvent.click(screen.getByRole('button', { name: '生成' }))
 
             await waitFor(() => {
-                expect(screen.getByText('Failed to generate flow. Please try again.')).toBeInTheDocument()
+                expect(screen.getByText('生成流程失败，请稍后重试。')).toBeInTheDocument()
             })
         })
     })

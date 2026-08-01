@@ -4,19 +4,21 @@ import { Box, Button, Chip, IconButton, MenuItem, Select, Tooltip, Typography } 
 import { useTheme } from '@mui/material/styles'
 import { IconArrowsMaximize, IconPlus, IconTrash, IconVariable } from '@tabler/icons-react'
 
+import { getMetadataDisplayText } from '@/core/primitives'
 import type { InputParam, NodeData } from '@/core/types'
 
 import { ExpandTextDialog } from './ExpandTextDialog'
+import { TooltipWithParser } from './TooltipWithParser'
 import { toSuggestionItems } from './toSuggestionItems'
 import { useStableKeys } from './useStableKeys'
 import { VariableInput } from './VariableInput'
 import type { VariableItem } from './VariablePicker'
 
 const MESSAGE_ROLES = [
-    { label: 'System', value: 'system' },
-    { label: 'Assistant', value: 'assistant' },
-    { label: 'Developer', value: 'developer' },
-    { label: 'User', value: 'user' }
+    { label: '系统', value: 'system' },
+    { label: '助手', value: 'assistant' },
+    { label: '开发者', value: 'developer' },
+    { label: '用户', value: 'user' }
 ] as const
 
 type MessageRole = (typeof MESSAGE_ROLES)[number]['value']
@@ -42,6 +44,27 @@ export interface MessagesInputProps {
  */
 export function MessagesInput({ inputParam, data, disabled = false, variableItems, onDataChange }: MessagesInputProps) {
     const theme = useTheme()
+    const displayLabel = getMetadataDisplayText(inputParam, 'label', '消息')
+    const displayDescription = getMetadataDisplayText(inputParam, 'description')
+    const displayWarning = getMetadataDisplayText(inputParam, 'warning')
+    const roleParam = inputParam.array?.find((param) => param.name === 'role')
+    const contentParam = inputParam.array?.find((param) => param.name === 'content')
+    const roleLabel = getMetadataDisplayText(roleParam, 'label', '角色')
+    const contentLabel = getMetadataDisplayText(contentParam, 'label', '内容')
+    const displayPlaceholder = getMetadataDisplayText(
+        contentParam,
+        'placeholder',
+        getMetadataDisplayText(inputParam, 'placeholder', '消息内容（支持 {{ variable }} 语法）')
+    )
+    const roleOptions = useMemo(() => {
+        const catalogOptions = roleParam?.options
+            ?.filter((option): option is Exclude<(typeof roleParam.options)[number], string> => typeof option !== 'string')
+            .map((option) => ({
+                label: getMetadataDisplayText(option, 'label', option.label),
+                value: option.name as MessageRole
+            }))
+        return catalogOptions?.length ? catalogOptions : MESSAGE_ROLES
+    }, [roleParam])
 
     const messages = useMemo(
         () => (Array.isArray(data.inputs?.[inputParam.name]) ? (data.inputs[inputParam.name] as MessageEntry[]) : []),
@@ -119,7 +142,11 @@ export function MessagesInput({ inputParam, data, disabled = false, variableItem
         <>
             {/* Section header */}
             <Box sx={{ p: 2, pb: 0 }}>
-                <Typography>{inputParam.label}</Typography>
+                <Typography>
+                    {displayLabel}
+                    {displayDescription && <TooltipWithParser title={displayDescription} />}
+                    {displayWarning && <TooltipWithParser title={displayWarning} />}
+                </Typography>
             </Box>
 
             {messages.map((message, index) => (
@@ -139,7 +166,7 @@ export function MessagesInput({ inputParam, data, disabled = false, variableItem
                     {/* Delete button — hidden (not just disabled) when at minItems */}
                     {isDeleteVisible && (
                         <IconButton
-                            title='Delete'
+                            title='删除'
                             disabled={disabled}
                             onClick={() => handleDeleteMessage(index)}
                             sx={{
@@ -162,7 +189,7 @@ export function MessagesInput({ inputParam, data, disabled = false, variableItem
                     <Box sx={{ p: 2 }}>
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <Typography>
-                                Role
+                                {roleLabel}
                                 <span style={{ color: 'red' }}>&nbsp;*</span>
                             </Typography>
                         </div>
@@ -175,7 +202,7 @@ export function MessagesInput({ inputParam, data, disabled = false, variableItem
                             sx={{ mt: 1 }}
                             data-testid={`role-select-${index}`}
                         >
-                            {MESSAGE_ROLES.map((role) => (
+                            {roleOptions.map((role) => (
                                 <MenuItem key={role.value} value={role.value}>
                                     {role.label}
                                 </MenuItem>
@@ -187,11 +214,11 @@ export function MessagesInput({ inputParam, data, disabled = false, variableItem
                     <Box sx={{ p: 2 }}>
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <Typography>
-                                Content
+                                {contentLabel}
                                 <span style={{ color: 'red' }}>&nbsp;*</span>
                             </Typography>
                             <div style={{ flexGrow: 1 }} />
-                            <Tooltip title='Type {{ to select variables'>
+                            <Tooltip title='输入 {{ 可选择变量'>
                                 <span style={{ display: 'inline-flex' }}>
                                     <IconVariable size={20} style={{ color: 'teal' }} />
                                 </span>
@@ -199,7 +226,7 @@ export function MessagesInput({ inputParam, data, disabled = false, variableItem
                             <IconButton
                                 size='small'
                                 sx={{ height: 25, width: 25, ml: 0.5 }}
-                                title='Expand'
+                                title='展开'
                                 color='primary'
                                 disabled={disabled}
                                 onClick={() => handleExpandOpen(index)}
@@ -210,7 +237,7 @@ export function MessagesInput({ inputParam, data, disabled = false, variableItem
                         <VariableInput
                             value={message.content}
                             onChange={(v) => handleContentChange(index, v)}
-                            placeholder='Message content (supports {{ variable }} syntax)'
+                            placeholder={displayPlaceholder}
                             disabled={disabled}
                             rows={4}
                             suggestionItems={suggestionItems}
@@ -230,7 +257,7 @@ export function MessagesInput({ inputParam, data, disabled = false, variableItem
                     startIcon={<IconPlus />}
                     onClick={handleAddMessage}
                 >
-                    Add {inputParam.label}
+                    添加{displayLabel}
                 </Button>
             </Box>
 
@@ -239,8 +266,8 @@ export function MessagesInput({ inputParam, data, disabled = false, variableItem
                 <ExpandTextDialog
                     open={true}
                     value={latestContentRef.current.get(effectiveKeys[expandIndex]) ?? messages[expandIndex]?.content ?? ''}
-                    title='Content'
-                    placeholder='Message content (supports {{ variable }} syntax)'
+                    title={contentLabel}
+                    placeholder={displayPlaceholder}
                     disabled={disabled}
                     inputType='string'
                     suggestionItems={suggestionItems}

@@ -23,6 +23,15 @@ export interface NodeDefinitionBase {
     badge?: string
     deprecateMessage?: string
     warning?: string
+    displayLabel?: string
+    displayCategory?: string
+    displayDescription?: string
+    displayBadge?: string
+    displayDeprecateMessage?: string
+    displayWarning?: string
+    hint?: string
+    displayHint?: string
+    displayLocale?: string
     tags?: string[]
     documentation?: string
     /** Schema object (from API) or credential ID string (set at runtime when user selects a credential). */
@@ -48,7 +57,6 @@ export interface NodeData extends NodeDefinitionBase {
     status?: ExecutionStatus
     error?: string
     warning?: string
-    hint?: string
     validationErrors?: string[]
 }
 
@@ -62,7 +70,10 @@ export interface NodeInput {
 export interface NodeOutput {
     label: string
     name: string
-    type: string
+    type?: string
+    description?: string
+    displayLabel?: string
+    displayDescription?: string
 }
 
 export interface InputAnchor {
@@ -72,6 +83,8 @@ export interface InputAnchor {
     type: string
     optional?: boolean
     description?: string
+    displayLabel?: string
+    displayDescription?: string
 }
 
 export interface OutputAnchor {
@@ -80,12 +93,15 @@ export interface OutputAnchor {
     label: string
     type: string
     description?: string
+    displayLabel?: string
+    displayDescription?: string
 }
 
 export interface InputParam {
     id: string
     name: string
     label: string
+    displayLabel?: string
     type: string
     default?: unknown
     optional?: boolean
@@ -94,6 +110,8 @@ export interface InputParam {
               label: string
               name: string
               description?: string
+              displayLabel?: string
+              displayDescription?: string
               client?: Array<ClientType>
               show?: Record<string, unknown>
               hide?: Record<string, unknown>
@@ -101,8 +119,16 @@ export interface InputParam {
         | string
     >
     placeholder?: string
+    displayPlaceholder?: string
     rows?: number
     description?: string
+    displayDescription?: string
+    warning?: string
+    displayWarning?: string
+    deprecateMessage?: string
+    displayDeprecateMessage?: string
+    headerName?: string
+    displayHeaderName?: string
     acceptVariable?: boolean
     acceptNodeOutputAsVariable?: boolean
     additionalParams?: boolean
@@ -125,6 +151,7 @@ export interface NodeConfigEntry {
     node: string
     nodeId: string
     label: string
+    displayLabel?: string
     name: string
     type: string
     enabled?: boolean

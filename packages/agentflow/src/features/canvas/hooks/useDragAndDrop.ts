@@ -42,17 +42,10 @@ export function useDragAndDrop({ nodes, setLocalNodes, reactFlowWrapper, onConst
             try {
                 const nodeData = JSON.parse(nodeDataStr) as NodeDataSchema
 
-                // Get drop position relative to the canvas
-                const reactFlowBounds = reactFlowWrapper.current?.getBoundingClientRect()
-                if (!reactFlowBounds) return
+                if (!reactFlowWrapper.current) return
 
-                // project() is used instead of screenToFlowPosition() because
-                // screenToFlowPosition applies viewport transform differently,
-                // causing incorrect drop placement in this context.
-                const position = reactFlowInstance.project({
-                    x: event.clientX - reactFlowBounds.left - DROP_OFFSET_X,
-                    y: event.clientY - reactFlowBounds.top - DROP_OFFSET_Y
-                })
+                const cursorPosition = reactFlowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+                const position = { x: cursorPosition.x - DROP_OFFSET_X, y: cursorPosition.y - DROP_OFFSET_Y }
 
                 // Check placement constraints (start node, nested iteration, human input in iteration)
                 const constraintCheck = checkNodePlacementConstraints(nodes, nodeData.name, position)

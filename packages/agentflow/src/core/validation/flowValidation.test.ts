@@ -12,21 +12,21 @@ describe('validateFlow', () => {
     it('should return error for empty flow', () => {
         const result = validateFlow([], [])
         expect(result.valid).toBe(false)
-        expect(result.errors).toContainEqual(expect.objectContaining({ message: expect.stringContaining('empty') }))
+        expect(result.errors).toContainEqual(expect.objectContaining({ message: expect.stringContaining('流程为空') }))
     })
 
     it('should return error when no start node exists', () => {
         const nodes = [makeNode('a', 'llmAgentflow')]
         const result = validateFlow(nodes, [])
         expect(result.valid).toBe(false)
-        expect(result.errors).toContainEqual(expect.objectContaining({ message: expect.stringContaining('start node') }))
+        expect(result.errors).toContainEqual(expect.objectContaining({ message: expect.stringContaining('开始节点') }))
     })
 
     it('should return error for multiple start nodes', () => {
         const nodes = [makeNode('a', 'startAgentflow'), makeNode('b', 'startAgentflow')]
         const result = validateFlow(nodes, [])
         expect(result.valid).toBe(false)
-        expect(result.errors).toContainEqual(expect.objectContaining({ message: expect.stringContaining('only have one') }))
+        expect(result.errors).toContainEqual(expect.objectContaining({ message: expect.stringContaining('只能包含一个') }))
     })
 
     it('should pass for a valid simple flow', () => {
@@ -40,12 +40,8 @@ describe('validateFlow', () => {
         const nodes = [makeNode('a', 'startAgentflow'), makeNode('b', 'llmAgentflow')]
         const edges: FlowEdge[] = []
         const result = validateFlow(nodes, edges)
-        expect(result.errors).toContainEqual(
-            expect.objectContaining({ nodeId: 'a', type: 'warning', message: 'This node is not connected to anything' })
-        )
-        expect(result.errors).toContainEqual(
-            expect.objectContaining({ nodeId: 'b', type: 'warning', message: 'This node is not connected to anything' })
-        )
+        expect(result.errors).toContainEqual(expect.objectContaining({ nodeId: 'a', type: 'warning', message: '此节点尚未连接到任何节点' }))
+        expect(result.errors).toContainEqual(expect.objectContaining({ nodeId: 'b', type: 'warning', message: '此节点尚未连接到任何节点' }))
     })
 
     it('should ignore sticky notes in disconnection checks', () => {
@@ -61,7 +57,7 @@ describe('validateFlow', () => {
         const edges = [makeEdge('a', 'b'), makeEdge('b', 'c'), makeEdge('c', 'b')]
         const result = validateFlow(nodes, edges)
         expect(result.valid).toBe(false)
-        expect(result.errors).toContainEqual(expect.objectContaining({ message: expect.stringContaining('cycle') }))
+        expect(result.errors).toContainEqual(expect.objectContaining({ message: expect.stringContaining('循环') }))
     })
 
     // --- Hanging edge detection ---
@@ -72,7 +68,7 @@ describe('validateFlow', () => {
         expect(result.errors).toContainEqual(
             expect.objectContaining({
                 nodeId: 'b',
-                message: expect.stringContaining('non-existent source node')
+                message: expect.stringContaining('不存在的源节点')
             })
         )
     })
@@ -84,7 +80,7 @@ describe('validateFlow', () => {
         expect(result.errors).toContainEqual(
             expect.objectContaining({
                 nodeId: 'a',
-                message: expect.stringContaining('non-existent target node')
+                message: expect.stringContaining('不存在的目标节点')
             })
         )
     })
@@ -96,7 +92,7 @@ describe('validateFlow', () => {
         expect(result.errors).toContainEqual(
             expect.objectContaining({
                 edgeId: 'x-y',
-                message: 'Disconnected edge - both source and target nodes do not exist'
+                message: '连接已断开：源节点和目标节点均不存在'
             })
         )
     })
@@ -106,7 +102,7 @@ describe('validateNode', () => {
     it('should return error for node with no name', () => {
         const node = makeNode('a', '')
         const errors = validateNode(node)
-        expect(errors).toContainEqual(expect.objectContaining({ type: 'error', message: expect.stringContaining('missing a name') }))
+        expect(errors).toContainEqual(expect.objectContaining({ type: 'error', message: expect.stringContaining('缺少名称') }))
     })
 
     it('should return no errors for valid node', () => {
@@ -121,12 +117,12 @@ describe('validateNode', () => {
                 id: 'a',
                 name: 'llmAgentflow',
                 label: 'LLM',
-                inputParams: [{ id: 'p1', name: 'model', label: 'Model', type: 'string', optional: false }],
+                inputParams: [{ id: 'p1', name: 'model', label: 'Model', displayLabel: '模型', type: 'string', optional: false }],
                 inputs: {}
             }
         }
         const errors = validateNode(node)
-        expect(errors).toContainEqual(expect.objectContaining({ type: 'warning', message: 'Model is required' }))
+        expect(errors).toContainEqual(expect.objectContaining({ type: 'warning', message: '模型为必填项' }))
     })
 
     it('should not warn about optional inputs', () => {
@@ -198,9 +194,9 @@ describe('validateNode', () => {
             }
         }
         const errors = validateNode(node)
-        expect(errors).toContainEqual(expect.objectContaining({ message: 'Credential is required' }))
+        expect(errors).toContainEqual(expect.objectContaining({ message: 'Credential为必填项' }))
         // Should produce exactly one error, not a duplicate from the general required-field check
-        const credErrors = errors.filter((e) => e.message.includes('required'))
+        const credErrors = errors.filter((e) => e.message.includes('必填项'))
         expect(credErrors).toHaveLength(1)
     })
 
@@ -216,7 +212,7 @@ describe('validateNode', () => {
             }
         }
         const errors = validateNode(node)
-        const credErrors = errors.filter((e) => e.message === 'Credential is required')
+        const credErrors = errors.filter((e) => e.message === 'Credential为必填项')
         expect(credErrors).toHaveLength(0)
     })
 
@@ -233,8 +229,18 @@ describe('validateNode', () => {
                         id: 'conds',
                         name: 'conditions',
                         label: 'Conditions',
+                        displayLabel: '条件',
                         type: 'array',
-                        array: [{ id: 'f1', name: 'fieldName', label: 'Field Name', type: 'string', optional: false }]
+                        array: [
+                            {
+                                id: 'f1',
+                                name: 'fieldName',
+                                label: 'Field Name',
+                                displayLabel: '字段名',
+                                type: 'string',
+                                optional: false
+                            }
+                        ]
                     }
                 ],
                 inputs: {
@@ -243,8 +249,8 @@ describe('validateNode', () => {
             }
         }
         const errors = validateNode(node)
-        expect(errors).toContainEqual(expect.objectContaining({ message: 'Conditions item #1: Field Name is required' }))
-        const item2Errors = errors.filter((e) => e.message.includes('item #2'))
+        expect(errors).toContainEqual(expect.objectContaining({ message: '条件第 1 项：字段名为必填项' }))
+        const item2Errors = errors.filter((e) => e.message.includes('第 2 项'))
         expect(item2Errors).toHaveLength(0)
     })
 
@@ -261,7 +267,7 @@ describe('validateNode', () => {
             }
         }
         const errors = validateNode(node)
-        expect(errors).toContainEqual(expect.objectContaining({ type: 'warning', message: 'Model is required' }))
+        expect(errors).toContainEqual(expect.objectContaining({ type: 'warning', message: 'Model为必填项' }))
     })
 
     it('should not warn when asyncOptions field has a selected value', () => {
@@ -316,7 +322,7 @@ describe('validateNode', () => {
             }
         }
         const errors = validateNode(node)
-        expect(errors).toContainEqual(expect.objectContaining({ type: 'warning', message: 'Temperature is required' }))
+        expect(errors).toContainEqual(expect.objectContaining({ type: 'warning', message: 'Temperature为必填项' }))
     })
 
     it('should correctly resolve asyncMultiOptions JSON array value for show/hide conditions', () => {
@@ -344,7 +350,7 @@ describe('validateNode', () => {
         }
         const errors = validateNode(node)
         // calcConfig is visible and empty → should be flagged
-        expect(errors).toContainEqual(expect.objectContaining({ message: 'Calculator Config is required' }))
+        expect(errors).toContainEqual(expect.objectContaining({ message: 'Calculator Config为必填项' }))
     })
 
     // --- availableNodes schema fallback ---
@@ -366,7 +372,7 @@ describe('validateNode', () => {
             }
         }
         const errors = validateNode(node, availableNodes)
-        expect(errors).toContainEqual(expect.objectContaining({ type: 'warning', message: 'Model is required' }))
+        expect(errors).toContainEqual(expect.objectContaining({ type: 'warning', message: 'Model为必填项' }))
     })
 
     it('should prefer availableNodes schema over node.data.inputParams', () => {
@@ -391,8 +397,8 @@ describe('validateNode', () => {
             }
         }
         const errors = validateNode(node, availableNodes)
-        expect(errors).toContainEqual(expect.objectContaining({ message: 'Model is required' }))
-        expect(errors).toContainEqual(expect.objectContaining({ message: 'Temperature is required' }))
+        expect(errors).toContainEqual(expect.objectContaining({ message: 'Model为必填项' }))
+        expect(errors).toContainEqual(expect.objectContaining({ message: 'Temperature为必填项' }))
     })
 
     // --- Nested config validation ---
@@ -400,7 +406,7 @@ describe('validateNode', () => {
         const availableNodes = [
             makeNodeDataSchema({
                 name: 'openAIChat',
-                inputs: [{ id: 'ak', name: 'apiKey', label: 'API Key', type: 'string', optional: false }]
+                inputs: [{ id: 'ak', name: 'apiKey', label: 'API Key', displayLabel: 'API 密钥', type: 'string', optional: false }]
             })
         ]
         const node: FlowNode = {
@@ -409,7 +415,7 @@ describe('validateNode', () => {
                 id: 'a',
                 name: 'llmAgentflow',
                 label: 'LLM',
-                inputParams: [{ id: 'model', name: 'model', label: 'Chat Model', type: 'string' }],
+                inputParams: [{ id: 'model', name: 'model', label: 'Chat Model', displayLabel: '对话模型', type: 'string' }],
                 inputs: {
                     model: 'openAIChat',
                     modelConfig: { apiKey: '' }
@@ -417,6 +423,6 @@ describe('validateNode', () => {
             }
         }
         const errors = validateNode(node, availableNodes)
-        expect(errors).toContainEqual(expect.objectContaining({ message: 'Chat Model configuration: API Key is required' }))
+        expect(errors).toContainEqual(expect.objectContaining({ message: '对话模型配置：API 密钥为必填项' }))
     })
 })

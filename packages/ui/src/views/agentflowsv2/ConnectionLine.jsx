@@ -3,6 +3,7 @@ import { EdgeLabelRenderer, useStore, getBezierPath } from 'reactflow'
 import PropTypes from 'prop-types'
 import { AGENTFLOW_ICONS } from '@/store/constant'
 import { useTheme } from '@mui/material/styles'
+import { getEdgeDisplayLabel } from './edgeDisplayLabel'
 
 function EdgeLabel({ transform, isHumanInput, label, color }) {
     return (
@@ -81,7 +82,7 @@ const ConnectionLine = ({ fromX, fromY, toX, toY, fromPosition, toPosition }) =>
                     <EdgeLabel
                         color={color}
                         isHumanInput={nodeName === 'humanInputAgentflow'}
-                        label={getEdgeLabel()}
+                        label={getEdgeDisplayLabel(getEdgeLabel(), nodeName === 'humanInputAgentflow')}
                         transform={`translate(-50%, 0%) translate(${fromX}px,${fromY}px)`}
                     />
                 </EdgeLabelRenderer>

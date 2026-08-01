@@ -34,6 +34,7 @@ import { baseURL } from '@/store/constant'
 import { initNode, showHideInputParams } from '@/utils/genericHelper'
 import { getErrorMessage } from '@/utils/getErrorMessage'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
+import { getDocStoreComponentDisplayLabel } from './componentMetadataView'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -84,6 +85,7 @@ const VectorStoreQuery = () => {
 
     const getVectorStoreNodeDetailsApi = useApi(nodesApi.getSpecificNode)
     const [selectedVectorStoreProvider, setSelectedVectorStoreProvider] = useState({})
+    const [selectedVectorStoreMetadata, setSelectedVectorStoreMetadata] = useState({})
 
     const handleVectorStoreProviderDataChange = ({ inputParam, newValue }) => {
         setSelectedVectorStoreProvider((prevData) => {
@@ -226,6 +228,7 @@ const VectorStoreQuery = () => {
             nodeData.inputs = documentStore.vectorStoreConfig.config
             nodeData.credential = documentStore.vectorStoreConfig.config.credential
         }
+        setSelectedVectorStoreMetadata(component)
         setSelectedVectorStoreProvider(nodeData)
     }
 
@@ -347,7 +350,10 @@ const VectorStoreQuery = () => {
                                                                         borderRadius: '50%',
                                                                         objectFit: 'contain'
                                                                     }}
-                                                                    alt={selectedVectorStoreProvider.label ?? '向量库'}
+                                                                    alt={getDocStoreComponentDisplayLabel(
+                                                                        selectedVectorStoreMetadata,
+                                                                        selectedVectorStoreProvider.label ?? '向量库'
+                                                                    )}
                                                                     src={`${baseURL}/api/v1/node-icon/${selectedVectorStoreProvider?.name}`}
                                                                 />
                                                             ) : (
@@ -355,7 +361,10 @@ const VectorStoreQuery = () => {
                                                             )}
                                                         </div>
                                                         <Typography sx={{ ml: 2 }} variant='h3'>
-                                                            {selectedVectorStoreProvider.label}
+                                                            {getDocStoreComponentDisplayLabel(
+                                                                selectedVectorStoreMetadata,
+                                                                selectedVectorStoreProvider.label
+                                                            )}
                                                         </Typography>
                                                         <div style={{ flex: 1 }}></div>
                                                     </Box>
@@ -368,6 +377,7 @@ const VectorStoreQuery = () => {
                                                                     key={index}
                                                                     data={selectedVectorStoreProvider}
                                                                     inputParam={inputParam}
+                                                                    componentMetadata={selectedVectorStoreMetadata}
                                                                     isAdditionalParams={inputParam.additionalParams}
                                                                     onNodeDataChange={handleVectorStoreProviderDataChange}
                                                                 />

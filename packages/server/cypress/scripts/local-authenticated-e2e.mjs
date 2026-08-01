@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { lstat, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -18,6 +18,9 @@ const SHUTDOWN_TIMEOUT_MS = 5_000
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const pnpmExecutable = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const SAFE_FAILURE_REASONS = new Set([
+    'child-environment-isolation-failed',
+    'local-environment-file-check-failed',
+    'local-environment-file-present',
     'server-spawn-failed',
     'server-exited-before-ready',
     'server-startup-timeout',
@@ -167,7 +170,6 @@ export const buildChildEnvironment = ({ baseUrl, runId, tempDirectory }) => {
         'CI',
         'NO_COLOR',
         'FORCE_COLOR',
-        'NODE_OPTIONS',
         'PNPM_HOME',
         'COREPACK_HOME'
     ]
@@ -194,6 +196,97 @@ export const buildChildEnvironment = ({ baseUrl, runId, tempDirectory }) => {
         POSTHOG_PUBLIC_API_KEY: '',
         SECRETKEY_PATH: tempDirectory
     }
+}
+
+export const assertNoPackageEnvironmentFile = async (environmentFile = path.join(packageRoot, '.env'), inspectFile = lstat) => {
+    try {
+        await inspectFile(environmentFile)
+    } catch (error) {
+        if (error?.code === 'ENOENT') return
+        throw new RunnerFailure('local-environment-file-check-failed')
+    }
+
+    throw new RunnerFailure('local-environment-file-present')
+}
+
+export const assertIsolatedChildEnvironment = (environment, { baseUrl, runId, tempDirectory }) => {
+    const parsedBaseUrl = assertLoopbackHttpUrl(baseUrl)
+    const expectedValues = {
+        ADMIN_ONLY_MODE: 'false',
+        APP_URL: baseUrl,
+        CORS_ORIGINS: baseUrl,
+        DATABASE_PATH: tempDirectory,
+        DATABASE_TYPE: 'sqlite',
+        DISABLE_FLOWISE_TELEMETRY: 'true',
+        FLOWISE_E2E_ARTIFACTS_PATH: path.join(tempDirectory, 'cypress-artifacts'),
+        FLOWISE_E2E_BASE_URL: baseUrl,
+        FLOWISE_E2E_ISOLATED: '1',
+        FLOWISE_E2E_RUN_ID: runId,
+        MODE: 'main',
+        OFFLINE: 'true',
+        PORT: parsedBaseUrl.port,
+        POSTHOG_PUBLIC_API_KEY: '',
+        SECRETKEY_PATH: tempDirectory
+    }
+    const forbiddenKeys = [
+        'DATABASE_HOST',
+        'DATABASE_NAME',
+        'DATABASE_PASSWORD',
+        'DATABASE_PORT',
+        'DATABASE_REJECT_UNAUTHORIZED',
+        'DATABASE_SSL',
+        'DATABASE_SSL_KEY_BASE64',
+        'DATABASE_USER',
+        'HTTP_PROXY',
+        'HTTPS_PROXY',
+        'NODE_OPTIONS'
+    ]
+    const hasExpectedValues = Object.entries(expectedValues).every(([key, value]) => environment?.[key] === value)
+    const hasForbiddenValues = forbiddenKeys.some((key) => Object.hasOwn(environment ?? {}, key))
+
+    if (!hasExpectedValues || hasForbiddenValues) {
+        throw new RunnerFailure('child-environment-isolation-failed')
+    }
+}
+
+export const isAllowedAutRequestUrl = (requestUrl, baseUrl) => {
+    let target
+    let expected
+    try {
+        target = new URL(requestUrl)
+        expected = new URL(baseUrl)
+    } catch {
+        return false
+    }
+
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return true
+    return target.origin === expected.origin
+}
+
+export const enforceAutRequestPolicy = (request, baseUrl) => {
+    if (isAllowedAutRequestUrl(request.url, baseUrl)) return true
+    request.destroy()
+    return false
+}
+
+export const buildAutNetworkGuardSupportSource = ({ baseUrl, originalSupportFile }) => `
+import ${JSON.stringify(originalSupportFile)}
+
+const allowedAutOrigin = ${JSON.stringify(baseUrl)}
+const isAllowedAutRequestUrl = ${isAllowedAutRequestUrl.toString()}
+const enforceAutRequestPolicy = ${enforceAutRequestPolicy.toString()}
+
+beforeEach(() => {
+    cy.intercept({ url: '**', middleware: true }, (request) => {
+        enforceAutRequestPolicy(request, allowedAutOrigin)
+    })
+})
+`
+
+export const buildCypressArguments = ({ browser, specs, supportFile }) => {
+    const args = ['exec', 'cypress', 'run', '--config', `supportFile=${supportFile}`, '--spec', specs.join(',')]
+    if (browser) args.push('--browser', browser)
+    return args
 }
 
 export const waitForPing = async (baseUrl, timeoutMilliseconds = STARTUP_TIMEOUT_MS, signal) => {
@@ -321,11 +414,25 @@ export const runAuthenticatedE2E = async (args = process.argv.slice(2)) => {
     })
 
     try {
+        await assertNoPackageEnvironmentFile()
         tempDirectory = await mkdtemp(path.join(tempRoot, 'flowise-e2e-'))
         const port = await selectUnusedLoopbackPort()
         const baseUrl = `http://127.0.0.1:${port}`
         assertLoopbackHttpUrl(baseUrl)
         const env = buildChildEnvironment({ baseUrl, runId, tempDirectory })
+        assertIsolatedChildEnvironment(env, { baseUrl, runId, tempDirectory })
+        const supportFile = path.join(tempDirectory, 'network-guard-support.js')
+        await writeFile(
+            supportFile,
+            buildAutNetworkGuardSupportSource({
+                baseUrl,
+                originalSupportFile: path.join(packageRoot, 'cypress', 'support', 'e2e.ts')
+            }),
+            { encoding: 'utf8', mode: 0o600 }
+        )
+        await assertNoPackageEnvironmentFile()
+        assertIsolatedChildEnvironment(env, { baseUrl, runId, tempDirectory })
+        Object.freeze(env)
 
         process.stdout.write(`[flowise-e2e] phase=start run=${runId} url=${baseUrl}\n`)
         serverChild = spawn(pnpmExecutable, ['oclif-dev'], {
@@ -359,8 +466,8 @@ export const runAuthenticatedE2E = async (args = process.argv.slice(2)) => {
         if (startupOutcome.kind === 'server-ready') {
             process.stdout.write(`[flowise-e2e] phase=browser run=${runId} url=${baseUrl}\n`)
 
-            const cypressArgs = ['exec', 'cypress', 'run', '--spec', specs.join(',')]
-            if (browser) cypressArgs.push('--browser', browser)
+            assertIsolatedChildEnvironment(env, { baseUrl, runId, tempDirectory })
+            const cypressArgs = buildCypressArguments({ browser, specs, supportFile })
             cypressChild = spawn(pnpmExecutable, cypressArgs, {
                 cwd: packageRoot,
                 detached: process.platform !== 'win32',

@@ -279,6 +279,74 @@ describe('initNode', () => {
         expect(result).not.toHaveProperty('selected')
     })
 
+    it('should not persist root or nested display metadata in initialized node data', () => {
+        const nodeData = makeNodeDataSchema({
+            name: 'llmAgentflow',
+            label: 'LLM',
+            displayLabel: '大模型',
+            displayCategory: '智能体流程',
+            displayDescription: '调用大语言模型',
+            displayLocale: 'zh-CN',
+            inputs: [
+                {
+                    id: '',
+                    name: 'model',
+                    label: 'Model',
+                    displayLabel: '模型',
+                    type: 'options',
+                    default: 'deepseek-chat',
+                    options: [
+                        {
+                            name: 'deepseek-chat',
+                            label: 'DeepSeek Chat',
+                            displayLabel: 'DeepSeek 对话',
+                            description: 'Chat model',
+                            displayDescription: '对话模型'
+                        }
+                    ]
+                },
+                {
+                    id: '',
+                    name: 'memory',
+                    label: 'Memory',
+                    displayLabel: '记忆',
+                    description: 'Conversation memory',
+                    displayDescription: '对话记忆',
+                    type: 'BaseMemory'
+                }
+            ]
+        })
+
+        const result = initNode(nodeData, 'llmAgentflow_0')
+
+        expect(JSON.stringify(result)).not.toMatch(/"display(?:Locale|[A-Z][^"]*)"/)
+        expect(result).toEqual(expect.objectContaining({ name: 'llmAgentflow', label: 'LLM' }))
+        expect(result.inputParams?.[0]).toEqual(expect.objectContaining({ name: 'model', type: 'options', default: 'deepseek-chat' }))
+    })
+
+    it('should not mutate the localized API DTO passed to initNode', () => {
+        const nodeData = makeNodeDataSchema({
+            name: 'toolAgentflow',
+            label: 'Tool',
+            displayLabel: '工具',
+            inputs: [
+                {
+                    id: '',
+                    name: 'tool',
+                    label: 'Tool',
+                    displayLabel: '工具',
+                    type: 'asyncOptions',
+                    options: [{ name: 'lookup', label: 'Lookup', displayLabel: '查询' }]
+                }
+            ]
+        })
+        const original = structuredClone(nodeData)
+
+        initNode(nodeData, 'toolAgentflow_0')
+
+        expect(nodeData).toEqual(original)
+    })
+
     it('should generate dynamic outputAnchors for conditionAgentflow nodes', () => {
         const conditionNodeData = makeNodeDataSchema({
             name: 'conditionAgentflow',

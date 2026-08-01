@@ -34,6 +34,8 @@ import { initializeDefaultNodeData } from '@/utils/genericHelper'
 import { baseURL, REDACTED_CREDENTIAL_VALUE } from '@/store/constant'
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 import keySVG from '@/assets/images/key.svg'
+import { getMetadataDisplayText } from '@/utils/componentMetadataDisplay'
+import DOMPurify from 'dompurify'
 
 export const createOAuth2PopupSession = ({
     authWindow,
@@ -482,7 +484,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                                 }}
                             />
                         </div>
-                        {componentCredential.label}
+                        {getMetadataDisplayText(componentCredential, 'label', componentCredential.label)}
                     </div>
                 )}
             </DialogTitle>
@@ -524,7 +526,13 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                                 marginBottom: 10
                             }}
                         >
-                            <span style={{ color: 'rgb(116,66,16)' }}>{parser(componentCredential.description)}</span>
+                            <span style={{ color: 'rgb(116,66,16)' }}>
+                                {parser(
+                                    DOMPurify.sanitize(
+                                        getMetadataDisplayText(componentCredential, 'description', componentCredential.description)
+                                    )
+                                )}
+                            </span>
                         </div>
                     </Box>
                 )}
@@ -540,7 +548,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                             id='credName'
                             type='string'
                             fullWidth
-                            placeholder={componentCredential.label}
+                            placeholder={getMetadataDisplayText(componentCredential, 'label', componentCredential.label)}
                             value={name}
                             name='name'
                             onChange={(e) => setName(e.target.value)}

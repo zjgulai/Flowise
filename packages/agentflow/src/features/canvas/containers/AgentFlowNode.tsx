@@ -4,7 +4,7 @@ import { Box, Typography } from '@mui/material'
 
 import { tokens } from '@/core/theme/tokens'
 import type { NodeData } from '@/core/types'
-import { getNodeVersionWarning } from '@/core/utils'
+import { getNodeVersionWarning, resolveCurrentComponent, resolveInstanceDisplayLabel } from '@/core/utils'
 import { useAgentflowContext, useApiContext, useConfigContext } from '@/infrastructure/store'
 
 import { NodeIcon } from '../components/NodeIcon'
@@ -59,11 +59,12 @@ function AgentFlowNodeComponent({ data }: AgentFlowNodeProps) {
     const hasValidationErrors = (data.validationErrors?.length ?? 0) > 0
     const outputAnchors = data.outputAnchors ?? []
     const minHeight = getMinimumNodeHeight(outputAnchors.length)
+    const componentNode = resolveCurrentComponent(state.componentNodes, data)
+    const displayLabel = resolveInstanceDisplayLabel(data, componentNode)
 
     useEffect(() => {
         const messages: string[] = []
 
-        const componentNode = state.componentNodes.find((cn) => cn.name === data.name)
         if (componentNode) {
             const versionWarning = getNodeVersionWarning(data, componentNode)
             if (versionWarning) messages.push(versionWarning)
@@ -72,7 +73,7 @@ function AgentFlowNodeComponent({ data }: AgentFlowNodeProps) {
         if (data.warning) messages.push(data.warning)
         if (data.validationErrors?.length) messages.push(...data.validationErrors)
         setWarningMessage(messages.join('\n'))
-    }, [data, data.name, data.version, data.warning, data.validationErrors, state.componentNodes])
+    }, [componentNode, data, data.name, data.version, data.warning, data.validationErrors])
 
     return (
         <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)} onDoubleClick={handleDoubleClick}>
@@ -117,7 +118,7 @@ function AgentFlowNodeComponent({ data }: AgentFlowNodeProps) {
                                     fontWeight: 500
                                 }}
                             >
-                                {data.label}
+                                {displayLabel}
                             </Typography>
                             <NodeModelConfigs inputs={data.inputs} />
                             <NodeToolIcons inputs={data.inputs} nodeColor={data.color} />

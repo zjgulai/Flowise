@@ -26,8 +26,10 @@ export interface ApiResponse<T> {
 
 export interface NodeOption {
     label: string
+    displayLabel?: string
     name: string
     description?: string
+    displayDescription?: string
     imageSrc?: string
 }
 
@@ -46,22 +48,28 @@ export interface Credential {
 
 export interface CredentialSchemaInput {
     label: string
+    displayLabel?: string
     name: string
     type: 'password' | 'string' | 'number' | 'boolean' | 'options' | 'json'
     default?: unknown
     optional?: boolean
     description?: string
+    displayDescription?: string
     placeholder?: string
+    displayPlaceholder?: string
     options?: Array<{ label: string; name: string }>
     hidden?: boolean
     rows?: number
     warning?: string
+    displayWarning?: string
 }
 
 export interface ComponentCredentialSchema {
     label: string
+    displayLabel?: string
     name: string
     description?: string
+    displayDescription?: string
     inputs?: CredentialSchemaInput[]
 }
 

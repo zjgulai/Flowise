@@ -57,12 +57,69 @@ describe('authenticated PC core continuity', () => {
         })
     }
 
-    const isPageInitiatedRequest = (request, requestUrl, baseUrl) => {
-        if (requestUrl.origin === baseUrl.origin) return true
+    const displayMetadataFields = new Set([
+        'displayLabel',
+        'displayCategory',
+        'displayDescription',
+        'displayWarning',
+        'displayPlaceholder',
+        'displayBadge',
+        'displayDeprecateMessage',
+        'displayHeaderName',
+        'displayHint',
+        'displayLocale'
+    ])
+    const metadataContainers = new Set([
+        'inputs',
+        'output',
+        'outputs',
+        'options',
+        'tabs',
+        'array',
+        'datagrid',
+        'credential',
+        'hint',
+        'inputParams',
+        'inputAnchors',
+        'outputAnchors'
+    ])
 
-        const origin = request.headers.origin
-        const referer = request.headers.referer
-        return origin === baseUrl.origin || (typeof referer === 'string' && referer.startsWith(`${baseUrl.origin}/`))
+    const assertMetadataSchemaClean = (value) => {
+        if (Array.isArray(value)) {
+            value.forEach(assertMetadataSchemaClean)
+            return
+        }
+        if (!value || typeof value !== 'object') return
+
+        for (const [key, nestedValue] of Object.entries(value)) {
+            expect(displayMetadataFields.has(key), `render-only metadata key ${key}`).to.eq(false)
+            if (metadataContainers.has(key) && (key !== 'outputs' || Array.isArray(nestedValue))) {
+                assertMetadataSchemaClean(nestedValue)
+            }
+        }
+    }
+
+    const assertFlowMetadataClean = (flowData) => {
+        for (const node of flowData.nodes || []) {
+            const nodeData = node.data || {}
+            for (const key of displayMetadataFields) expect(nodeData, `node ${node.id} root metadata`).not.to.have.property(key)
+            for (const container of ['inputParams', 'inputAnchors', 'outputAnchors', 'outputs']) {
+                if (container in nodeData && (container !== 'outputs' || Array.isArray(nodeData[container]))) {
+                    assertMetadataSchemaClean(nodeData[container])
+                }
+            }
+        }
+    }
+
+    const expectRuntimeDisplayFieldsPreserved = (flowData) => {
+        const startNode = flowData.nodes.find(({ data }) => data.name === 'startAgentflow')
+        expect(startNode.data.inputs).to.deep.include({
+            displayNameCreateChannel: 'create-channel-name',
+            displayNameUpdateChannel: 'update-channel-name'
+        })
+        expect(startNode.data.inputs.businessPayload).to.deep.eq({ displayLabel: 'legitimate user value' })
+        expect(startNode.data.outputs).to.deep.eq({ displayLabel: 'legitimate runtime output' })
+        expect(flowData.edges[0].data).to.deep.eq({ displayLabel: 'legitimate edge payload' })
     }
 
     beforeEach(() => {
@@ -87,10 +144,8 @@ describe('authenticated PC core continuity', () => {
 
         cy.intercept({ url: '**', middleware: true }, (request) => {
             const requestUrl = new URL(request.url)
-            if (!isPageInitiatedRequest(request, requestUrl, baseUrl)) return
-
-            if (requestUrl.origin !== baseUrl.origin) {
-                throw new Error(`Unexpected page-initiated external request: ${request.method} ${requestUrl.origin}${requestUrl.pathname}`)
+            if (['http:', 'https:'].includes(requestUrl.protocol) && requestUrl.origin !== baseUrl.origin) {
+                throw new Error(`Unexpected external request: ${request.method} ${requestUrl.origin}${requestUrl.pathname}`)
             }
             const normalizedPath = requestUrl.pathname.toLowerCase()
             if (forbiddenApiPrefixes.some((prefix) => normalizedPath.startsWith(prefix))) {
@@ -339,6 +394,238 @@ describe('authenticated PC core continuity', () => {
         })
 
         assertNoHorizontalOverflow()
+    })
+
+    it('localizes component metadata without changing machine fields or persisted flow data', () => {
+        cy.viewport(1440, 900)
+
+        cy.request({ url: '/api/v1/nodes?client=agentflowv2', headers: internalHeaders }).then((response) => {
+            expect(response.status).to.eq(200)
+            const agentNode = response.body.find(({ name }) => name === 'agentAgentflow')
+            expect(agentNode).to.include({
+                name: 'agentAgentflow',
+                label: 'Agent',
+                displayLabel: '智能体',
+                category: 'Agent Flows',
+                displayCategory: '智能体流程',
+                displayLocale: 'zh-CN'
+            })
+            expect(agentNode.inputs.find(({ name }) => name === 'agentEnableMemory')).to.include({
+                name: 'agentEnableMemory',
+                label: 'Enable Memory',
+                displayLabel: '启用记忆'
+            })
+            const humanInputNode = response.body.find(({ name }) => name === 'humanInputAgentflow')
+            expect(humanInputNode.outputs.find(({ name }) => name === 'proceed')).to.include({
+                name: 'proceed',
+                label: 'Proceed',
+                displayLabel: '继续'
+            })
+            const conditionNode = response.body.find(({ name }) => name === 'conditionAgentflow')
+            expect(conditionNode.outputs.find(({ name }) => name === '1')).to.include({
+                name: '1',
+                label: '1',
+                displayLabel: '1',
+                description: 'Else',
+                displayDescription: '否则'
+            })
+        })
+
+        cy.request({ url: '/api/v1/components-credentials', headers: internalHeaders }).then((response) => {
+            expect(response.status).to.eq(200)
+            const kimiCredential = response.body.find(({ name }) => name === 'kimiApi')
+            expect(kimiCredential).to.include({
+                name: 'kimiApi',
+                label: 'Kimi (Moonshot) API',
+                displayLabel: 'Kimi（Moonshot）API',
+                displayLocale: 'zh-CN'
+            })
+            expect(kimiCredential.inputs.find(({ name }) => name === 'kimiApiKey')).to.include({
+                name: 'kimiApiKey',
+                label: 'Kimi API Key',
+                displayLabel: 'Kimi API 密钥'
+            })
+        })
+
+        const metadataFlowName = `metadata-flow-${runId}`
+        const metadataStartNodeId = `start-metadata-${runId}`
+        const metadataLoopNodeId = `loop-metadata-${runId}`
+        const rawLoopHint = 'Make sure to have memory enabled in the LLM/Agent node to retain the chat history'
+        createFlowFixture(metadataFlowName, 'AGENTFLOW', {
+            nodes: [
+                {
+                    id: metadataStartNodeId,
+                    type: 'agentFlow',
+                    position: { x: 100, y: 200 },
+                    data: {
+                        name: 'startAgentflow',
+                        label: 'Start',
+                        displayLabel: '<img src=x onerror="window.__metadataInjection=true">',
+                        displayLocale: 'untrusted',
+                        inputs: {
+                            startInputType: 'chatInput',
+                            displayNameCreateChannel: 'create-channel-name',
+                            displayNameUpdateChannel: 'update-channel-name',
+                            businessPayload: { displayLabel: 'legitimate user value' }
+                        },
+                        inputParams: [
+                            {
+                                name: 'legacyMetadata',
+                                type: 'string',
+                                label: 'Legacy metadata',
+                                displayWarning: '<img src=x onerror="window.__metadataWarningInjection=true">'
+                            }
+                        ],
+                        inputAnchors: [],
+                        outputAnchors: [],
+                        outputs: { displayLabel: 'legitimate runtime output' }
+                    }
+                },
+                {
+                    id: metadataLoopNodeId,
+                    type: 'agentFlow',
+                    position: { x: 500, y: 200 },
+                    data: {
+                        name: 'loopAgentflow',
+                        label: 'Loop 0',
+                        hint: rawLoopHint,
+                        displayHint: '<img src=x onerror="window.__metadataHintInjection=true">',
+                        inputs: {},
+                        inputParams: [],
+                        inputAnchors: [],
+                        outputAnchors: [],
+                        outputs: [
+                            {
+                                name: '0',
+                                label: '0',
+                                displayLabel: '0',
+                                description: 'Condition 0',
+                                displayDescription: '条件 0'
+                            }
+                        ]
+                    }
+                }
+            ],
+            edges: [
+                {
+                    id: `runtime-edge-${runId}`,
+                    source: metadataStartNodeId,
+                    target: metadataStartNodeId,
+                    hidden: true,
+                    data: { displayLabel: 'legitimate edge payload' }
+                }
+            ]
+        }).then((agentflow) => {
+            cy.request({ url: `/api/v1/chatflows/${agentflow.id}`, headers: internalHeaders }).then((response) => {
+                const legacyFlowData = JSON.parse(response.body.flowData)
+                expect(legacyFlowData.nodes[0].data.displayLabel).to.include('onerror')
+                expect(legacyFlowData.nodes[0].data.inputParams[0].displayWarning).to.include('onerror')
+                expect(legacyFlowData.nodes[1].data.displayHint).to.include('onerror')
+                expect(legacyFlowData.nodes[1].data.outputs[0].displayDescription).to.eq('条件 0')
+                expectRuntimeDisplayFieldsPreserved(legacyFlowData)
+            })
+            cy.intercept('GET', '**/api/v1/nodes*').as('loadLocalizedNodes')
+            cy.visit(`/v2/agentcanvas/${agentflow.id}`)
+            cy.wait('@loadLocalizedNodes').its('response.statusCode').should('eq', 200)
+            cy.contains('.react-flow__node', '循环 0', { timeout: 10000 }).dblclick()
+            cy.get('[role="dialog"]').within(() => {
+                cy.contains('请确保已在大模型／智能体节点中启用记忆，以保留对话历史').should('be.visible')
+            })
+            cy.get('body').type('{esc}')
+            cy.get('[role="dialog"]').should('not.exist')
+            cy.get('button[title="添加节点"]').click()
+
+            cy.get('#input-search-node').type('Agent')
+            cy.contains('span', /^智能体$/, { timeout: 10000 }).should('be.visible')
+            cy.get('#input-search-node').clear().type('智能体')
+            cy.contains('span', /^智能体$/, { timeout: 10000 }).should('be.visible')
+
+            cy.window().then((browserWindow) => {
+                const dataTransfer = new browserWindow.DataTransfer()
+                cy.contains('span', /^智能体$/)
+                    .parents('[draggable="true"]')
+                    .first()
+                    .trigger('dragstart', { dataTransfer })
+                    .then(() => {
+                        const dragPayload = JSON.parse(dataTransfer.getData('application/reactflow'))
+                        expect(dragPayload).to.include({ name: 'agentAgentflow', label: 'Agent' })
+                        assertMetadataSchemaClean(dragPayload)
+
+                        cy.get('.react-flow__pane').then(($pane) => {
+                            const rect = $pane[0].getBoundingClientRect()
+                            const eventOptions = {
+                                dataTransfer,
+                                clientX: rect.left + rect.width / 2,
+                                clientY: rect.top + rect.height / 2,
+                                force: true
+                            }
+                            cy.wrap($pane).trigger('dragover', eventOptions).trigger('drop', eventOptions)
+                        })
+                    })
+            })
+
+            cy.contains('.react-flow__node', '智能体 0', { timeout: 10000 }).should('be.visible')
+            cy.contains('.react-flow__node', '智能体 0').dblclick()
+            cy.get('[role="dialog"]').within(() => {
+                cy.contains(/^智能体 0$/).should('be.visible')
+                cy.contains(/^消息$/).should('be.visible')
+                cy.contains('button', '添加消息').should('be.visible')
+                cy.get('button[title="编辑名称"]').click()
+                cy.get('input').first().should('have.value', 'Agent 0')
+                cy.get('button[title="保存名称"]').click()
+                cy.contains(/^智能体 0$/).should('be.visible')
+            })
+            cy.get('body').type('{esc}')
+            cy.get('[role="dialog"]').should('not.exist')
+            cy.intercept('PUT', `**/api/v1/chatflows/${agentflow.id}`).as('saveMetadataFlow')
+            cy.get('button[title="保存智能体流程"]').click()
+            cy.wait('@saveMetadataFlow').then(({ request, response }) => {
+                expect(response.statusCode).to.eq(200)
+                const flowData = JSON.parse(request.body.flowData)
+                const savedAgent = flowData.nodes.find(({ data }) => data.name === 'agentAgentflow')
+                const savedLoop = flowData.nodes.find(({ data }) => data.name === 'loopAgentflow')
+                expect(savedAgent.data).to.include({ name: 'agentAgentflow', label: 'Agent 0' })
+                expect(savedLoop.data).to.include({ name: 'loopAgentflow', label: 'Loop 0', hint: rawLoopHint })
+                expect(savedLoop.data.outputs).to.deep.eq([{ name: '0', label: '0', description: 'Condition 0' }])
+                assertFlowMetadataClean(flowData)
+                expectRuntimeDisplayFieldsPreserved(flowData)
+            })
+
+            cy.request({ url: `/api/v1/chatflows/${agentflow.id}`, headers: internalHeaders }).then((response) => {
+                expect(response.status).to.eq(200)
+                const persistedFlowData = JSON.parse(response.body.flowData)
+                expect(persistedFlowData.nodes.find(({ data }) => data.name === 'agentAgentflow').data.label).to.eq('Agent 0')
+                expect(persistedFlowData.nodes.find(({ data }) => data.name === 'loopAgentflow').data.hint).to.eq(rawLoopHint)
+                expect(persistedFlowData.nodes.find(({ data }) => data.name === 'loopAgentflow').data.outputs).to.deep.eq([
+                    { name: '0', label: '0', description: 'Condition 0' }
+                ])
+                assertFlowMetadataClean(persistedFlowData)
+                expectRuntimeDisplayFieldsPreserved(persistedFlowData)
+            })
+            cy.window().then((browserWindow) => {
+                expect(browserWindow.__metadataInjection).not.to.eq(true)
+                expect(browserWindow.__metadataWarningInjection).not.to.eq(true)
+                expect(browserWindow.__metadataHintInjection).not.to.eq(true)
+            })
+            cy.reload()
+            cy.wait('@loadLocalizedNodes').its('response.statusCode').should('be.oneOf', [200, 304])
+            cy.contains('.react-flow__node', '智能体 0', { timeout: 10000 }).should('be.visible')
+            cy.window().then((browserWindow) => {
+                expect(browserWindow.__metadataInjection).not.to.eq(true)
+                expect(browserWindow.__metadataWarningInjection).not.to.eq(true)
+                expect(browserWindow.__metadataHintInjection).not.to.eq(true)
+            })
+        })
+
+        cy.intercept('GET', '**/api/v1/components-credentials').as('loadLocalizedCredentials')
+        cy.visit('/credentials')
+        cy.wait('@loadLocalizedCredentials').its('response.statusCode').should('eq', 200)
+        cy.contains('button', '添加凭据').click()
+        cy.get('#input-search-credential').type('HTTP Api Key')
+        cy.contains('[role="dialog"]', 'HTTP API 密钥', { timeout: 10000 }).should('be.visible')
+        cy.get('#input-search-credential').clear().type('密钥')
+        cy.contains('[role="dialog"]', 'HTTP API 密钥', { timeout: 10000 }).should('be.visible')
+        cy.screenshot('05-metadata-localization', { capture: 'viewport' })
     })
 
     it('keeps the four mobile entry routes non-blocking without expanding the PC scope', () => {

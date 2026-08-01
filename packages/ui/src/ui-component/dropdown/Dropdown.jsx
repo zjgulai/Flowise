@@ -2,9 +2,16 @@ import { useState } from 'react'
 import { useSelector } from 'react-redux'
 
 import { Popper, FormControl, TextField, Box, Typography } from '@mui/material'
-import Autocomplete, { autocompleteClasses } from '@mui/material/Autocomplete'
+import Autocomplete, { autocompleteClasses, createFilterOptions } from '@mui/material/Autocomplete'
 import { useTheme, styled } from '@mui/material/styles'
 import PropTypes from 'prop-types'
+
+import { getMetadataDisplayText, getMetadataOptionSearchText } from '@/utils/componentMetadataDisplay'
+
+export const filterDropdownOptions = createFilterOptions({ stringify: getMetadataOptionSearchText })
+export const getDropdownOptionMachineValue = (option) => (typeof option === 'string' ? option : option?.name)
+export const getDropdownOptionLabel = (option) =>
+    typeof option === 'string' ? option : getMetadataDisplayText(option, 'label', typeof option?.name === 'string' ? option.name : '')
 
 const StyledPopper = styled(Popper)({
     boxShadow: '0px 8px 10px -5px rgb(0 0 0 / 20%), 0px 16px 24px 2px rgb(0 0 0 / 14%), 0px 6px 30px 5px rgb(0 0 0 / 12%)',
@@ -20,7 +27,7 @@ const StyledPopper = styled(Popper)({
 
 export const Dropdown = ({ name, value, loading, options, onSelect, disabled = false, freeSolo = false, disableClearable = false }) => {
     const customization = useSelector((state) => state.customization)
-    const findMatchingOptions = (options = [], value) => options.find((option) => option.name === value)
+    const findMatchingOptions = (options = [], value) => options.find((option) => getDropdownOptionMachineValue(option) === value)
     const getDefaultOptionValue = () => ''
     let [internalValue, setInternalValue] = useState(value ?? 'choose an option')
     const theme = useTheme()
@@ -35,9 +42,11 @@ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = f
                 size='small'
                 loading={loading}
                 options={options || []}
+                filterOptions={filterDropdownOptions}
+                getOptionLabel={getDropdownOptionLabel}
                 value={findMatchingOptions(options, internalValue) || getDefaultOptionValue()}
                 onChange={(e, selection) => {
-                    const value = selection ? selection.name : ''
+                    const value = selection ? getDropdownOptionMachineValue(selection) ?? '' : ''
                     setInternalValue(value)
                     onSelect(value)
                 }}
@@ -63,7 +72,7 @@ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = f
                                     <Box
                                         component='img'
                                         src={matchingOption.imageSrc}
-                                        alt={matchingOption.label || '已选选项'}
+                                        alt={getDropdownOptionLabel(matchingOption) || '已选选项'}
                                         sx={{
                                             width: 32,
                                             height: 32,
@@ -90,9 +99,11 @@ export const Dropdown = ({ name, value, loading, options, onSelect, disabled = f
                             />
                         )}
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <Typography variant='h5'>{option.label}</Typography>
-                            {option.description && (
-                                <Typography sx={{ color: customization.isDarkMode ? '#9e9e9e' : '' }}>{option.description}</Typography>
+                            <Typography variant='h5'>{getDropdownOptionLabel(option)}</Typography>
+                            {getMetadataDisplayText(option, 'description') && (
+                                <Typography sx={{ color: customization.isDarkMode ? '#9e9e9e' : '' }}>
+                                    {getMetadataDisplayText(option, 'description')}
+                                </Typography>
                             )}
                         </div>
                     </Box>

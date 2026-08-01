@@ -22,13 +22,14 @@ import ExpandTextDialog from '@/ui-component/dialog/ExpandTextDialog'
 import ManageScrapedLinksDialog from '@/ui-component/dialog/ManageScrapedLinksDialog'
 import CredentialInputHandler from '@/views/canvas/CredentialInputHandler'
 import { flowContext } from '@/store/context/ReactFlowContext'
+import { createDocStoreInputView } from './componentMetadataView'
 
 // const
 import { FLOWISE_CREDENTIAL_ID } from '@/store/constant'
 
 // ===========================|| DocStoreInputHandler ||=========================== //
 
-const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataChange }) => {
+const DocStoreInputHandler = ({ inputParam, componentMetadata, data, disabled = false, onNodeDataChange }) => {
     const customization = useSelector((state) => state.customization)
     const flowContextValue = useContext(flowContext)
     const nodeDataChangeHandler = onNodeDataChange || flowContextValue?.onNodeDataChange
@@ -38,6 +39,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
     const [showManageScrapedLinksDialog, setShowManageScrapedLinksDialog] = useState(false)
     const [manageScrapedLinksDialogProps, setManageScrapedLinksDialogProps] = useState({})
     const [reloadTimestamp, setReloadTimestamp] = useState(Date.now().toString())
+    const inputParamView = createDocStoreInputView(inputParam, componentMetadata)
 
     const handleDataChange = ({ inputParam, newValue }) => {
         data.inputs[inputParam.name] = newValue
@@ -97,9 +99,11 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                     <Box sx={{ p: 2 }}>
                         <div style={{ display: 'flex', flexDirection: 'row' }}>
                             <Typography>
-                                {inputParam.label}
+                                {inputParamView.label}
                                 {!inputParam.optional && <span style={{ color: 'red' }}>&nbsp;*</span>}
-                                {inputParam.description && <TooltipWithParser style={{ marginLeft: 10 }} title={inputParam.description} />}
+                                {inputParamView.description && (
+                                    <TooltipWithParser style={{ marginLeft: 10 }} title={inputParamView.description} />
+                                )}
                             </Typography>
                             <div style={{ flexGrow: 1 }}></div>
                             {((inputParam.type === 'string' && inputParam.rows) || inputParam.type === 'code') && (
@@ -112,14 +116,14 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                                     title='展开'
                                     color='primary'
                                     onClick={() =>
-                                        onExpandDialogClicked(data.inputs[inputParam.name] ?? inputParam.default ?? '', inputParam)
+                                        onExpandDialogClicked(data.inputs[inputParam.name] ?? inputParam.default ?? '', inputParamView)
                                     }
                                 >
                                     <IconArrowsMaximize />
                                 </IconButton>
                             )}
                         </div>
-                        {inputParam.warning && (
+                        {inputParamView.warning && (
                             <div
                                 style={{
                                     display: 'flex',
@@ -133,15 +137,15 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                                 }}
                             >
                                 <IconAlertTriangle size={30} color='orange' />
-                                <span style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}>{inputParam.warning}</span>
+                                <span style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}>{inputParamView.warning}</span>
                             </div>
                         )}
                         {inputParam.type === 'credential' && (
                             <CredentialInputHandler
-                                key={JSON.stringify(inputParam)}
+                                key={JSON.stringify(inputParamView)}
                                 disabled={disabled}
                                 data={getCredential()}
-                                inputParam={inputParam}
+                                inputParam={inputParamView}
                                 onSelect={(newValue) => {
                                     data.credential = newValue
                                     data.inputs[FLOWISE_CREDENTIAL_ID] = newValue // in case data.credential is not updated
@@ -158,7 +162,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                                 fileType={inputParam.fileType || '*'}
                                 onChange={(newValue) => handleDataChange({ inputParam, newValue })}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
-                                placeholder='选择要上传的文件'
+                                placeholder={inputParamView.placeholder || '选择要上传的文件'}
                                 buttonText='上传文件'
                             />
                         )}
@@ -172,7 +176,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                         {inputParam.type === 'datagrid' && (
                             <DataGrid
                                 disabled={disabled}
-                                columns={inputParam.datagrid}
+                                columns={inputParamView.datagrid}
                                 hideFooter={true}
                                 rows={data.inputs[inputParam.name] ?? JSON.stringify(inputParam.default) ?? []}
                                 onChange={(newValue) => handleDataChange({ inputParam, newValue })}
@@ -188,7 +192,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                                         height={inputParam.rows ? '100px' : '200px'}
                                         theme={customization.isDarkMode ? 'dark' : 'light'}
                                         lang={'js'}
-                                        placeholder={inputParam.placeholder}
+                                        placeholder={inputParamView.placeholder}
                                         onValueChange={(code) => (data.inputs[inputParam.name] = code)}
                                         basicSetup={{ highlightActiveLine: false, highlightActiveLineGutter: false }}
                                     />
@@ -199,7 +203,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                             <Input
                                 key={data.inputs[inputParam.name]}
                                 disabled={disabled}
-                                inputParam={inputParam}
+                                inputParam={inputParamView}
                                 onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
                                 onBlur={(newValue) => handleDataChange({ inputParam, newValue })}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
@@ -216,20 +220,20 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                         )}
                         {inputParam.type === 'options' && (
                             <Dropdown
-                                key={JSON.stringify(inputParam)}
+                                key={JSON.stringify(inputParamView)}
                                 disabled={disabled}
                                 name={inputParam.name}
-                                options={inputParam.options}
+                                options={inputParamView.options}
                                 onSelect={(newValue) => handleDataChange({ inputParam, newValue })}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? 'choose an option'}
                             />
                         )}
                         {inputParam.type === 'multiOptions' && (
                             <MultiDropdown
-                                key={JSON.stringify(inputParam)}
+                                key={JSON.stringify(inputParamView)}
                                 disabled={disabled}
                                 name={inputParam.name}
-                                options={inputParam.options}
+                                options={inputParamView.options}
                                 onSelect={(newValue) => handleDataChange({ inputParam, newValue })}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? 'choose an option'}
                             />
@@ -240,7 +244,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <div key={reloadTimestamp} style={{ flex: 1 }}>
                                         <AsyncDropdown
-                                            key={JSON.stringify(inputParam)}
+                                            key={JSON.stringify(inputParamView)}
                                             disabled={disabled}
                                             name={inputParam.name}
                                             nodeData={data}
@@ -266,7 +270,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
                             </>
                         )}
                         {inputParam.type === 'array' && (
-                            <ArrayRenderer inputParam={inputParam} data={data} disabled={disabled} isDocStore={true} />
+                            <ArrayRenderer inputParam={inputParamView} data={data} disabled={disabled} isDocStore={true} />
                         )}
                         {(data.name === 'cheerioWebScraper' ||
                             data.name === 'puppeteerWebScraper' ||
@@ -316,6 +320,7 @@ const DocStoreInputHandler = ({ inputParam, data, disabled = false, onNodeDataCh
 
 DocStoreInputHandler.propTypes = {
     inputParam: PropTypes.object,
+    componentMetadata: PropTypes.object,
     data: PropTypes.object,
     disabled: PropTypes.bool,
     onNodeDataChange: PropTypes.func
