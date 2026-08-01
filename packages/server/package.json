@@ -159,6 +159,7 @@
         "@types/cookie-parser": "^1.4.7",
         "@types/cors": "^2.8.12",
         "@types/crypto-js": "^4.1.1",
+        "@types/express-serve-static-core": "4.17.43",
         "@types/express-session": "^1.18.0",
         "@types/geoip-lite": "^1.4.4",
         "@types/jest": "^29.5.14",
