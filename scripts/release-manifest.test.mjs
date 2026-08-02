@@ -582,6 +582,62 @@ const validateRootDockerfileReproducibility = (dockerfile) => {
     return cleanup
 }
 
+const validateApkClosureContracts = (dockerfile, closures) => {
+    const parseClosure = (entries, label) => {
+        const packages = new Map()
+        for (const entry of entries) {
+            const match = /^([A-Za-z0-9+_.-]+)=([A-Za-z0-9+_.~-]+)$/.exec(entry)
+            assert.ok(match, `${label} APK lock entry must contain an exact version: ${entry}`)
+            assert.equal(packages.has(match[1]), false, `${label} APK lock must not repeat ${match[1]}`)
+            packages.set(match[1], match[2])
+        }
+        return packages
+    }
+
+    const parseDirectPins = (lockName, label) => {
+        const escapedLockName = lockName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const layer = new RegExp(
+            `COPY docker\\/${escapedLockName} \\/tmp\\/${escapedLockName}\\nRUN [\\s\\S]*?cmp -s \\/tmp\\/${escapedLockName} \\/tmp\\/apk-actual\\.lock`
+        ).exec(dockerfile)?.[0]
+        assert.ok(layer, `${label} APK install layer must retain its fail-closed lock comparison`)
+        const install = /apk add --no-cache \\\n([\s\S]*?) && \\\n\s+awk -F:/.exec(layer)?.[1]
+        assert.ok(install, `${label} APK install layer must contain exact direct pins`)
+
+        const pins = new Map()
+        for (const line of install.trim().split('\n')) {
+            const match = /^([A-Za-z0-9+_.-]+)=([A-Za-z0-9+_.~-]+)(?: \\)?$/.exec(line.trim())
+            assert.ok(match, `${label} direct APK dependency must be exactly pinned: ${line.trim()}`)
+            assert.equal(pins.has(match[1]), false, `${label} direct APK dependency must not repeat ${match[1]}`)
+            pins.set(match[1], match[2])
+        }
+        return pins
+    }
+
+    const parsedClosures = new Map()
+    for (const { label, lockName, entries } of closures) {
+        const closure = parseClosure(entries, label)
+        const directPins = parseDirectPins(lockName, label)
+        for (const [packageName, version] of directPins) {
+            assert.equal(
+                closure.get(packageName),
+                version,
+                `${label} direct APK pin ${packageName}=${version} must exist unchanged in its complete closure`
+            )
+        }
+        parsedClosures.set(label, closure)
+    }
+
+    const runtimeClosure = parsedClosures.get('runtime')
+    assert.ok(runtimeClosure, 'runtime APK closure must be validated')
+    const chromiumPackages = ['chromium', 'chromium-angle', 'chromium-common']
+    const chromiumVersions = chromiumPackages.map((packageName) => {
+        const version = runtimeClosure.get(packageName)
+        assert.ok(version, `runtime APK closure must contain ${packageName}`)
+        return version
+    })
+    assert.equal(new Set(chromiumVersions).size, 1, 'Chromium runtime packages must use one identical version')
+}
+
 const replaceWorkflowTextOnce = (workflowSource, expected, replacement, label) => {
     const firstIndex = workflowSource.indexOf(expected)
     assert.notEqual(firstIndex, -1, `${label} mutation target is missing`)
@@ -1753,6 +1809,11 @@ test('root Dockerfile removes dynamic Turbo output and supplies a validated epoc
     const runtimeLock = readFileSync(APK_RUNTIME_LOCK_PATH, 'utf8').trim().split('\n')
     const cleanup = validateRootDockerfileReproducibility(dockerfile)
 
+    validateApkClosureContracts(dockerfile, [
+        { label: 'build', lockName: 'apk-build.lock', entries: buildLock },
+        { label: 'runtime', lockName: 'apk-runtime.lock', entries: runtimeLock }
+    ])
+
     for (const [label, entries] of [
         ['build', buildLock],
         ['runtime', runtimeLock]
@@ -1776,6 +1837,38 @@ test('root Dockerfile removes dynamic Turbo output and supplies a validated epoc
     assert.equal(dockerfile.match(/SOURCE_DATE_EPOCH must be a non-negative integer/g)?.length, 2)
     assert.equal(dockerfile.match(/SOURCE_DATE_EPOCH="\$SOURCE_DATE_EPOCH" fc-cache -fv/g)?.length, 2)
     assert.doesNotMatch(cleanup, /node_modules\/\.cache\/\*|packages\/\*\/\.turbo/)
+})
+
+test('APK closure contracts reject isolated direct-pin and Chromium closure mutations', () => {
+    const dockerfile = readFileSync(ROOT_DOCKERFILE_PATH, 'utf8')
+    const buildLock = readFileSync(APK_BUILD_LOCK_PATH, 'utf8').trim().split('\n')
+    const runtimeLock = readFileSync(APK_RUNTIME_LOCK_PATH, 'utf8').trim().split('\n')
+    const validate = (dockerfileSource, runtimeEntries) =>
+        validateApkClosureContracts(dockerfileSource, [
+            { label: 'build', lockName: 'apk-build.lock', entries: buildLock },
+            { label: 'runtime', lockName: 'apk-runtime.lock', entries: runtimeEntries }
+        ])
+
+    const chromiumEntry = runtimeLock.find((entry) => entry.startsWith('chromium='))
+    assert.ok(chromiumEntry, 'Chromium closure mutation source must exist')
+    const chromiumVersion = chromiumEntry.slice('chromium='.length)
+    const revision = /^(.*-r)(\d+)$/.exec(chromiumVersion)
+    assert.ok(revision, 'Chromium closure mutation source must use an APK revision')
+    const alternateVersion = `${revision[1]}${Number(revision[2]) + 1}`
+
+    const directPinOnly = replaceWorkflowTextOnce(
+        dockerfile,
+        `chromium=${chromiumVersion}`,
+        `chromium=${alternateVersion}`,
+        'Dockerfile Chromium direct pin'
+    )
+    assert.throws(() => validate(directPinOnly, runtimeLock), /must exist unchanged in its complete closure/)
+
+    const singleClosureOnly = runtimeLock.map((entry) =>
+        entry === `chromium-common=${chromiumVersion}` ? `chromium-common=${alternateVersion}` : entry
+    )
+    assert.notDeepEqual(singleClosureOnly, runtimeLock, 'Chromium closure mutation target must exist')
+    assert.throws(() => validate(dockerfile, singleClosureOnly), /Chromium runtime packages must use one identical version/)
 })
 
 test('root Dockerfile reproducibility cleanup rejects timestamped APK, pnpm state and root Turbo regressions', () => {

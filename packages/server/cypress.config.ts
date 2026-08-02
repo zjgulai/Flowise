@@ -7,6 +7,45 @@ const baseUrl = process.env.FLOWISE_E2E_BASE_URL
 const runId = process.env.FLOWISE_E2E_RUN_ID
 const artifactsPath = process.env.FLOWISE_E2E_ARTIFACTS_PATH
 
+const disableFeaturesPrefix = '--disable-features='
+const forbiddenChromiumArgumentPrefixes = ['--disable-web-security', '--host-resolver-rules', '--no-sandbox']
+const requiredChromiumArguments = ['--disable-background-networking', '--disable-domain-reliability']
+const requiredDisabledChromiumFeatures = ['MediaRouter', 'OptimizationHints', 'PrivacySandboxSettings4', 'Translate', 'TranslateUI']
+
+export const mergeChromiumIsolationArguments = (args: string[]) => {
+    const disabledFeatures = new Set(requiredDisabledChromiumFeatures)
+    const preservedArguments: string[] = []
+
+    for (const argument of args) {
+        if (forbiddenChromiumArgumentPrefixes.some((forbiddenArgument) => argument.startsWith(forbiddenArgument))) {
+            throw new Error('Unsafe Chromium launch argument detected')
+        }
+        if (
+            requiredChromiumArguments.some(
+                (requiredArgument) => argument === requiredArgument || argument.startsWith(`${requiredArgument}=`)
+            )
+        ) {
+            continue
+        }
+        if (!argument.startsWith(disableFeaturesPrefix)) {
+            preservedArguments.push(argument)
+            continue
+        }
+
+        for (const feature of argument.slice(disableFeaturesPrefix.length).split(',')) {
+            const normalizedFeature = feature.trim()
+            if (normalizedFeature) disabledFeatures.add(normalizedFeature)
+        }
+    }
+
+    for (const requiredArgument of requiredChromiumArguments) {
+        if (!preservedArguments.includes(requiredArgument)) preservedArguments.push(requiredArgument)
+    }
+
+    preservedArguments.push(`${disableFeaturesPrefix}${[...disabledFeatures].sort().join(',')}`)
+    return preservedArguments
+}
+
 const isLoopbackHttpOrigin = (value: string | undefined) => {
     if (!value) return false
     try {
@@ -45,7 +84,7 @@ export default defineConfig({
         setupNodeEvents(on, config) {
             on('before:browser:launch', (browser, launchOptions) => {
                 if (browser.family === 'chromium' && browser.name !== 'electron') {
-                    launchOptions.args.push('--disable-features=Translate,TranslateUI')
+                    launchOptions.args = mergeChromiumIsolationArguments(launchOptions.args)
                     launchOptions.preferences.default.translate = { enabled: false }
                 }
                 return launchOptions

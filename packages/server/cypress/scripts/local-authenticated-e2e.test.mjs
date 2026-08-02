@@ -376,12 +376,99 @@ describe('ten-module PC shell specification contract', () => {
 })
 
 describe('isolated Chrome launch contract', () => {
-    it('disables browser translation traffic without weakening application origin checks', async () => {
-        const source = await readFile(new URL('../../cypress.config.ts', import.meta.url), 'utf8')
+    it('disables browser background traffic without weakening application origin checks', async () => {
+        const configUrl = new URL('../../cypress.config.ts', import.meta.url)
+        const isolatedEnvironment = {
+            FLOWISE_E2E_ARTIFACTS_PATH: '/safe/tmp/flowise-e2e-chrome-contract',
+            FLOWISE_E2E_BASE_URL: 'http://127.0.0.1:3010',
+            FLOWISE_E2E_ISOLATED: '1',
+            FLOWISE_E2E_RUN_ID: 'chrome-contract'
+        }
+        const previousEnvironment = Object.fromEntries(Object.keys(isolatedEnvironment).map((key) => [key, process.env[key]]))
 
-        assert.match(source, /before:browser:launch/)
-        assert.match(source, /--disable-features=Translate,TranslateUI/)
-        assert.match(source, /translate = \{ enabled: false \}/)
+        Object.assign(process.env, isolatedEnvironment)
+        let cypressConfigModule
+        try {
+            cypressConfigModule = await import(`${configUrl.href}?contract=${Date.now()}`)
+        } finally {
+            for (const [key, value] of Object.entries(previousEnvironment)) {
+                if (value === undefined) delete process.env[key]
+                else process.env[key] = value
+            }
+        }
+
+        const launchArguments = [
+            '--remote-debugging-port=1234',
+            '--disable-background-networking',
+            '--disable-background-networking',
+            '--disable-background-networking=false',
+            '--disable-domain-reliability',
+            '--disable-domain-reliability=false',
+            '--disable-features=TranslateUI,CypressFeature',
+            '--disable-features=OptimizationHints,OtherFeature,TranslateUI'
+        ]
+        const mergedArguments = cypressConfigModule.mergeChromiumIsolationArguments(launchArguments)
+        const expectedDisabledFeatures = [
+            'CypressFeature',
+            'MediaRouter',
+            'OptimizationHints',
+            'OtherFeature',
+            'PrivacySandboxSettings4',
+            'Translate',
+            'TranslateUI'
+        ]
+
+        for (const requiredArgument of ['--disable-background-networking', '--disable-domain-reliability']) {
+            assert.deepEqual(
+                mergedArguments.filter((argument) => argument === requiredArgument || argument.startsWith(`${requiredArgument}=`)),
+                [requiredArgument]
+            )
+        }
+        assert.deepEqual(
+            mergedArguments.filter((argument) => argument.startsWith('--disable-features=')),
+            [`--disable-features=${expectedDisabledFeatures.join(',')}`]
+        )
+        assert.ok(mergedArguments.includes('--remote-debugging-port=1234'))
+        for (const dangerousArgument of ['--disable-web-security', '--no-sandbox', '--host-resolver-rules']) {
+            assert.throws(
+                () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, dangerousArgument]),
+                /Unsafe Chromium launch argument detected/
+            )
+            assert.throws(
+                () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, `${dangerousArgument}=value`]),
+                /Unsafe Chromium launch argument detected/
+            )
+        }
+
+        const registeredEvents = new Map()
+        const runtimeConfig = { env: {} }
+        cypressConfigModule.default.e2e.setupNodeEvents((event, callback) => registeredEvents.set(event, callback), runtimeConfig)
+        const launchOptions = {
+            args: launchArguments,
+            preferences: { default: { translate: { enabled: true } } }
+        }
+        const configuredLaunch = registeredEvents.get('before:browser:launch')({ family: 'chromium', name: 'chrome' }, launchOptions)
+
+        assert.deepEqual(configuredLaunch.args, mergedArguments)
+        assert.deepEqual(configuredLaunch.preferences.default.translate, { enabled: false })
+        for (const dangerousArgument of ['--disable-web-security', '--no-sandbox', '--host-resolver-rules']) {
+            assert.equal(
+                configuredLaunch.args.some((argument) => argument.startsWith(dangerousArgument)),
+                false
+            )
+        }
+
+        const [configSource, pcCoreSource, tenModuleSource] = await Promise.all([
+            readFile(configUrl, 'utf8'),
+            readFile(new URL('../e2e/4-pc-core/pc-core-continuity.cy.js', import.meta.url), 'utf8'),
+            readFile(new URL('../e2e/5-ten-module-shell/ten-module-shell.cy.js', import.meta.url), 'utf8')
+        ])
+
+        assert.match(configSource, /before:browser:launch/)
+        assert.match(configSource, /translate = \{ enabled: false \}/)
+        for (const applicationSource of [pcCoreSource, tenModuleSource]) {
+            assert.match(applicationSource, /requestUrl\.origin !== baseUrl\.origin/)
+        }
     })
 })
 

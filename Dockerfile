@@ -126,7 +126,7 @@ RUN case "$SOURCE_DATE_EPOCH" in \
         python3=3.14.5-r0 \
         cairo-dev=1.18.4-r1 \
         pango-dev=1.57.1-r0 \
-        chromium=150.0.7871.128-r0 \
+        chromium=150.0.7871.181-r0 \
         curl=8.21.0-r0 \
         font-noto-cjk=0_git20220127-r1 \
         fontconfig=2.17.1-r1 \
