@@ -1,6 +1,7 @@
 ---
 title: Flowise 审计整改执行日志
 date: 2026-07-10
+last_updated: 2026-08-02
 ---
 
 # 2026-07-10
@@ -228,3 +229,13 @@ date: 2026-07-10
 -   候选二进制 diff SHA-256 `fafdeef3f5e64b3b0fd2173ac8945e7dce721fc94744529c44dcb5abf11ff5b5`，unstaged/unmerged 均为 0；原子提交 `0f6354aeba2578be7f1bf0a8158988cbbfe4488c` 后从 `HEAD^..HEAD` 复算仍为 45 paths 和同一哈希。
 -   本地 G1-F candidate 判定为 GO；production promotion 继续 NO-GO。未完成项为 Firefox、exact commit 的 push/远端 CI、不可变 `linux/amd64` image 与 registry 证据、历史 Provider 凭据撤销／轮换及账单／制品清除回执、备份／回滚、生产 cutover 与部署后双浏览器验收。
 -   本批边界：`production_write=false`、`provider_call=false`、`production_secrets_read=false`、`push=false`、`merge=false`、`image_build=false`、`registry_write=false`、`deploy=false`；原 dirty checkout `/Users/pray/project/FlowAgentic/flowise` 未修改。
+
+# 2026-08-02 G1-G 远端 CI、隔离镜像与双浏览器闭环
+
+-   Draft PR `#14` 的可执行代码候选为 `41e63ed3e8cdb41b9a272f1d26bc2ac9211bb2d3`，base 为 `70d8040e5ead30a7a51e2231a6a156d5632e6e25`；该代码 SHA、远端分支和 PR head 在状态同步前一致。
+-   Node CI `30734841675` 为 success：Linux Chrome 5 specs／7 tests 全绿，冻结安装、release/security、lint、build、metadata、覆盖率和中文门禁均通过。Docker CI `30734841661` 为 success：原生 `linux/amd64` build 与 canonical offline artifact／isolated runtime 验证通过；PR 条件下没有上传 registry 制品，`release_readiness` 也未运行。
+-   当前代码候选的本地 Chrome run `2c88108d-7eb5-4a9e-a537-229bf02a966e` 与 Firefox ESR 140.13 run `64481524-a7a4-43c7-80ce-d6a3e8e541d2` 均为 5 specs／7 tests，清理完成且临时数据库、密钥、端口及对应进程残留为 0。
+-   GCM 增量代码／安全复审无 MEDIUM+；两项 LOW 均为测试强化建议，不阻断 Ready。正式 Codex branch helper 在约 8 分 43 秒后仍无最终输出，已终止进程树；actionable finding 为 0，但该结果不得表述为 helper clean 或 APPROVE。
+-   PR 平台当前无 branch protection 或 ruleset，review、review request、review thread 均为 0；CodeRabbit 状态实际为 Draft skipped。门禁允许进入 Ready 以触发实质审查，但不允许 merge、发布或部署。
+-   production promotion 继续 NO-GO：历史 Provider 凭据关账 7 项仍未关闭；缺少 current main readiness 的持久化自绑定制品、备份 checksum／恢复演练、生产 secret/key continuity、cutover 与部署后双浏览器验收。
+-   本批边界：`provider_call=false`、`production_secrets_read=false`、`production_write=false`、`registry_write=false`、`merge=false`、`deploy=false`。

@@ -364,3 +364,20 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   [x] 隔离 E2E runner 已对精确 AUT 的 HTTP(S)／WS(S) 建立 allowlist 并阻断外部端点；该证据不等同于 OS 级或所有协议完全断网，后续不得扩大表述。
 -   [!] Chrome 150／Node 24.18.0 的 10 个主模块 PC 壳层及关键 CRUD 主链已通过 5 specs／7 tests；Firefox、本提交远端 CI、不可变 `linux/amd64` 镜像、历史 Provider 凭据关账、备份／回滚和生产部署验收仍是独立阻断门禁。
 -   [x] 精确 45 路径候选的二进制 diff SHA-256 为 `fafdeef3f5e64b3b0fd2173ac8945e7dce721fc94744529c44dcb5abf11ff5b5`，经代码、安全和候选验证三条独立 lane 同意本地 GO，并原子提交为 `0f6354aeba2578be7f1bf0a8158988cbbfe4488c`；未 push、merge、构建镜像或部署。
+
+## Gate G1-G：远端 CI、跨浏览器与隔离镜像闭环
+
+-   [x] 将 G1-F 候选推送到受控分支并建立 Draft PR `zjgulai/Flowise#14`；可执行代码候选冻结为 `41e63ed3e8cdb41b9a272f1d26bc2ac9211bb2d3`，base 为 `70d8040e5ead30a7a51e2231a6a156d5632e6e25`。
+-   [x] exact-head Node CI `30734841675` 全绿：冻结安装、release/security、lint、build、metadata、覆盖率与中文门禁均通过；Linux Chrome 完成 5 specs／7 tests，未出现 Google check-in 外联。
+-   [x] exact-head Docker CI `30734841661` 全绿：原生 `linux/amd64` root Dockerfile build 及 canonical offline artifact／isolated runtime 验证通过；PR 条件下 upload 与 `release_readiness` skipped 属于工作流设计，不代表 registry 制品已发布。
+-   [x] 当前精确代码候选在本地隔离 Chrome run `2c88108d-7eb5-4a9e-a537-229bf02a966e` 与 Firefox ESR 140.13 run `64481524-a7a4-43c7-80ce-d6a3e8e541d2` 均完成 5 specs／7 tests，runner cleanup 与 residue 检查为 0。
+-   [x] GCM 最小修复的独立代码／安全复审均无 MEDIUM+；保留两项非阻断 LOW：sink 负例以静态源码合同为主，测试 helper 的 switch-key 归一化可进一步加强。
+-   [!] G1-G 只证明 source、CI、build-only artifact 和隔离双浏览器候选；没有 registry 发布、main readiness、Provider 调用、生产 secret 操作、生产切换或部署后验收。
+
+## Gate G1-H：PR Ready 与实质审查（进行中）
+
+-   [x] 已核对 PR head/base、OPEN/Draft、`CLEAN/MERGEABLE`、全部 exact-head checks、0 个 review thread，以及仓库当前无 branch protection／ruleset；平台不强制审批不等于治理批准。
+-   [x] 已识别 CodeRabbit 当前 `SUCCESS` 仅表示 Draft review skipped，不作为实质审查或批准证据。
+-   [x] 已完成本地分支审计、PR 门禁审计与残余风险复核；Codex formal helper 未在有界窗口内产出终态，已终止且残留进程为 0，因此只记录 actionable finding 0，不声明 helper clean。
+-   [~] 同步本计划、进度、发现和 PR 描述后，将 PR 转为 Ready 以触发 exact-head 实质审查；完成条件仍包括 CodeRabbit 终态、全部新增讨论收口和独立 GitHub 审批。
+-   [!] 即使 Ready 后 checks 全绿，merge、main readiness／制品发布、历史 Provider 凭据关账、备份／回滚、生产 secret/key 操作及 cutover 仍需后续独立门禁；production promotion 保持 NO-GO。

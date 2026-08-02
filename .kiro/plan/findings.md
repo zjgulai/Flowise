@@ -270,3 +270,13 @@ last_updated: 2026-08-02
 -   10 模块只读导航和关键 CRUD Chrome 回归均通过，但 Firefox 在本机缺失；本地 Chrome 不能替代跨浏览器、远端 CI、不可变镜像或生产证据。临时截图被 runner 清理，正式 Playbook 采图仍须等待 exact 中文版本在同版本隔离培训环境完成。
 -   当前树和本候选未发现新增 secret；但 Git 历史中的既知 Provider 凭据事件尚无所有者／Provider 侧撤销轮换、异常使用与账单核查、制品副本清理回执。代码扫描为 0 不能关闭外部安全事件，故 production promotion 保持 NO-GO。
 -   G1-F 关闭的是本地 source/UI/browser candidate，不授权 push、merge、registry、Docker、Provider 或生产。下一正确门禁是 exact commit 的远端 CI 与 Firefox 验收；只有历史凭据关账和不可变镜像、备份回滚证据同时完备后，才能提出生产 cutover 候选。
+
+# 2026-08-02 G1-G／G1-H Ready 门禁发现
+
+-   GitHub status context 名为 CodeRabbit 且结果为 `SUCCESS` 仍不足以证明已审查；本 PR 的底层描述明确为 Draft detected／review skipped。必须核对实际 review、comment、thread 与时间戳，而不能只读取绿色状态。
+-   PR 的 `CLEAN/MERGEABLE` 只描述 GitHub 当前可合并性；仓库没有 branch protection 或 ruleset，反而意味着平台不会替项目强制独立审批、required checks 或 conversation resolution，因此治理门禁必须由本流程继续 fail closed。
+-   Docker PR job 已验证可构建并可离线加载的 canonical artifact，但 upload 与 main-only `release_readiness` skipped；这不是已发布 registry 制品，也不是可用于生产切换的持久化 self-bound readiness artifact。
+-   Chrome／Firefox 的完整 5-spec 结果与远端 Node／Docker CI 已关闭 G1-G 候选门禁，但都没有接触生产 runtime、数据库、secret 或 Provider，不能证明生产部署完成。
+-   正式 Codex helper 在有界窗口内没有产生终态或结构化 finding；中途探索性推理不能登记为缺陷，actionable finding 0 也不能被反向包装成 clean。Ready 后仍需依赖 substantive CodeRabbit 与独立 GitHub reviewer 收口。
+-   PR 描述与三份 `.kiro/plan` 文件曾仍把 Firefox 和 exact CI 写为待完成；状态漂移如果不先修正，会让 reviewer 在过期前提下判断。同步事实本身会生成新的 docs-only PR head，因此该新 SHA 的 CI 与审查仍必须重新绑定。
+-   历史 Provider 凭据事件、当前 main readiness 制品、备份 checksum／恢复演练、生产 key continuity 和 cutover 均未关闭；Ready 只是“可以开始审查”，不是 merge 或 production promotion。
