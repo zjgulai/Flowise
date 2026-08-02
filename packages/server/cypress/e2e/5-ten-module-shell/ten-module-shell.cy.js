@@ -13,6 +13,7 @@ describe('authenticated ten-module PC shell', () => {
     ]
     const consoleErrors = []
     const consoleWarnings = []
+    const chromiumGcmCheckinPath = '/__flowise-e2e__/chromium-gcm-checkin'
     const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
     const providerExecutionPrefixes = [
         '/api/v1/prediction',
@@ -64,6 +65,24 @@ describe('authenticated ten-module PC shell', () => {
         const baseUrl = new URL(Cypress.config('baseUrl'))
         expect(baseUrl.protocol).to.eq('http:')
         expect(['127.0.0.1', 'localhost', '[::1]']).to.include(baseUrl.hostname)
+
+        cy.intercept({ url: '**', middleware: true }, (request) => {
+            const requestUrl = new URL(request.url)
+            if (['http:', 'https:'].includes(requestUrl.protocol) && requestUrl.origin !== baseUrl.origin) {
+                throw new Error('Unexpected external request in ten-module shell')
+            }
+            if (requestUrl.origin === baseUrl.origin && requestUrl.pathname === chromiumGcmCheckinPath) {
+                const contentType = String(request.headers['content-type'] || '')
+                    .split(';', 1)[0]
+                    .trim()
+                    .toLowerCase()
+                if (request.method.toUpperCase() !== 'POST' || requestUrl.search || contentType !== 'application/x-protobuf') {
+                    throw new Error('Invalid Chromium GCM check-in request')
+                }
+                request.reply({ statusCode: 503, body: '' })
+                return
+            }
+        })
 
         cy.loginAsLocalOwner()
         cy.intercept({ url: '**', middleware: true }, (request) => {

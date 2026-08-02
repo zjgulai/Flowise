@@ -372,11 +372,16 @@ describe('ten-module PC shell specification contract', () => {
         assert.match(source, /assertNoHorizontalOverflow/)
         assert.match(source, /a\[href="\$\{route\}"\]/)
         assert.equal(source.match(/cy\.visit\(/g)?.length, 1)
+        const earlyInterceptIndex = source.indexOf("cy.intercept({ url: '**', middleware: true }")
+        const loginIndex = source.indexOf('cy.loginAsLocalOwner()')
+        assert.ok(earlyInterceptIndex >= 0)
+        assert.ok(loginIndex >= 0)
+        assert.ok(earlyInterceptIndex < loginIndex)
     })
 })
 
 describe('isolated Chrome launch contract', () => {
-    it('disables browser background traffic without weakening application origin checks', async () => {
+    it('isolates browser background traffic without weakening application origin checks', async () => {
         const configUrl = new URL('../../cypress.config.ts', import.meta.url)
         const isolatedEnvironment = {
             FLOWISE_E2E_ARTIFACTS_PATH: '/safe/tmp/flowise-e2e-chrome-contract',
@@ -402,14 +407,29 @@ describe('isolated Chrome launch contract', () => {
             '--disable-background-networking',
             '--disable-background-networking',
             '--disable-background-networking=false',
+            '-disable-background-networking=false',
+            '  --DISABLE-BACKGROUND-NETWORKING=false  ',
             '--disable-domain-reliability',
             '--disable-domain-reliability=false',
+            '/disable-domain-reliability=false',
             '--disable-features=TranslateUI,CypressFeature',
             '--disable-features=OptimizationHints,OtherFeature,TranslateUI',
+            '-disable-features=SingleDashFeature',
+            '/disable-features=SlashFeature',
+            '--gcm-checkin-url',
+            '--gcm-checkin-url=https://android.clients.google.com/checkin',
+            '-gcm-checkin-url=https://android.clients.google.com/checkin',
+            '/gcm-checkin-url=https://android.clients.google.com/checkin',
+            '  --GCM-CHECKIN-URL=https://android.clients.google.com/checkin  ',
             '--no-sandbox',
-            '--no-sandbox=true'
+            '--no-sandbox=true',
+            '-no-sandbox',
+            '/no-sandbox=true',
+            '  -NO-SANDBOX  '
         ]
         const mergedArguments = cypressConfigModule.mergeChromiumIsolationArguments(launchArguments)
+        const hasSwitchKey = (argument, key) =>
+            ['--', '-', '/'].some((prefix) => argument === `${prefix}${key}` || argument.startsWith(`${prefix}${key}=`))
         const expectedDisabledFeatures = [
             'AutofillServerCommunication',
             'CypressFeature',
@@ -417,35 +437,59 @@ describe('isolated Chrome launch contract', () => {
             'OptimizationHints',
             'OtherFeature',
             'PrivacySandboxSettings4',
+            'SingleDashFeature',
+            'SlashFeature',
             'Translate',
             'TranslateUI'
         ]
 
-        for (const requiredArgument of ['--disable-background-networking', '--disable-domain-reliability']) {
+        for (const requiredSwitch of ['disable-background-networking', 'disable-domain-reliability']) {
             assert.deepEqual(
-                mergedArguments.filter((argument) => argument === requiredArgument || argument.startsWith(`${requiredArgument}=`)),
-                [requiredArgument]
+                mergedArguments.filter((argument) => hasSwitchKey(argument, requiredSwitch)),
+                [`--${requiredSwitch}`]
             )
         }
         assert.deepEqual(
-            mergedArguments.filter((argument) => argument.startsWith('--disable-features=')),
+            mergedArguments.filter((argument) => hasSwitchKey(argument, 'disable-features')),
             [`--disable-features=${expectedDisabledFeatures.join(',')}`]
+        )
+        assert.deepEqual(
+            mergedArguments.filter((argument) => hasSwitchKey(argument, 'gcm-checkin-url')),
+            ['--gcm-checkin-url=http://127.0.0.1:3010/__flowise-e2e__/chromium-gcm-checkin']
+        )
+        assert.throws(
+            () => cypressConfigModule.mergeChromiumIsolationArguments(launchArguments, 'https://127.0.0.1:3010'),
+            /Unsafe Chromium GCM check-in origin/
         )
         assert.ok(mergedArguments.includes('--remote-debugging-port=1234'))
         assert.equal(
-            mergedArguments.some((argument) => argument.startsWith('--no-sandbox')),
+            mergedArguments.some((argument) => hasSwitchKey(argument, 'no-sandbox')),
             false
         )
-        for (const dangerousArgument of ['--disable-web-security', '--host-resolver-rules']) {
-            assert.throws(
-                () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, dangerousArgument]),
-                /Unsafe Chromium launch argument detected/
-            )
-            assert.throws(
-                () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, `${dangerousArgument}=value`]),
-                /Unsafe Chromium launch argument detected/
-            )
+        for (const dangerousSwitch of ['disable-web-security', 'host-resolver-rules', 'single-argument']) {
+            for (const prefix of ['--', '-', '/']) {
+                assert.throws(
+                    () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, `${prefix}${dangerousSwitch}`]),
+                    /Unsafe Chromium launch argument detected/
+                )
+                assert.throws(
+                    () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, `${prefix}${dangerousSwitch}=value`]),
+                    /Unsafe Chromium launch argument detected/
+                )
+                assert.throws(
+                    () =>
+                        cypressConfigModule.mergeChromiumIsolationArguments([
+                            ...launchArguments,
+                            `  ${prefix}${dangerousSwitch.toUpperCase()}=value  `
+                        ]),
+                    /Unsafe Chromium launch argument detected/
+                )
+            }
         }
+        assert.throws(
+            () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, '  --  ']),
+            /Unsafe Chromium launch argument detected/
+        )
 
         const registeredEvents = new Map()
         const runtimeConfig = { env: {} }
@@ -458,12 +502,13 @@ describe('isolated Chrome launch contract', () => {
 
         assert.deepEqual(configuredLaunch.args, mergedArguments)
         assert.deepEqual(configuredLaunch.preferences.default.translate, { enabled: false })
-        for (const dangerousArgument of ['--disable-web-security', '--no-sandbox', '--host-resolver-rules']) {
+        for (const dangerousSwitch of ['disable-web-security', 'no-sandbox', 'host-resolver-rules', 'single-argument']) {
             assert.equal(
-                configuredLaunch.args.some((argument) => argument.startsWith(dangerousArgument)),
+                configuredLaunch.args.some((argument) => hasSwitchKey(argument, dangerousSwitch)),
                 false
             )
         }
+        assert.equal(configuredLaunch.args.includes('--'), false)
 
         const [configSource, pcCoreSource, tenModuleSource] = await Promise.all([
             readFile(configUrl, 'utf8'),
@@ -475,6 +520,10 @@ describe('isolated Chrome launch contract', () => {
         assert.match(configSource, /translate = \{ enabled: false \}/)
         for (const applicationSource of [pcCoreSource, tenModuleSource]) {
             assert.match(applicationSource, /requestUrl\.origin !== baseUrl\.origin/)
+            assert.match(applicationSource, /chromiumGcmCheckinPath/)
+            assert.match(applicationSource, /application\/x-protobuf/)
+            assert.match(applicationSource, /Invalid Chromium GCM check-in request/)
+            assert.match(applicationSource, /request\.reply\(\{ statusCode: 503, body: '' \}\)/)
         }
     })
 })

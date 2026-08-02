@@ -9,6 +9,7 @@ describe('authenticated PC core continuity', () => {
     const createdDocumentStoreIds = []
     const consoleErrors = []
     const consoleWarnings = []
+    const chromiumGcmCheckinPath = '/__flowise-e2e__/chromium-gcm-checkin'
     const forbiddenApiPrefixes = [
         '/api/v1/prediction',
         '/api/v1/internal-prediction',
@@ -148,6 +149,17 @@ describe('authenticated PC core continuity', () => {
             const requestUrl = new URL(request.url)
             if (['http:', 'https:'].includes(requestUrl.protocol) && requestUrl.origin !== baseUrl.origin) {
                 throw new Error(`Unexpected external request: ${request.method} ${requestUrl.origin}${requestUrl.pathname}`)
+            }
+            if (requestUrl.origin === baseUrl.origin && requestUrl.pathname === chromiumGcmCheckinPath) {
+                const contentType = String(request.headers['content-type'] || '')
+                    .split(';', 1)[0]
+                    .trim()
+                    .toLowerCase()
+                if (request.method.toUpperCase() !== 'POST' || requestUrl.search || contentType !== 'application/x-protobuf') {
+                    throw new Error('Invalid Chromium GCM check-in request')
+                }
+                request.reply({ statusCode: 503, body: '' })
+                return
             }
             const normalizedPath = requestUrl.pathname.toLowerCase()
             if (forbiddenApiPrefixes.some((prefix) => normalizedPath.startsWith(prefix))) {
