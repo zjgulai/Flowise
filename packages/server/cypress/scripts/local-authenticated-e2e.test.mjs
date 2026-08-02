@@ -405,7 +405,9 @@ describe('isolated Chrome launch contract', () => {
             '--disable-domain-reliability',
             '--disable-domain-reliability=false',
             '--disable-features=TranslateUI,CypressFeature',
-            '--disable-features=OptimizationHints,OtherFeature,TranslateUI'
+            '--disable-features=OptimizationHints,OtherFeature,TranslateUI',
+            '--no-sandbox',
+            '--no-sandbox=true'
         ]
         const mergedArguments = cypressConfigModule.mergeChromiumIsolationArguments(launchArguments)
         const expectedDisabledFeatures = [
@@ -429,7 +431,11 @@ describe('isolated Chrome launch contract', () => {
             [`--disable-features=${expectedDisabledFeatures.join(',')}`]
         )
         assert.ok(mergedArguments.includes('--remote-debugging-port=1234'))
-        for (const dangerousArgument of ['--disable-web-security', '--no-sandbox', '--host-resolver-rules']) {
+        assert.equal(
+            mergedArguments.some((argument) => argument.startsWith('--no-sandbox')),
+            false
+        )
+        for (const dangerousArgument of ['--disable-web-security', '--host-resolver-rules']) {
             assert.throws(
                 () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, dangerousArgument]),
                 /Unsafe Chromium launch argument detected/

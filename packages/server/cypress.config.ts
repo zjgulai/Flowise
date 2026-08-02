@@ -8,7 +8,8 @@ const runId = process.env.FLOWISE_E2E_RUN_ID
 const artifactsPath = process.env.FLOWISE_E2E_ARTIFACTS_PATH
 
 const disableFeaturesPrefix = '--disable-features='
-const forbiddenChromiumArgumentPrefixes = ['--disable-web-security', '--host-resolver-rules', '--no-sandbox']
+const forbiddenChromiumArgumentPrefixes = ['--disable-web-security', '--host-resolver-rules']
+const removedChromiumArgumentPrefixes = ['--no-sandbox']
 const requiredChromiumArguments = ['--disable-background-networking', '--disable-domain-reliability']
 const requiredDisabledChromiumFeatures = ['MediaRouter', 'OptimizationHints', 'PrivacySandboxSettings4', 'Translate', 'TranslateUI']
 
@@ -19,6 +20,13 @@ export const mergeChromiumIsolationArguments = (args: string[]) => {
     for (const argument of args) {
         if (forbiddenChromiumArgumentPrefixes.some((forbiddenArgument) => argument.startsWith(forbiddenArgument))) {
             throw new Error('Unsafe Chromium launch argument detected')
+        }
+        if (
+            removedChromiumArgumentPrefixes.some(
+                (removedArgument) => argument === removedArgument || argument.startsWith(`${removedArgument}=`)
+            )
+        ) {
+            continue
         }
         if (
             requiredChromiumArguments.some(
