@@ -4,6 +4,7 @@ import {
     decorateDynamicOptions,
     decorateNodeMetadata,
     getDynamicMetadataPolicy,
+    metadataSourceTranslationKey,
     metadataTranslationKey
 } from '.'
 
@@ -119,6 +120,37 @@ describe('component metadata localization DTO', () => {
         expect(localized.outputs).toEqual(runtimeOutputs)
     })
 
+    it('adds render-only labels for primitive valueOptions without changing submitted values', () => {
+        const condition = {
+            name: 'seqCondition',
+            label: 'Condition Agent',
+            inputs: [
+                {
+                    name: 'condition',
+                    datagrid: [
+                        {
+                            field: 'operation',
+                            type: 'singleSelect',
+                            valueOptions: ['Contains', 'Is Empty', 'Greater Than or Equal To']
+                        }
+                    ]
+                }
+            ]
+        }
+
+        const localized: any = decorateNodeMetadata(condition)
+        const column = localized.inputs[0].datagrid[0]
+
+        expect(column.valueOptions).toEqual(['Contains', 'Is Empty', 'Greater Than or Equal To'])
+        expect(column.displayValueOptions).toEqual([
+            { value: 'Contains', label: '包含' },
+            { value: 'Is Empty', label: '为空' },
+            { value: 'Greater Than or Equal To', label: '大于或等于' }
+        ])
+        expect(stripDisplayFields(localized)).toEqual(condition)
+        expect(condition.inputs[0].datagrid[0].valueOptions).toEqual(['Contains', 'Is Empty', 'Greater Than or Equal To'])
+    })
+
     it('keeps unknown nodes raw while still providing a translated known category', () => {
         const raw = { name: 'futureNode', label: 'Future Node', type: 'Future', category: 'Tools', inputs: [] }
         const localized: any = decorateNodeMetadata(raw)
@@ -127,20 +159,97 @@ describe('component metadata localization DTO', () => {
         expect(stripDisplayFields(localized)).toEqual(raw)
     })
 
+    it.each(['constructor', 'toString', '__proto__'])('fails closed for unknown category and badge prototype key %s', (prototypeKey) => {
+        const raw = {
+            name: 'futureNode',
+            label: 'Future Node',
+            type: 'Future',
+            category: prototypeKey,
+            badge: prototypeKey,
+            inputs: []
+        }
+        const localized: any = decorateNodeMetadata(raw)
+
+        expect(localized.displayCategory).toBe(prototypeKey)
+        expect(localized.displayBadge).toBe(prototypeKey)
+        expect(stripDisplayFields(localized)).toEqual(raw)
+    })
+
+    it('prefers context-specific exact translations for ambiguous source labels', () => {
+        const apiLoader: any = decorateNodeMetadata({
+            name: 'apiLoader',
+            inputs: [{ name: 'body', label: 'Body' }]
+        })
+        const gmail: any = decorateNodeMetadata({
+            name: 'gmail',
+            inputs: [{ name: 'messageBody', label: 'Body' }]
+        })
+        const calendar: any = decorateNodeMetadata({
+            name: 'googleCalendarTool',
+            inputs: [{ name: 'summary', label: 'Summary' }]
+        })
+        const jira: any = decorateNodeMetadata({
+            name: 'jiraTool',
+            inputs: [{ name: 'issueSummary', label: 'Summary' }]
+        })
+
+        expect(apiLoader.inputs[0].displayLabel).toBe('请求体')
+        expect(gmail.inputs[0].displayLabel).toBe('正文')
+        expect(calendar.inputs[0].displayLabel).toBe('标题')
+        expect(jira.inputs[0].displayLabel).toBe('摘要')
+    })
+
     it('uses stable source digests in catalog keys', () => {
         expect(metadataTranslationKey('node', 'agentAgentflow', 'root', 'label', 'Agent')).toBe(
             'node.agentAgentflow.root.label@11b39c93777e'
         )
+        expect(metadataSourceTranslationKey('node', 'valueOption', 'Contains')).toBe('node.valueOption@2eaecb3d0cf1')
     })
 
     it('declares dynamic policies without translating provider or tenant values', () => {
         expect(getDynamicMetadataPolicy('agentAgentflow', 'listModels')).toBe('metadata-ref')
         expect(getDynamicMetadataPolicy('agentAgentflow', 'listStores')).toBe('tenant-passthrough')
+        expect(getDynamicMetadataPolicy('awsSNS', 'listTopics')).toBe('provider-passthrough')
         expect(getDynamicMetadataPolicy('unknownNode', 'listModels')).toBeUndefined()
 
         const tenantOptions = [{ name: 'store-id', label: 'User-defined Store' }]
+        const providerOptions = [{ name: 'topic-arn', label: 'User-defined Topic' }]
         expect(decorateDynamicOptions('agentAgentflow', 'listStores', tenantOptions)).toEqual(tenantOptions)
         expect(decorateDynamicOptions('agentAgentflow', 'listStores', tenantOptions)).not.toBe(tenantOptions)
+        expect(decorateDynamicOptions('awsSNS', 'listTopics', providerOptions)).toEqual(providerOptions)
+        expect(decorateDynamicOptions('awsSNS', 'listTopics', providerOptions)).not.toBe(providerOptions)
+    })
+
+    it('uses the full-node source catalog for metadata-reference dynamic options', () => {
+        const options = [{ name: 'chatDeepseek', label: 'Deepseek', imageSrc: '/icons/deepseek.png' }]
+        const localized: any = decorateDynamicOptions('agentAgentflow', 'listModels', options)
+
+        expect(localized).toEqual([{ ...options[0], displayLabel: 'DeepSeek' }])
+        expect(localized).not.toBe(options)
+        expect(localized[0]).not.toBe(options[0])
+        expect(options[0]).not.toHaveProperty('displayLabel')
+    })
+
+    it('localizes only static system-catalog descriptions and fails closed for unknown methods', () => {
+        const systemOptions = [
+            {
+                name: 'claude-3-sonnet-20240229',
+                label: 'Claude 3 Sonnet',
+                description: 'Ideal balance of intelligence and speed for enterprise workloads'
+            }
+        ]
+        const unknownOptions = [{ name: 'future-id', label: 'Future tenant value' }]
+        const localized: any = decorateDynamicOptions('chatAnthropic', 'listModels', systemOptions)
+
+        expect(localized).toEqual([
+            {
+                ...systemOptions[0],
+                displayDescription: '企业工作负载下智能水平与速度的理想平衡'
+            }
+        ])
+        expect(systemOptions[0]).not.toHaveProperty('displayDescription')
+        expect(decorateDynamicOptions('futureNode', 'futureMethod', unknownOptions)).toEqual(unknownOptions)
+        expect(decorateDynamicOptions('futureNode', 'futureMethod', unknownOptions)).not.toBe(unknownOptions)
     })
 
     it('clones credential metadata even when the first catalog batch has no matching key', () => {

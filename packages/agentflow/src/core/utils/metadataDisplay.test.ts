@@ -81,6 +81,29 @@ describe('createMetadataDisplayView', () => {
         expect(source.default).toEqual(defaultValue)
     })
 
+    it('preserves prototype-named own keys across display, strip, and flow persistence views', () => {
+        const runtime = JSON.parse(
+            '{"__proto__":{"polluted":"runtime"},"constructor":"runtime-constructor","prototype":"runtime-prototype","safe":1}'
+        )
+        const metadata = { name: 'payload', default: runtime }
+        const flowData = { nodes: [{ id: 'node-0', data: { name: 'payloadNode', inputs: { payload: runtime } } }], edges: [] }
+
+        const roundTrips = [
+            createMetadataDisplayView(metadata).default,
+            stripDisplayMetadata(metadata).default,
+            sanitizeFlowDisplayMetadata(flowData).nodes[0]?.data.inputs.payload
+        ]
+
+        for (const roundTrip of roundTrips) {
+            expect(JSON.stringify(roundTrip)).toBe(JSON.stringify(runtime))
+            expect(Object.prototype.hasOwnProperty.call(roundTrip, '__proto__')).toBe(true)
+            expect(Object.prototype.hasOwnProperty.call(roundTrip, 'constructor')).toBe(true)
+            expect(Object.prototype.hasOwnProperty.call(roundTrip, 'prototype')).toBe(true)
+            expect(Object.getPrototypeOf(roundTrip)).toBe(Object.prototype)
+            expect(roundTrip.polluted).toBeUndefined()
+        }
+    })
+
     it('fails safe for mixed option arrays and non-string display fields', () => {
         const source = {
             name: 'mode',
@@ -119,6 +142,83 @@ describe('createMetadataDisplayView', () => {
         ])
         expect(createMetadataDisplayView(runtime).outputs).toEqual(runtime.outputs)
         expect(stripDisplayMetadata(runtime).outputs).toEqual(runtime.outputs)
+    })
+
+    it('renders localized valueOptions without changing their machine values', () => {
+        const source = {
+            field: 'operation',
+            valueOptions: ['Contains', 'Is Empty'],
+            displayValueOptions: [
+                { value: 'Contains', label: '包含' },
+                { value: 'Is Empty', label: '为空' }
+            ]
+        }
+
+        const view = createMetadataDisplayView(source)
+
+        expect(view.valueOptions).toEqual([
+            { value: 'Contains', label: '包含' },
+            { value: 'Is Empty', label: '为空' }
+        ])
+        expect(stripDisplayMetadata(source)).toEqual({ field: 'operation', valueOptions: ['Contains', 'Is Empty'] })
+        expect(source.valueOptions).toEqual(['Contains', 'Is Empty'])
+    })
+
+    it('keeps primitive valueOptions as strings when no display sibling exists', () => {
+        const source = { valueOptions: ['SAFE'] }
+
+        expect(createMetadataDisplayView(source).valueOptions).toEqual(source.valueOptions)
+    })
+
+    it.each([
+        ['mismatch and extra', [{ value: 'INJECTED', label: '伪造' }], ['SAFE', 'SECOND']],
+        ['missing', [{ value: 'SAFE', label: '安全' }], ['安全', 'SECOND']],
+        [
+            'duplicate',
+            [
+                { value: 'SAFE', label: '安全' },
+                { value: 'SAFE', label: '伪造' },
+                { value: 'SECOND', label: '第二项' }
+            ],
+            ['SAFE', '第二项']
+        ],
+        [
+            'reordered',
+            [
+                { value: 'SECOND', label: '第二项' },
+                { value: 'SAFE', label: '安全' }
+            ],
+            ['安全', '第二项']
+        ],
+        [
+            'malformed',
+            [
+                { value: 'SAFE', label: { malicious: true } },
+                { value: 'SECOND', label: '' }
+            ],
+            ['SAFE', 'SECOND']
+        ]
+    ])('projects primitive value options from raw values for %s display metadata', (_case, displayValueOptions, labels) => {
+        const source = { valueOptions: ['SAFE', 'SECOND'], displayValueOptions }
+        const view = createMetadataDisplayView(source)
+
+        expect(view.valueOptions.map((option) => (typeof option === 'string' ? option : option.value))).toEqual(source.valueOptions)
+        expect(view.valueOptions.map((option) => (typeof option === 'string' ? option : option.label))).toEqual(labels)
+    })
+
+    it('localizes object valueOptions additively while preserving expression values', () => {
+        const source = {
+            field: 'variable',
+            valueOptions: [{ value: '$flow.input', label: 'Input Question', displayLabel: '输入问题' }]
+        }
+
+        expect(createMetadataDisplayView(source).valueOptions).toEqual([
+            { value: '$flow.input', label: '输入问题', displayLabel: '输入问题' }
+        ])
+        expect(stripDisplayMetadata(source)).toEqual({
+            field: 'variable',
+            valueOptions: [{ value: '$flow.input', label: 'Input Question' }]
+        })
     })
 })
 

@@ -1137,7 +1137,7 @@ const NodeInputHandler = ({
                         {inputParam.type === 'datagrid' && (
                             <DataGrid
                                 disabled={disabled}
-                                columns={getDataGridColDef(inputParam.datagrid, inputParam)}
+                                columns={getDataGridColDef(renderInputParam.datagrid, inputParam)}
                                 hideFooter={true}
                                 rows={data.inputs[inputParam.name] ?? JSON.stringify(inputParam.default) ?? []}
                                 onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}

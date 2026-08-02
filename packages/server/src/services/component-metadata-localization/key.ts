@@ -6,6 +6,9 @@ export const metadataTextDigest = (source: string): string => createHash('sha256
 
 export const escapeMetadataPathSegment = (value: unknown): string => String(value).replaceAll('~', '~0').replaceAll('/', '~1')
 
+export const metadataSourceTranslationKey = (kind: ComponentMetadataKind, field: string, source: string): string =>
+    `${kind}.${escapeMetadataPathSegment(field)}@${metadataTextDigest(source)}`
+
 export const metadataTranslationKey = (
     kind: ComponentMetadataKind,
     id: string,

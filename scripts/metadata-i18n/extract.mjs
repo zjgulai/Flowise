@@ -5,6 +5,8 @@ import { createRequire } from 'node:module'
 import { existsSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
+import { assertCurrentComponentBuild } from './fingerprint.mjs'
+
 const require = createRequire(import.meta.url)
 
 const HUMAN_TEXT_FIELDS = new Set(['label', 'description', 'warning', 'placeholder', 'deprecateMessage', 'headerName', 'hint'])
@@ -14,6 +16,7 @@ const IDENTITY_FIELDS = {
     output: ['name'],
     outputs: ['name'],
     options: ['name'],
+    valueOptions: ['value', 'name', 'label'],
     tabs: ['name'],
     array: ['name'],
     datagrid: ['field', 'name', 'headerName']
@@ -50,6 +53,7 @@ const digest = (value) => createHash('sha256').update(value, 'utf8').digest('hex
 const escapeSegment = (value) => String(value).replaceAll('~', '~0').replaceAll('/', '~1')
 
 const itemIdentity = (container, item, index) => {
+    if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') return escapeSegment(item)
     for (const field of IDENTITY_FIELDS[container] ?? []) {
         const value = item?.[field]
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -62,29 +66,49 @@ const itemIdentity = (container, item, index) => {
 const translationKey = ({ kind, id, path: metadataPath, field, source }) =>
     `${kind}.${escapeSegment(id)}.${metadataPath}.${field}@${digest(source)}`
 
-const collectHumanText = ({ kind, id, value, metadataPath, records }) => {
+const sourceTranslationKey = ({ kind, field, source }) => `${kind}.${escapeSegment(field)}@${digest(source)}`
+
+const collectHumanText = ({ kind, id, value, metadataPath, containers = [], records }) => {
     if (Array.isArray(value)) {
-        value.forEach((item, index) =>
-            collectHumanText({
-                kind,
-                id,
-                value: item,
-                metadataPath: `${metadataPath}/${itemIdentity(metadataPath.split('/').at(-1), item, index)}`,
-                records
-            })
-        )
+        const container = metadataPath.split('/').at(-1)
+        value.forEach((item, index) => {
+            const itemPath = `${metadataPath}/${itemIdentity(container, item, index)}`
+            if (container === 'valueOptions' && typeof item === 'string' && item.trim()) {
+                const record = { kind, id, path: itemPath, containers, field: 'valueOption', source: item }
+                records.push({
+                    ...record,
+                    digest: digest(item),
+                    key: translationKey(record),
+                    sourceKey: sourceTranslationKey(record)
+                })
+                return
+            }
+            collectHumanText({ kind, id, value: item, metadataPath: itemPath, containers, records })
+        })
         return
     }
     if (!value || typeof value !== 'object') return
 
     for (const [field, nestedValue] of Object.entries(value)) {
         if (HUMAN_TEXT_FIELDS.has(field) && typeof nestedValue === 'string' && nestedValue.trim()) {
-            const record = { kind, id, path: metadataPath, field, source: nestedValue }
-            records.push({ ...record, digest: digest(nestedValue), key: translationKey(record) })
+            const record = { kind, id, path: metadataPath, containers, field, source: nestedValue }
+            records.push({
+                ...record,
+                digest: digest(nestedValue),
+                key: translationKey(record),
+                sourceKey: sourceTranslationKey(record)
+            })
             continue
         }
         if (nestedValue && typeof nestedValue === 'object' && !['default', 'show', 'hide'].includes(field)) {
-            collectHumanText({ kind, id, value: nestedValue, metadataPath: `${metadataPath}/${escapeSegment(field)}`, records })
+            collectHumanText({
+                kind,
+                id,
+                value: nestedValue,
+                metadataPath: `${metadataPath}/${escapeSegment(field)}`,
+                containers: [...containers, field],
+                records
+            })
         }
     }
 }
@@ -205,6 +229,8 @@ const buildReport = ({ root, scope }) => {
             scope,
             nodeCount: nodes.size,
             credentialCount: credentials.size,
+            nodeNames: [...nodes.keys()].sort(),
+            credentialNames: [...credentials.keys()].sort(),
             nodeFailures,
             credentialFailures
         },
@@ -225,6 +251,7 @@ const buildReport = ({ root, scope }) => {
 }
 
 const options = parseArguments(process.argv.slice(2))
+assertCurrentComponentBuild(options.root)
 const report = buildReport(options)
 const serialized = `${JSON.stringify(report, null, 2)}\n`
 

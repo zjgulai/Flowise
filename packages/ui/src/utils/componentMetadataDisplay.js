@@ -16,6 +16,7 @@ const METADATA_CONTAINERS = [
     'output',
     'outputs',
     'options',
+    'valueOptions',
     'tabs',
     'array',
     'datagrid',
@@ -23,8 +24,24 @@ const METADATA_CONTAINERS = [
     'hint',
     ...PERSISTED_NODE_METADATA_CONTAINERS
 ]
-const DISPLAY_METADATA_FIELDS = new Set([...Object.values(DISPLAY_FIELD_BY_RAW), 'displayLocale'])
+const DISPLAY_METADATA_FIELDS = new Set([...Object.values(DISPLAY_FIELD_BY_RAW), 'displayLocale', 'displayValueOptions'])
 const rawOptionSearchTextByView = new WeakMap()
+
+const setOwnEnumerable = (target, key, value) => {
+    Object.defineProperty(target, key, {
+        value,
+        enumerable: true,
+        configurable: true,
+        writable: true
+    })
+}
+
+const projectPrimitiveValueOptions = (rawOptions, displayOptions) =>
+    rawOptions.map((rawValue) => {
+        const matches = displayOptions.filter((candidate) => candidate && typeof candidate === 'object' && candidate.value === rawValue)
+        const label = matches.length === 1 && typeof matches[0].label === 'string' && matches[0].label ? matches[0].label : rawValue
+        return { value: rawValue, label }
+    })
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -42,9 +59,13 @@ const candidateMatches = (candidate, target) => {
     if (!candidate || !target || typeof candidate !== 'object' || typeof target !== 'object') return false
     if (target.name !== undefined && candidate.name !== target.name) return false
     if (target.field !== undefined && candidate.field !== target.field) return false
+    if (target.value !== undefined && candidate.value !== target.value) return false
     if (target.type !== undefined && candidate.type !== target.type) return false
-    return target.name !== undefined || target.field !== undefined
+    return target.name !== undefined || target.field !== undefined || target.value !== undefined
 }
+
+const hasStableMetadataIdentity = (target) =>
+    !!target && typeof target === 'object' && (target.name !== undefined || target.field !== undefined || target.value !== undefined)
 
 const findMetadataItem = (root, target) => {
     if (!root || !target || typeof root !== 'object') return undefined
@@ -154,7 +175,7 @@ const clonePreservingRuntimeData = (value) => {
 
     const cloned = {}
     for (const [key, nestedValue] of Object.entries(value)) {
-        cloned[key] = clonePreservingRuntimeData(nestedValue)
+        setOwnEnumerable(cloned, key, clonePreservingRuntimeData(nestedValue))
     }
     return cloned
 }
@@ -167,7 +188,7 @@ const stripMetadataObject = (value) => {
     for (const [key, nestedValue] of Object.entries(value)) {
         if (DISPLAY_METADATA_FIELDS.has(key)) continue
         const isMetadataContainer = METADATA_CONTAINERS.includes(key) && (key !== 'outputs' || Array.isArray(nestedValue))
-        sanitized[key] = isMetadataContainer ? stripMetadataObject(nestedValue) : clonePreservingRuntimeData(nestedValue)
+        setOwnEnumerable(sanitized, key, isMetadataContainer ? stripMetadataObject(nestedValue) : clonePreservingRuntimeData(nestedValue))
     }
     return sanitized
 }
@@ -178,7 +199,10 @@ export const stripDisplayMetadata = (value) => stripMetadataObject(value)
 const findCurrentContainerItem = (currentMetadata, container, rawItem, index) => {
     const currentValues = currentMetadata?.[container]
     if (!Array.isArray(currentValues)) return undefined
-    return currentValues.find((candidate) => candidateMatches(candidate, rawItem)) ?? currentValues[index]
+    const identityMatches = currentValues.filter((candidate) => candidateMatches(candidate, rawItem))
+    if (identityMatches.length === 1) return identityMatches[0]
+    if (hasStableMetadataIdentity(rawItem)) return undefined
+    return currentValues[index]
 }
 
 const buildMetadataDisplayView = (rawMetadata, currentMetadata = rawMetadata) => {
@@ -189,23 +213,36 @@ const buildMetadataDisplayView = (rawMetadata, currentMetadata = rawMetadata) =>
 
     const view = {}
     for (const [key, nestedValue] of Object.entries(rawMetadata)) {
+        if (
+            key === 'valueOptions' &&
+            Array.isArray(nestedValue) &&
+            nestedValue.every((option) => typeof option === 'string') &&
+            Array.isArray(currentMetadata?.displayValueOptions)
+        ) {
+            setOwnEnumerable(view, key, projectPrimitiveValueOptions(nestedValue, currentMetadata.displayValueOptions))
+            continue
+        }
         if (!METADATA_CONTAINERS.includes(key) || (key === 'outputs' && !Array.isArray(nestedValue))) {
-            view[key] = clonePreservingRuntimeData(nestedValue)
+            setOwnEnumerable(view, key, clonePreservingRuntimeData(nestedValue))
             continue
         }
 
         if (Array.isArray(nestedValue)) {
-            view[key] = nestedValue.map((item, index) =>
-                buildMetadataDisplayView(item, findCurrentContainerItem(currentMetadata, key, item, index) ?? item)
+            setOwnEnumerable(
+                view,
+                key,
+                nestedValue.map((item, index) =>
+                    buildMetadataDisplayView(item, findCurrentContainerItem(currentMetadata, key, item, index) ?? item)
+                )
             )
         } else {
-            view[key] = buildMetadataDisplayView(nestedValue, currentMetadata?.[key] ?? nestedValue)
+            setOwnEnumerable(view, key, buildMetadataDisplayView(nestedValue, currentMetadata?.[key] ?? nestedValue))
         }
     }
 
     for (const rawField of Object.keys(DISPLAY_FIELD_BY_RAW)) {
         if (rawMetadata[rawField] !== undefined || currentMetadata?.[DISPLAY_FIELD_BY_RAW[rawField]] !== undefined) {
-            view[rawField] = getMetadataDisplayText(currentMetadata, rawField, rawMetadata[rawField])
+            setOwnEnumerable(view, rawField, getMetadataDisplayText(currentMetadata, rawField, rawMetadata[rawField]))
         }
     }
     return view
@@ -222,7 +259,7 @@ const sanitizePersistedNodeData = (nodeData) => {
     for (const [key, nestedValue] of Object.entries(nodeData)) {
         if (DISPLAY_METADATA_FIELDS.has(key)) continue
         const isPersistedMetadata = PERSISTED_NODE_METADATA_CONTAINERS.includes(key) || (key === 'outputs' && Array.isArray(nestedValue))
-        sanitized[key] = isPersistedMetadata ? stripMetadataObject(nestedValue) : clonePreservingRuntimeData(nestedValue)
+        setOwnEnumerable(sanitized, key, isPersistedMetadata ? stripMetadataObject(nestedValue) : clonePreservingRuntimeData(nestedValue))
     }
     return sanitized
 }

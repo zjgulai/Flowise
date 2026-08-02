@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, it } from 'node:test'
+import { runInNewContext } from 'node:vm'
 
 import {
     APPROVED_SPECS,
@@ -16,6 +17,7 @@ import {
     buildChildEnvironment,
     buildCypressArguments,
     cleanupRunResources,
+    createAutWebSocketGuard,
     enforceAutRequestPolicy,
     formatCleanupEvent,
     formatFailureEvent,
@@ -30,6 +32,7 @@ import {
 const approvedSpecs = APPROVED_SPECS
 const chatflowContinuitySpec = 'cypress/e2e/3-chatflows/chatflow-continuity.cy.js'
 const pcCoreContinuitySpec = 'cypress/e2e/4-pc-core/pc-core-continuity.cy.js'
+const tenModuleShellSpec = 'cypress/e2e/5-ten-module-shell/ten-module-shell.cy.js'
 
 const processGroupExists = (processGroupId) => {
     try {
@@ -144,15 +147,20 @@ describe('package environment file guard', () => {
 describe('AUT network isolation guard', () => {
     const baseUrl = 'http://127.0.0.1:3010'
 
-    it('allows the exact AUT origin and browser-internal non-HTTP protocols', () => {
+    it('allows exact AUT HTTP and WebSocket endpoints plus browser-internal protocols', () => {
         assert.equal(isAllowedAutRequestUrl(`${baseUrl}/api/v1/ping`, baseUrl), true)
+        assert.equal(isAllowedAutRequestUrl('ws://127.0.0.1:3010/socket.io', baseUrl), true)
         assert.equal(isAllowedAutRequestUrl('data:text/plain,local', baseUrl), true)
         assert.equal(isAllowedAutRequestUrl('blob:http://127.0.0.1:3010/local-id', baseUrl), true)
     })
 
-    it('rejects HTTP(S) external requests even when no Origin or Referer context exists', () => {
+    it('rejects external HTTP(S) and WebSocket requests even without Origin or Referer context', () => {
         assert.equal(isAllowedAutRequestUrl('https://external.example.invalid/no-request-headers', baseUrl), false)
         assert.equal(isAllowedAutRequestUrl('http://127.0.0.1:3011/other-local-service', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('ws://external.example.invalid/socket', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('wss://external.example.invalid/socket', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('ws://127.0.0.1:3011/other-local-service', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('wss://127.0.0.1:3010/protocol-mismatch', baseUrl), false)
         assert.equal(isAllowedAutRequestUrl('not a URL', baseUrl), false)
 
         let destroyed = false
@@ -166,6 +174,31 @@ describe('AUT network isolation guard', () => {
         assert.equal(destroyed, true)
     })
 
+    it('preserves native WebSocket behavior for the exact AUT and blocks external endpoints', () => {
+        class FakeWebSocket {
+            constructor(url, protocols) {
+                this.url = url
+                this.protocols = protocols
+            }
+        }
+
+        const GuardedWebSocket = createAutWebSocketGuard(FakeWebSocket, baseUrl)
+        const localSocket = new GuardedWebSocket('ws://127.0.0.1:3010/socket.io', ['flowise'])
+
+        assert.ok(localSocket instanceof FakeWebSocket)
+        assert.ok(localSocket instanceof GuardedWebSocket)
+        assert.equal(localSocket.url, 'ws://127.0.0.1:3010/socket.io')
+        assert.deepEqual(localSocket.protocols, ['flowise'])
+        for (const externalUrl of ['ws://external.example.invalid/socket', 'wss://external.example.invalid/socket']) {
+            assert.throws(
+                () => new GuardedWebSocket(externalUrl),
+                (error) =>
+                    error.message === 'External WebSocket blocked by authenticated E2E network policy' &&
+                    !error.message.includes(externalUrl)
+            )
+        }
+    })
+
     it('injects the generated support guard into every Cypress launch', () => {
         const supportFile = '/safe/tmp/flowise-e2e-run/network-guard-support.js'
         const originalSupportFile = '/workspace/packages/server/cypress/support/e2e.ts'
@@ -177,10 +210,33 @@ describe('AUT network isolation guard', () => {
         })
 
         assert.match(supportSource, new RegExp(`import ${JSON.stringify(originalSupportFile)}`))
+        assert.match(supportSource, /Cypress\.on\('window:before:load'/)
+        assert.match(supportSource, /browserWindow\.WebSocket = createAutWebSocketGuard/)
+        assert.match(supportSource, /External WebSocket blocked by authenticated E2E network policy/)
         assert.match(supportSource, /cy\.intercept\(\{ url: '\*\*', middleware: true \}/)
         assert.match(supportSource, /request\.destroy\(\)/)
         assert.doesNotMatch(supportSource, /request\.continue\(\)/)
         assert.doesNotMatch(supportSource, /request\.headers|referer/i)
+
+        const cypressEvents = new Map()
+        runInNewContext(supportSource.replace(/^\s*import [^\n]+\n/, ''), {
+            beforeEach() {},
+            Cypress: {
+                on(event, callback) {
+                    cypressEvents.set(event, callback)
+                }
+            },
+            URL
+        })
+        class FakeWebSocket {}
+        const browserWindow = { WebSocket: FakeWebSocket }
+        cypressEvents.get('window:before:load')(browserWindow)
+        assert.ok(new browserWindow.WebSocket('ws://127.0.0.1:3010/socket') instanceof FakeWebSocket)
+        assert.throws(
+            () => new browserWindow.WebSocket('wss://external.example.invalid/socket'),
+            /External WebSocket blocked by authenticated E2E network policy/
+        )
+
         assert.deepEqual(args, [
             'exec',
             'cypress',
@@ -282,6 +338,40 @@ describe('PC core continuity specification contract', () => {
         for (const forbiddenPath of ['prediction', 'chatmessage', 'vector', 'assistant', 'webhook']) {
             assert.match(source, new RegExp(forbiddenPath))
         }
+    })
+})
+
+describe('ten-module PC shell specification contract', () => {
+    it('keeps all production modules navigable, read-only, loopback-only, and console-clean', async () => {
+        assert.ok(APPROVED_SPECS.includes(tenModuleShellSpec))
+        const source = await readFile(new URL('../e2e/5-ten-module-shell/ten-module-shell.cy.js', import.meta.url), 'utf8')
+
+        for (const route of [
+            '/chatflows',
+            '/agentflows',
+            '/executions',
+            '/assistants',
+            '/marketplaces',
+            '/tools',
+            '/document-stores',
+            '/credentials',
+            '/variables',
+            '/apikey'
+        ]) {
+            assert.match(source, new RegExp(route.replaceAll('/', '\\/')))
+        }
+        for (const title of ['对话流程', '智能体流程', '执行记录', '助手', '模板市场', '工具', '文档库', '凭据', '变量', 'API 密钥']) {
+            assert.match(source, new RegExp(title))
+        }
+        assert.match(source, /cy\.viewport\(1440, 1000\)/)
+        assert.match(source, /Cypress\.config\('baseUrl'\)/)
+        assert.match(source, /requestUrl\.origin !== baseUrl\.origin/)
+        assert.match(source, /unsafeMethods/)
+        assert.match(source, /application console errors/)
+        assert.match(source, /application console warnings/)
+        assert.match(source, /assertNoHorizontalOverflow/)
+        assert.match(source, /a\[href="\$\{route\}"\]/)
+        assert.equal(source.match(/cy\.visit\(/g)?.length, 1)
     })
 })
 

@@ -81,4 +81,105 @@ describe('docstore component metadata view', () => {
             datagrid: [{ field: 'source', headerName: 'Source' }]
         })
     })
+
+    it('projects primitive and object valueOptions while preserving their submitted values', () => {
+        const savedInput = {
+            name: 'rules',
+            type: 'datagrid',
+            datagrid: [
+                { field: 'operation', type: 'singleSelect', valueOptions: ['Contains', 'Is Empty'] },
+                { field: 'variable', type: 'freeSolo', valueOptions: [{ value: '$flow.input', label: 'Input Question' }] }
+            ]
+        }
+        const currentComponent = {
+            name: 'loader',
+            inputs: [
+                {
+                    ...savedInput,
+                    datagrid: [
+                        {
+                            ...savedInput.datagrid[0],
+                            displayValueOptions: [
+                                { value: 'Contains', label: '包含' },
+                                { value: 'Is Empty', label: '为空' }
+                            ]
+                        },
+                        {
+                            ...savedInput.datagrid[1],
+                            valueOptions: [{ value: '$flow.input', label: 'Input Question', displayLabel: '输入问题' }]
+                        }
+                    ]
+                }
+            ]
+        }
+
+        const view = createDocStoreInputView(savedInput, currentComponent)
+
+        expect(view.datagrid[0].valueOptions).toEqual([
+            { value: 'Contains', label: '包含' },
+            { value: 'Is Empty', label: '为空' }
+        ])
+        expect(view.datagrid[1].valueOptions).toEqual([{ value: '$flow.input', label: '输入问题' }])
+        expect(savedInput.datagrid[0].valueOptions).toEqual(['Contains', 'Is Empty'])
+        expect(savedInput.datagrid[1].valueOptions).toEqual([{ value: '$flow.input', label: 'Input Question' }])
+    })
+
+    it('fails closed when primitive display options do not match saved machine values', () => {
+        const savedInput = {
+            name: 'rules',
+            type: 'datagrid',
+            datagrid: [{ field: 'operation', type: 'singleSelect', valueOptions: ['SAFE'] }]
+        }
+        const currentComponent = {
+            name: 'loader',
+            inputs: [
+                {
+                    ...savedInput,
+                    datagrid: [
+                        {
+                            ...savedInput.datagrid[0],
+                            displayValueOptions: [{ value: 'INJECTED', label: '伪造' }]
+                        }
+                    ]
+                }
+            ]
+        }
+
+        const view = createDocStoreInputView(savedInput, currentComponent)
+
+        expect(view.datagrid[0].valueOptions).toEqual([{ value: 'SAFE', label: 'SAFE' }])
+        expect(savedInput.datagrid[0].valueOptions).toEqual(['SAFE'])
+    })
+
+    it('fails closed when object display options do not match saved machine identity', () => {
+        const savedInput = {
+            name: 'rules',
+            type: 'datagrid',
+            datagrid: [
+                {
+                    field: 'variable',
+                    type: 'freeSolo',
+                    valueOptions: [{ value: '$flow.input', label: 'Input Question' }]
+                }
+            ]
+        }
+        const currentComponent = {
+            name: 'loader',
+            inputs: [
+                {
+                    ...savedInput,
+                    datagrid: [
+                        {
+                            ...savedInput.datagrid[0],
+                            valueOptions: [{ value: '$flow.other', label: 'Other Value', displayLabel: '其他值' }]
+                        }
+                    ]
+                }
+            ]
+        }
+
+        const view = createDocStoreInputView(savedInput, currentComponent)
+
+        expect(view.datagrid[0].valueOptions).toEqual([{ value: '$flow.input', label: 'Input Question' }])
+    })
 })

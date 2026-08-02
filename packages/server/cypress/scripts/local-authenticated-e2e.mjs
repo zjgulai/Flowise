@@ -10,7 +10,8 @@ export const APPROVED_SPECS = [
     'cypress/e2e/1-apikey/apikey.cy.js',
     'cypress/e2e/2-variables/variables.cy.js',
     'cypress/e2e/3-chatflows/chatflow-continuity.cy.js',
-    'cypress/e2e/4-pc-core/pc-core-continuity.cy.js'
+    'cypress/e2e/4-pc-core/pc-core-continuity.cy.js',
+    'cypress/e2e/5-ten-module-shell/ten-module-shell.cy.js'
 ]
 
 const STARTUP_TIMEOUT_MS = 120_000
@@ -259,8 +260,22 @@ export const isAllowedAutRequestUrl = (requestUrl, baseUrl) => {
         return false
     }
 
-    if (target.protocol !== 'http:' && target.protocol !== 'https:') return true
-    return target.origin === expected.origin
+    const guardedProtocolPairs = new Map([
+        ['http:', 'http:'],
+        ['https:', 'https:'],
+        ['ws:', 'http:'],
+        ['wss:', 'https:']
+    ])
+    const expectedBaseProtocol = guardedProtocolPairs.get(target.protocol)
+
+    if (!expectedBaseProtocol) return true
+    return (
+        expected.protocol === expectedBaseProtocol &&
+        !target.username &&
+        !target.password &&
+        target.hostname === expected.hostname &&
+        target.port === expected.port
+    )
 }
 
 export const enforceAutRequestPolicy = (request, baseUrl) => {
@@ -269,12 +284,31 @@ export const enforceAutRequestPolicy = (request, baseUrl) => {
     return false
 }
 
+export const createAutWebSocketGuard = (NativeWebSocket, baseUrl, isAllowedRequestUrl = isAllowedAutRequestUrl) =>
+    new Proxy(NativeWebSocket, {
+        construct(target, argumentsList, newTarget) {
+            if (!isAllowedRequestUrl(String(argumentsList[0]), baseUrl)) {
+                throw new Error('External WebSocket blocked by authenticated E2E network policy')
+            }
+            return Reflect.construct(target, argumentsList, newTarget)
+        }
+    })
+
 export const buildAutNetworkGuardSupportSource = ({ baseUrl, originalSupportFile }) => `
 import ${JSON.stringify(originalSupportFile)}
 
 const allowedAutOrigin = ${JSON.stringify(baseUrl)}
 const isAllowedAutRequestUrl = ${isAllowedAutRequestUrl.toString()}
 const enforceAutRequestPolicy = ${enforceAutRequestPolicy.toString()}
+const createAutWebSocketGuard = ${createAutWebSocketGuard.toString()}
+
+Cypress.on('window:before:load', (browserWindow) => {
+    const NativeWebSocket = browserWindow.WebSocket
+    if (typeof NativeWebSocket !== 'function') {
+        throw new Error('Authenticated E2E WebSocket guard is unavailable')
+    }
+    browserWindow.WebSocket = createAutWebSocketGuard(NativeWebSocket, allowedAutOrigin, isAllowedAutRequestUrl)
+})
 
 beforeEach(() => {
     cy.intercept({ url: '**', middleware: true }, (request) => {

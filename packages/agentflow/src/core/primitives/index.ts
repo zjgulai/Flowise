@@ -1,4 +1,5 @@
 // Domain-free utility functions safe for use in any layer (including atoms)
+export type { MetadataDisplayValueOption, MetadataDisplayView } from '../utils/metadataDisplay'
 export { createMetadataDisplayView, getMetadataDisplayText, getMetadataOptionSearchText } from '../utils/metadataDisplay'
 export { CustomMention } from './customMention'
 export { getDefaultValueForType } from './inputDefaults'

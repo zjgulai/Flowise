@@ -34,6 +34,7 @@ const PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH = fileURLToPath(new URL('./publish-veri
 const MAIN_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/main.yml', import.meta.url))
 const DOCKER_BUILD_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/test_docker_build.yml', import.meta.url))
 const DOCKERHUB_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-dockerhub.yml', import.meta.url))
+const ECR_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-ecr.yml', import.meta.url))
 const ROOT_DOCKERFILE_PATH = fileURLToPath(new URL('../Dockerfile', import.meta.url))
 const APK_BUILD_LOCK_PATH = fileURLToPath(new URL('../docker/apk-build.lock', import.meta.url))
 const APK_RUNTIME_LOCK_PATH = fileURLToPath(new URL('../docker/apk-runtime.lock', import.meta.url))
@@ -1736,6 +1737,8 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
     assert.ok(cypressStep, 'main CI must retain the Cypress test step')
     assert.match(cypressStep, /^ {18}ADMIN_ONLY_MODE: 'false'\s*$/m)
     assert.equal(workflow.match(/^\s+ADMIN_ONLY_MODE: 'false'\s*$/gm)?.length, 1)
+    assert.equal(workflow.match(/^\s+run:\s*pnpm metadata:i18n:validate:built\s*$/gm)?.length, 1)
+    assert.ok(workflow.indexOf('run: pnpm build') < workflow.indexOf('run: pnpm metadata:i18n:validate:built'))
 
     for (const workspace of ['agentflow', 'observe', 'components', 'server']) {
         const packageJsonPath = fileURLToPath(new URL(`../packages/${workspace}/package.json`, import.meta.url))
@@ -1811,6 +1814,12 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
         'persist-credentials: false',
         'git ls-files --error-unmatch',
         'pnpm audit --prod --audit-level high',
+        'pnpm metadata:i18n:validate',
+        'scripts/metadata-i18n/extract.mjs',
+        'scripts/metadata-i18n/fingerprint.mjs',
+        'scripts/metadata-i18n/fingerprint.test.mjs',
+        'scripts/metadata-i18n/validate.mjs',
+        'scripts/metadata-i18n/write-build-fingerprint.mjs',
         'bash scripts/verify-release-candidate.sh',
         'scripts/deployment-bundle.mjs',
         'scripts/flowise-production-release.py',
@@ -1915,6 +1924,12 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
         '[[ ${#TAG_VERSION} -le 128 ]]',
         '[[ "$TAG_VERSION" =~',
         'pnpm audit --prod --audit-level high',
+        'pnpm metadata:i18n:validate',
+        'scripts/metadata-i18n/extract.mjs',
+        'scripts/metadata-i18n/fingerprint.mjs',
+        'scripts/metadata-i18n/fingerprint.test.mjs',
+        'scripts/metadata-i18n/validate.mjs',
+        'scripts/metadata-i18n/write-build-fingerprint.mjs',
         'git ls-files --error-unmatch',
         'bash scripts/verify-release-candidate.sh',
         'git tag --format=',
@@ -1961,6 +1976,25 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
     assert.ok(workflow.indexOf('test "$actual_config_digest" = "$EXPECTED_IMAGE_CONFIG_DIGEST"') < workflow.indexOf('docker/login-action@'))
     assert.ok(workflow.indexOf('node scripts/verify-dockerhub-immutability.mjs') < workflow.indexOf('docker/login-action@'))
     assertExternalActionsAreCommitPinned(workflow, 'Docker Hub publishing workflow')
+})
+
+test('every build and publication workflow enforces the current component metadata receipt', () => {
+    const contracts = [
+        ['main CI', MAIN_WORKFLOW_PATH, 'pnpm metadata:i18n:validate:built', 'pnpm build'],
+        ['build-only Docker CI', DOCKER_BUILD_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile'],
+        ['Docker Hub publishing', DOCKERHUB_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile'],
+        ['ECR build-only CI', ECR_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile']
+    ]
+
+    for (const [label, workflowPath, metadataGate, prerequisite] of contracts) {
+        const workflow = readFileSync(workflowPath, 'utf8')
+        assert.equal(workflow.split(metadataGate).length - 1, 1, `${label} must run exactly one metadata gate`)
+        assert.ok(
+            workflow.indexOf(prerequisite) < workflow.indexOf(metadataGate),
+            `${label} must prepare the build before metadata validation`
+        )
+        assert.doesNotMatch(workflow, /metadata:i18n:validate[^\n]*(?:\|\||;\s*true)/)
+    }
 })
 
 test('workflow reproducibility contracts reject commented or removed active fields in their named build steps', () => {

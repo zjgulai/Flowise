@@ -14,13 +14,14 @@ import { Input } from '@/ui-component/input/Input'
 
 // const
 import { flowContext } from '@/store/context/ReactFlowContext'
+import { resolveStickyNoteInputView } from './stickyNoteMetadata'
 
 const StickyNote = ({ data }) => {
     const theme = useTheme()
     const canvas = useSelector((state) => state.canvas)
     const customization = useSelector((state) => state.customization)
-    const { deleteNode, duplicateNode } = useContext(flowContext)
-    const [inputParam] = data.inputParams
+    const { reactFlowInstance, deleteNode, duplicateNode } = useContext(flowContext)
+    const { inputParam, renderInputParam } = resolveStickyNoteInputView(data, canvas.componentNodes)
 
     const [open, setOpen] = useState(false)
 
@@ -108,7 +109,7 @@ const StickyNote = ({ data }) => {
                     <Box>
                         <Input
                             key={data.id}
-                            inputParam={inputParam}
+                            inputParam={renderInputParam}
                             onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
                             value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
                             nodes={inputParam?.acceptVariable && reactFlowInstance ? reactFlowInstance.getNodes() : []}

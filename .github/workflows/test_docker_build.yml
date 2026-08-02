@@ -50,6 +50,11 @@ jobs:
                       scripts/deployment-bundle.mjs \
                       scripts/deployment-bundle.test.mjs \
                       scripts/flowise-production-release.py \
+                      scripts/metadata-i18n/extract.mjs \
+                      scripts/metadata-i18n/fingerprint.mjs \
+                      scripts/metadata-i18n/fingerprint.test.mjs \
+                      scripts/metadata-i18n/validate.mjs \
+                      scripts/metadata-i18n/write-build-fingerprint.mjs \
                       scripts/release-manifest.mjs \
                       scripts/release-manifest.test.mjs \
                       scripts/test_flowise_production_release.py \
@@ -73,6 +78,7 @@ jobs:
                   test "$before" = "$after"
                   pnpm audit --prod --audit-level high
                   pnpm test:release
+                  pnpm metadata:i18n:validate
                   bash scripts/verify-release-source.sh
                   bash scripts/verify-security.sh
                   test -z "$(git status --porcelain --untracked-files=all)"

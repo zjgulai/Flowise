@@ -67,6 +67,7 @@ describe('authenticated PC core continuity', () => {
         'displayDeprecateMessage',
         'displayHeaderName',
         'displayHint',
+        'displayValueOptions',
         'displayLocale'
     ])
     const metadataContainers = new Set([
@@ -74,6 +75,7 @@ describe('authenticated PC core continuity', () => {
         'output',
         'outputs',
         'options',
+        'valueOptions',
         'tabs',
         'array',
         'datagrid',

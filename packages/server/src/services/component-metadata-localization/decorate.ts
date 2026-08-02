@@ -1,7 +1,13 @@
 import { cloneDeep } from 'lodash'
-import { ZH_CN_BADGES, ZH_CN_CATEGORIES, ZH_CN_DYNAMIC_POLICIES, ZH_CN_METADATA_TRANSLATIONS } from './catalog'
+import {
+    ZH_CN_BADGES,
+    ZH_CN_CATEGORIES,
+    ZH_CN_DYNAMIC_POLICIES,
+    ZH_CN_METADATA_SOURCE_TRANSLATIONS,
+    ZH_CN_METADATA_TRANSLATIONS
+} from './catalog'
 import type { DynamicMetadataPolicy } from './catalog'
-import { escapeMetadataPathSegment, metadataTranslationKey } from './key'
+import { escapeMetadataPathSegment, metadataSourceTranslationKey, metadataTranslationKey } from './key'
 
 type MetadataObject = Record<string, any>
 type MetadataKind = 'node' | 'credential'
@@ -21,16 +27,35 @@ const IDENTITY_FIELDS: Readonly<Record<string, readonly string[]>> = Object.free
     output: ['name'],
     outputs: ['name'],
     options: ['name'],
+    valueOptions: ['value', 'name', 'label'],
     tabs: ['name'],
     array: ['name'],
     datagrid: ['field', 'name', 'headerName']
 })
 
-const LOCALIZABLE_CONTAINERS = new Set(['inputs', 'output', 'outputs', 'options', 'tabs', 'array', 'datagrid', 'credential', 'hint'])
+const LOCALIZABLE_CONTAINERS = new Set([
+    'inputs',
+    'output',
+    'outputs',
+    'options',
+    'valueOptions',
+    'tabs',
+    'array',
+    'datagrid',
+    'credential',
+    'hint'
+])
 
-const itemIdentity = (container: string, item: MetadataObject, index: number): string => {
+const ownCatalogValue = (catalog: Readonly<Record<string, string>>, key: string): string | undefined =>
+    Object.prototype.hasOwnProperty.call(catalog, key) ? catalog[key] : undefined
+
+const itemIdentity = (container: string, item: unknown, index: number): string => {
+    if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+        return escapeMetadataPathSegment(item)
+    }
+    const record = item as MetadataObject
     for (const field of IDENTITY_FIELDS[container] ?? []) {
-        const value = item?.[field]
+        const value = record?.[field]
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
             return escapeMetadataPathSegment(value)
         }
@@ -40,7 +65,10 @@ const itemIdentity = (container: string, item: MetadataObject, index: number): s
 
 const translateField = (kind: MetadataKind, id: string, metadataPath: string, field: string, source: unknown): string | undefined => {
     if (typeof source !== 'string' || !source.trim()) return undefined
-    return ZH_CN_METADATA_TRANSLATIONS.get(metadataTranslationKey(kind, id, metadataPath, field, source))
+    return (
+        ZH_CN_METADATA_TRANSLATIONS.get(metadataTranslationKey(kind, id, metadataPath, field, source)) ??
+        ZH_CN_METADATA_SOURCE_TRANSLATIONS.get(metadataSourceTranslationKey(kind, field, source))
+    )
 }
 
 const decorateValue = (kind: MetadataKind, id: string, value: unknown, metadataPath: string, container = ''): unknown => {
@@ -63,6 +91,14 @@ const decorateValue = (kind: MetadataKind, id: string, value: unknown, metadataP
         if (!LOCALIZABLE_CONTAINERS.has(field) || !nestedValue || typeof nestedValue !== 'object') continue
         if (field === 'outputs' && !Array.isArray(nestedValue)) continue
         decorated[field] = decorateValue(kind, id, nestedValue, `${metadataPath}/${escapeMetadataPathSegment(field)}`, field)
+        if (field === 'valueOptions' && Array.isArray(nestedValue) && nestedValue.every((item) => typeof item === 'string')) {
+            const valueOptionsPath = `${metadataPath}/${escapeMetadataPathSegment(field)}`
+            decorated['displayValueOptions'] = nestedValue.map((option, index) => ({
+                value: option,
+                label:
+                    translateField(kind, id, `${valueOptionsPath}/${itemIdentity(field, option, index)}`, 'valueOption', option) ?? option
+            }))
+        }
     }
 
     return decorated
@@ -74,10 +110,12 @@ export const decorateNodeMetadata = <T extends MetadataObject>(node: T): T => {
     decorated['displayLocale'] = 'zh-CN'
     if (typeof source.category === 'string') {
         const [category, status] = source.category.split(';')
-        const displayCategory = ZH_CN_CATEGORIES[category] ?? category
+        const displayCategory = ownCatalogValue(ZH_CN_CATEGORIES, category) ?? category
         decorated['displayCategory'] = status ? `${displayCategory};${status}` : displayCategory
     }
-    if (typeof source.badge === 'string' && source.badge) decorated['displayBadge'] = ZH_CN_BADGES[source.badge] ?? source.badge
+    if (typeof source.badge === 'string' && source.badge) {
+        decorated['displayBadge'] = ownCatalogValue(ZH_CN_BADGES, source.badge) ?? source.badge
+    }
     return decorated as T
 }
 
@@ -100,13 +138,15 @@ export const getDynamicMetadataPolicy = (nodeName: string, methodName: string): 
 export const decorateDynamicOptions = <T extends MetadataObject>(nodeName: string, methodName: string, options: T[]): T[] => {
     const policy = getDynamicMetadataPolicy(nodeName, methodName)
     const clonedOptions = cloneDeep(options) as MetadataObject[]
-    if (!policy || policy === 'provider-passthrough' || policy === 'tenant-passthrough') return clonedOptions as T[]
+    if (!policy || policy === 'provider-passthrough' || policy === 'tenant-passthrough' || policy === 'unknown') {
+        return clonedOptions as T[]
+    }
 
     return clonedOptions.map((option, index) => {
         if (policy === 'metadata-ref' && typeof option.name === 'string' && typeof option.label === 'string') {
-            const referencedLabel = ZH_CN_METADATA_TRANSLATIONS.get(
-                metadataTranslationKey('node', option.name, 'root', 'label', option.label)
-            )
+            const referencedLabel =
+                ZH_CN_METADATA_TRANSLATIONS.get(metadataTranslationKey('node', option.name, 'root', 'label', option.label)) ??
+                ZH_CN_METADATA_SOURCE_TRANSLATIONS.get(metadataSourceTranslationKey('node', 'label', option.label))
             if (referencedLabel) option['displayLabel'] = referencedLabel
             return option
         }
@@ -116,7 +156,9 @@ export const decorateDynamicOptions = <T extends MetadataObject>(nodeName: strin
         for (const [field, displayField] of Object.entries(HUMAN_TEXT_FIELDS)) {
             const value = option[field]
             if (typeof value !== 'string' || !value.trim()) continue
-            const translation = ZH_CN_METADATA_TRANSLATIONS.get(metadataTranslationKey('dynamic', nodeName, metadataPath, field, value))
+            const translation =
+                ZH_CN_METADATA_TRANSLATIONS.get(metadataTranslationKey('dynamic', nodeName, metadataPath, field, value)) ??
+                ZH_CN_METADATA_SOURCE_TRANSLATIONS.get(metadataSourceTranslationKey('dynamic', field, value))
             if (translation) option[displayField] = translation
         }
         return option

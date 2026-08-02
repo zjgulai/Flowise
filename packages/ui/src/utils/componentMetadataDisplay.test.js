@@ -112,6 +112,79 @@ describe('component metadata display helpers', () => {
         expect(stripDisplayMetadata(runtime).outputs).toEqual(runtime.outputs)
     })
 
+    it('uses render-only value option labels while preserving submitted string and object values', () => {
+        const raw = {
+            name: 'condition',
+            datagrid: [
+                { field: 'operation', valueOptions: ['Contains', 'Is Empty'] },
+                { field: 'variable', valueOptions: [{ value: '$flow.input', label: 'Input Question' }] }
+            ]
+        }
+        const current = {
+            ...raw,
+            datagrid: [
+                {
+                    ...raw.datagrid[0],
+                    displayValueOptions: [
+                        { value: 'Contains', label: '包含' },
+                        { value: 'Is Empty', label: '为空' }
+                    ]
+                },
+                {
+                    ...raw.datagrid[1],
+                    valueOptions: [{ value: '$flow.input', label: 'Input Question', displayLabel: '输入问题' }]
+                }
+            ]
+        }
+
+        const view = createMetadataDisplayView(raw, current)
+
+        expect(view.datagrid[0].valueOptions).toEqual([
+            { value: 'Contains', label: '包含' },
+            { value: 'Is Empty', label: '为空' }
+        ])
+        expect(view.datagrid[1].valueOptions).toEqual([{ value: '$flow.input', label: '输入问题' }])
+        expect(stripDisplayMetadata(current)).toEqual(raw)
+        expect(raw.datagrid[0].valueOptions).toEqual(['Contains', 'Is Empty'])
+    })
+
+    it.each([
+        ['mismatch and extra', [{ value: 'INJECTED', label: '伪造' }], ['SAFE', 'SECOND']],
+        ['missing', [{ value: 'SAFE', label: '安全' }], ['安全', 'SECOND']],
+        [
+            'duplicate',
+            [
+                { value: 'SAFE', label: '安全' },
+                { value: 'SAFE', label: '伪造' },
+                { value: 'SECOND', label: '第二项' }
+            ],
+            ['SAFE', '第二项']
+        ],
+        [
+            'reordered',
+            [
+                { value: 'SECOND', label: '第二项' },
+                { value: 'SAFE', label: '安全' }
+            ],
+            ['安全', '第二项']
+        ],
+        [
+            'malformed',
+            [
+                { value: 'SAFE', label: { malicious: true } },
+                { value: 'SECOND', label: '' }
+            ],
+            ['SAFE', 'SECOND']
+        ]
+    ])('projects primitive value options from raw values for %s display metadata', (_case, displayValueOptions, labels) => {
+        const raw = { valueOptions: ['SAFE', 'SECOND'] }
+        const current = { ...raw, displayValueOptions }
+        const view = createMetadataDisplayView(raw, current)
+
+        expect(view.valueOptions.map(({ value }) => value)).toEqual(raw.valueOptions)
+        expect(view.valueOptions.map(({ label }) => label)).toEqual(labels)
+    })
+
     it('preserves string and mixed machine options without object coercion', () => {
         const rawOptions = ['plain-machine-option', { name: 'auto', label: 'Automatic' }]
         const localized = localizeOptionViews(rawOptions, [
@@ -121,6 +194,37 @@ describe('component metadata display helpers', () => {
 
         expect(localized).toEqual(['plain-machine-option', { name: 'auto', label: '自动', description: undefined }])
         expect(rawOptions).toEqual(['plain-machine-option', { name: 'auto', label: 'Automatic' }])
+    })
+
+    it('binds object option labels only by stable machine identity', () => {
+        const raw = {
+            valueOptions: [
+                { value: 'SAFE', label: 'Safe label' },
+                { value: 'SECOND', label: 'Second label' }
+            ]
+        }
+        const reordered = {
+            valueOptions: [
+                { value: 'SECOND', label: 'Second label', displayLabel: '第二项' },
+                { value: 'SAFE', label: 'Safe label', displayLabel: '安全' }
+            ]
+        }
+        const mismatched = {
+            valueOptions: [{ value: 'OTHER', label: 'Other label', displayLabel: '其他值' }]
+        }
+        const duplicated = {
+            valueOptions: [
+                { value: 'SAFE', label: 'Safe label', displayLabel: '安全' },
+                { value: 'SAFE', label: 'Safe label', displayLabel: '伪造' }
+            ]
+        }
+
+        expect(createMetadataDisplayView(raw, reordered).valueOptions).toEqual([
+            { value: 'SAFE', label: '安全' },
+            { value: 'SECOND', label: '第二项' }
+        ])
+        expect(createMetadataDisplayView(raw, mismatched).valueOptions).toEqual(raw.valueOptions)
+        expect(createMetadataDisplayView(raw, duplicated).valueOptions).toEqual(raw.valueOptions)
     })
 
     it('translates only system default instance labels', () => {
@@ -209,6 +313,29 @@ describe('component metadata display helpers', () => {
         expect(view.show).toEqual(rawParam.show)
         expect(view.displayLabel).toBeUndefined()
         expect(rawParam.label).toBe('Messages')
+    })
+
+    it('preserves prototype-named own keys across display, strip, and flow persistence views', () => {
+        const runtime = JSON.parse(
+            '{"__proto__":{"polluted":"runtime"},"constructor":"runtime-constructor","prototype":"runtime-prototype","safe":1}'
+        )
+        const metadata = { name: 'payload', default: runtime }
+        const flowData = { nodes: [{ id: 'node-0', data: { name: 'payloadNode', inputs: { payload: runtime } } }], edges: [] }
+
+        const roundTrips = [
+            createMetadataDisplayView(metadata).default,
+            stripDisplayMetadata(metadata).default,
+            sanitizeFlowDisplayMetadata(flowData).nodes[0].data.inputs.payload
+        ]
+
+        for (const roundTrip of roundTrips) {
+            expect(JSON.stringify(roundTrip)).toBe(JSON.stringify(runtime))
+            expect(Object.prototype.hasOwnProperty.call(roundTrip, '__proto__')).toBe(true)
+            expect(Object.prototype.hasOwnProperty.call(roundTrip, 'constructor')).toBe(true)
+            expect(Object.prototype.hasOwnProperty.call(roundTrip, 'prototype')).toBe(true)
+            expect(Object.getPrototypeOf(roundTrip)).toBe(Object.prototype)
+            expect(roundTrip.polluted).toBeUndefined()
+        }
     })
 
     it('recursively strips display metadata from persistence payloads', () => {

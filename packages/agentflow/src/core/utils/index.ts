@@ -17,6 +17,7 @@ export { getDefinedStateKeys, getUpstreamNodes } from './variableUtils'
 export { getNodeVersionWarning, isNodeOutdated, upgradeNodeData } from './nodeVersionUtils'
 
 // Additive localized display metadata. Raw machine fields remain authoritative.
+export type { MetadataDisplayValueOption, MetadataDisplayView } from './metadataDisplay'
 export {
     createMetadataDisplayView,
     emitSanitizedFlowChange,

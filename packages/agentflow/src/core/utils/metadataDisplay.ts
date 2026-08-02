@@ -18,6 +18,7 @@ const METADATA_CONTAINERS = new Set([
     'output',
     'outputs',
     'options',
+    'valueOptions',
     'tabs',
     'array',
     'datagrid',
@@ -25,15 +26,48 @@ const METADATA_CONTAINERS = new Set([
     'hint',
     ...PERSISTED_NODE_METADATA_CONTAINERS
 ])
-const DISPLAY_METADATA_FIELDS = new Set<string>([...Object.values(DISPLAY_FIELD_BY_RAW), 'displayLocale'])
+const DISPLAY_METADATA_FIELDS = new Set<string>([...Object.values(DISPLAY_FIELD_BY_RAW), 'displayLocale', 'displayValueOptions'])
 
 type DisplaySource = object | null | undefined
 type DisplayField = keyof typeof DISPLAY_FIELD_BY_RAW
 type RawDisplayMetadata = Partial<Record<DisplayField, string>>
 
+export interface MetadataDisplayValueOption {
+    value: string
+    label: string
+}
+
+type DisplayValueOptions<T> = T extends readonly string[] ? MetadataDisplayView<T> | MetadataDisplayValueOption[] : MetadataDisplayView<T>
+
+export type MetadataDisplayView<T> = T extends readonly unknown[]
+    ? { [K in keyof T]: MetadataDisplayView<T[K]> }
+    : T extends object
+    ? { [K in keyof T]: K extends 'valueOptions' ? DisplayValueOptions<T[K]> : MetadataDisplayView<T[K]> }
+    : T
+
 // Render-only display views need both localized text and the original English text for
 // bilingual search. A WeakMap keeps that original text outside enumeration and JSON.
 const RAW_DISPLAY_METADATA = new WeakMap<object, RawDisplayMetadata>()
+
+function setOwnEnumerable(target: Record<string, unknown>, key: string, value: unknown): void {
+    Object.defineProperty(target, key, {
+        value,
+        enumerable: true,
+        configurable: true,
+        writable: true
+    })
+}
+
+function projectPrimitiveValueOptions(rawOptions: string[], displayOptions: unknown[]): MetadataDisplayValueOption[] {
+    return rawOptions.map((rawValue) => {
+        const matches = displayOptions.filter(
+            (candidate): candidate is Record<string, unknown> =>
+                !!candidate && typeof candidate === 'object' && (candidate as Record<string, unknown>).value === rawValue
+        )
+        const candidateLabel = matches.length === 1 ? matches[0].label : undefined
+        return { value: rawValue, label: typeof candidateLabel === 'string' && candidateLabel ? candidateLabel : rawValue }
+    })
+}
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -93,27 +127,37 @@ export function resolveInstanceDisplayLabel(savedNodeData: Pick<NodeData, 'label
 }
 
 /** Build an ephemeral render-only view whose human fields use their display counterparts. */
-export function createMetadataDisplayView<T>(value: T): T {
-    if (Array.isArray(value)) return value.map((item) => createMetadataDisplayView(item)) as T
-    if (!value || typeof value !== 'object') return value
+export function createMetadataDisplayView<T>(value: T): MetadataDisplayView<T> {
+    if (Array.isArray(value)) return value.map((item) => createMetadataDisplayView(item)) as MetadataDisplayView<T>
+    if (!value || typeof value !== 'object') return value as MetadataDisplayView<T>
 
     const inheritedRawMetadata = RAW_DISPLAY_METADATA.get(value)
+    const sourceRecord = value as Record<string, unknown>
     const view: Record<string, unknown> = {}
     for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+        if (
+            key === 'valueOptions' &&
+            Array.isArray(nestedValue) &&
+            nestedValue.every((option): option is string => typeof option === 'string') &&
+            Array.isArray(sourceRecord.displayValueOptions)
+        ) {
+            setOwnEnumerable(view, key, projectPrimitiveValueOptions(nestedValue, sourceRecord.displayValueOptions))
+            continue
+        }
         const isMetadataContainer = METADATA_CONTAINERS.has(key) && (key !== 'outputs' || Array.isArray(nestedValue))
-        view[key] = isMetadataContainer ? createMetadataDisplayView(nestedValue) : clonePreservingRuntimeData(nestedValue)
+        setOwnEnumerable(view, key, isMetadataContainer ? createMetadataDisplayView(nestedValue) : clonePreservingRuntimeData(nestedValue))
     }
     const rawMetadata: RawDisplayMetadata = {}
     for (const [rawField, displayField] of Object.entries(DISPLAY_FIELD_BY_RAW) as [DisplayField, string][]) {
         const displayValue = view[displayField]
         if (typeof displayValue === 'string' && displayValue) {
             const rawValue = inheritedRawMetadata?.[rawField] ?? view[rawField]
-            if (typeof rawValue === 'string' && rawValue) rawMetadata[rawField] = rawValue
-            view[rawField] = displayValue
+            if (typeof rawValue === 'string' && rawValue) setOwnEnumerable(rawMetadata, rawField, rawValue)
+            setOwnEnumerable(view, rawField, displayValue)
         }
     }
     if (Object.keys(rawMetadata).length > 0) RAW_DISPLAY_METADATA.set(view, rawMetadata)
-    return view as T
+    return view as MetadataDisplayView<T>
 }
 
 function clonePreservingRuntimeData<T>(value: T): T {
@@ -122,7 +166,7 @@ function clonePreservingRuntimeData<T>(value: T): T {
 
     const cloned: Record<string, unknown> = {}
     for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
-        cloned[key] = clonePreservingRuntimeData(nestedValue)
+        setOwnEnumerable(cloned, key, clonePreservingRuntimeData(nestedValue))
     }
     return cloned as T
 }
@@ -135,7 +179,7 @@ function stripMetadataObject<T>(value: T): T {
     for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
         if (DISPLAY_METADATA_FIELDS.has(key)) continue
         const isMetadataContainer = METADATA_CONTAINERS.has(key) && (key !== 'outputs' || Array.isArray(nestedValue))
-        sanitized[key] = isMetadataContainer ? stripMetadataObject(nestedValue) : clonePreservingRuntimeData(nestedValue)
+        setOwnEnumerable(sanitized, key, isMetadataContainer ? stripMetadataObject(nestedValue) : clonePreservingRuntimeData(nestedValue))
     }
     return sanitized as T
 }
@@ -152,7 +196,7 @@ function sanitizePersistedNodeData<T>(nodeData: T): T {
     for (const [key, nestedValue] of Object.entries(nodeData as Record<string, unknown>)) {
         if (DISPLAY_METADATA_FIELDS.has(key)) continue
         const isPersistedMetadata = PERSISTED_NODE_METADATA_CONTAINERS.has(key) || (key === 'outputs' && Array.isArray(nestedValue))
-        sanitized[key] = isPersistedMetadata ? stripMetadataObject(nestedValue) : clonePreservingRuntimeData(nestedValue)
+        setOwnEnumerable(sanitized, key, isPersistedMetadata ? stripMetadataObject(nestedValue) : clonePreservingRuntimeData(nestedValue))
     }
     return sanitized as T
 }

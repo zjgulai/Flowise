@@ -44,6 +44,8 @@ jobs:
             - run: pnpm build
               env:
                   NODE_OPTIONS: '--max_old_space_size=4096'
+            - name: Validate complete localized component metadata against the fresh build
+              run: pnpm metadata:i18n:validate:built
             - name: Run coverage serially within hosted-runner memory limits
               run: pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand
             - name: Enforce the G1 Chinese copy gate
