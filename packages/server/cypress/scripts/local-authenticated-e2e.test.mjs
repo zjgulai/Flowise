@@ -411,6 +411,7 @@ describe('isolated Chrome launch contract', () => {
         ]
         const mergedArguments = cypressConfigModule.mergeChromiumIsolationArguments(launchArguments)
         const expectedDisabledFeatures = [
+            'AutofillServerCommunication',
             'CypressFeature',
             'MediaRouter',
             'OptimizationHints',

@@ -11,7 +11,14 @@ const disableFeaturesPrefix = '--disable-features='
 const forbiddenChromiumArgumentPrefixes = ['--disable-web-security', '--host-resolver-rules']
 const removedChromiumArgumentPrefixes = ['--no-sandbox']
 const requiredChromiumArguments = ['--disable-background-networking', '--disable-domain-reliability']
-const requiredDisabledChromiumFeatures = ['MediaRouter', 'OptimizationHints', 'PrivacySandboxSettings4', 'Translate', 'TranslateUI']
+const requiredDisabledChromiumFeatures = [
+    'AutofillServerCommunication',
+    'MediaRouter',
+    'OptimizationHints',
+    'PrivacySandboxSettings4',
+    'Translate',
+    'TranslateUI'
+]
 
 export const mergeChromiumIsolationArguments = (args: string[]) => {
     const disabledFeatures = new Set(requiredDisabledChromiumFeatures)
