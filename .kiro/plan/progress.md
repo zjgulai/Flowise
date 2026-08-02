@@ -215,3 +215,16 @@ date: 2026-07-10
 -   G1-E 本地候选判定为 `GO`；该结论只覆盖上述精确提交，不等同于远端 CI、镜像、生产部署或历史安全事件关账。首次提交尝试因 shell 使用 Node 22 被 engine 门禁拒绝，切换到仓库要求的 Node 24.18.0 后预提交格式化与 ESLint 门禁通过并完成提交。
 -   当前仍有 296 个非 Agentflow 节点和 71 个动态方法未进入中文 catalog；该候选只关闭 G1-E，不等于完整全中文。历史 Provider 凭据仍缺 owner/provider 侧吊销／轮换、使用与账单、暴露面回执，production promotion 继续 NO-GO。
 -   本批边界保持：`production_write=false`、`provider_call=false`、`production_secrets_read=false`、`push=false`、`merge=false`、`image_build=false`、`deploy=false`；浏览器截图随隔离临时目录清理，不作为 Playbook 正式截图。
+
+# 2026-08-02 G1-F 全量 metadata 与 PC 浏览器候选闭环
+
+-   全量确定性中文 catalog 已覆盖 311/311 节点与 114/114 凭据：节点 metadata 6,210 条、exact 914 条、context override 4 条、source translation 2,884 条、primitive value-option 48 条；Agentflow 910 条、凭据 487 条。91 个动态方法全部分流为 system 51、tenant passthrough 24、provider passthrough 16，unknown 为 0，动态描述 137 条。
+-   validator 绑定源文件摘要、基线计数与摘要、import identity、Map composition、TypeScript 语法、catalog collision、覆盖率和新鲜 build receipt；当前 receipt 绑定 576 个输入文件，source SHA-256 为 `bede9a5400cd76df16c7fc2cabe17cb291818601ce076d247df0afbba5525381`。等量策略交换、漏 spread、Map 改 Set、错误 import alias、语法错误、collision、基线漂移及 receipt 缺失／过期均已在临时副本中验证 fail closed。
+-   最终复审发现主 Canvas 与 UI Agentflow V2 的 Sticky Note 是绕过通用 `NodeInputHandler` 的特殊渲染器；现统一从当前 component registry 生成 render-only input view，中文占位符只进入渲染，机器键、默认值、用户值和保存 schema 继续使用 raw input。旧流程伪造的 `displayPlaceholder` 会被剥离，registry 缺失时回退原始英文；legacy `reactFlowInstance` 未解构问题同步修复。
+-   最终本地自动化：UI 21 suites／267 tests；便签与 metadata 定向 UI 32/32、server 17/17、Agentflow 28/28、runner 26/26；metadata fingerprint 2/2；静态安全 341/341；release Node 76/76 ＋ Python 138/138；全量 ESLint exit 0（0 error、8 个既有 warning）；UI production build 21,205 modules，通过。既有 Agentflow/server/components 全量构建与相关全套测试证据保持通过。
+-   聚焦 Chatflow Chrome run `21ba67cd-84ec-45ac-89a1-0711f9493c2c` 为 1/1，通过中文便签、保存、重开、复制与删除，并由 API/SQLite 断言保存态仍为英文 raw placeholder 且不存在 `displayPlaceholder`；cleanup complete。
+-   完整隔离 Chrome run `23068177-1b5b-47da-b00e-596797d96683` 在 Chrome 150／Node 24.18.0 上完成 5 specs、7/7 tests、43 秒、exit 0：API Key、Variable、Chatflow、PC core 和 10 个生产主模块壳层全部通过，最终 `phase=cleanup status=complete`。运行截图随临时目录清理，仅保留 run ID 与终端回执，不冒充 Playbook 正式截图。
+-   代码审查对 exact 45-path 候选报告所有 severity 0；安全审查报告候选 Critical/High/Medium 0、LOW 1。唯一 LOW 是 runner 只能证明外部 HTTP(S)／WS(S) 隔离，不能宣称 OS 级全协议隔离，不阻断本次 approved synthetic specs。
+-   候选二进制 diff SHA-256 `fafdeef3f5e64b3b0fd2173ac8945e7dce721fc94744529c44dcb5abf11ff5b5`，unstaged/unmerged 均为 0；原子提交 `0f6354aeba2578be7f1bf0a8158988cbbfe4488c` 后从 `HEAD^..HEAD` 复算仍为 45 paths 和同一哈希。
+-   本地 G1-F candidate 判定为 GO；production promotion 继续 NO-GO。未完成项为 Firefox、exact commit 的 push/远端 CI、不可变 `linux/amd64` image 与 registry 证据、历史 Provider 凭据撤销／轮换及账单／制品清除回执、备份／回滚、生产 cutover 与部署后双浏览器验收。
+-   本批边界：`production_write=false`、`provider_call=false`、`production_secrets_read=false`、`push=false`、`merge=false`、`image_build=false`、`registry_write=false`、`deploy=false`；原 dirty checkout `/Users/pray/project/FlowAgentic/flowise` 未修改。

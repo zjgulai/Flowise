@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改与生产验收执行计划
 date: 2026-07-10
-last_updated: 2026-08-01
+last_updated: 2026-08-02
 status: in_progress
 evidence_model: L0-L4
 ---
@@ -359,7 +359,8 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 
 ## Gate G1-F：剩余 metadata 与发布前门禁（下一批）
 
--   [ ] 按 PC 使用频率依次覆盖 Chat Models、Document Loaders、Vector Stores、Tools 等剩余 296 个节点，并用同一 source-hash catalog validator 拒绝漏项和上游漂移。
--   [ ] 对全局 91 个动态方法完成策略盘点；保留本批 20 个精确策略，并为其余 71 个方法显式声明系统目录、Provider 透传或租户透传边界。
--   [ ] 若下一批需要把隔离 E2E runner 声明为“所有网络协议完全断网”，先显式阻断 `ws:`/`wss:` 并补合同测试；否则继续把现有边界准确表述为外部 HTTP(S) 阻断。
--   [ ] 在同版本隔离环境完成 Chrome／Firefox 的 10 个主页面 PC 验收；只有新精确 SHA、远端 CI、不可变镜像和历史凭据关账回执齐备后，才允许进入生产候选门禁。
+-   [x] 已覆盖全部 311 个节点，并用 source-hash、基线摘要、导入绑定、Map 组合与新鲜构建 receipt 的 validator 拒绝漏项、冲突和上游漂移；不可达记录与构造失败均为 0。
+-   [x] 已对全局 91 个动态方法完成显式策略盘点：系统目录 51、租户透传 24、Provider 透传 16、未知 0；动态描述 137 条。
+-   [x] 隔离 E2E runner 已对精确 AUT 的 HTTP(S)／WS(S) 建立 allowlist 并阻断外部端点；该证据不等同于 OS 级或所有协议完全断网，后续不得扩大表述。
+-   [!] Chrome 150／Node 24.18.0 的 10 个主模块 PC 壳层及关键 CRUD 主链已通过 5 specs／7 tests；Firefox、本提交远端 CI、不可变 `linux/amd64` 镜像、历史 Provider 凭据关账、备份／回滚和生产部署验收仍是独立阻断门禁。
+-   [x] 精确 45 路径候选的二进制 diff SHA-256 为 `fafdeef3f5e64b3b0fd2173ac8945e7dce721fc94744529c44dcb5abf11ff5b5`，经代码、安全和候选验证三条独立 lane 同意本地 GO，并原子提交为 `0f6354aeba2578be7f1bf0a8158988cbbfe4488c`；未 push、merge、构建镜像或部署。

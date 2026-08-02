@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改发现记录
 date: 2026-07-10
-last_updated: 2026-07-12
+last_updated: 2026-08-02
 ---
 
 # 当前证据矩阵
@@ -259,3 +259,14 @@ last_updated: 2026-07-12
 -   本地真实浏览器 `/signin` 正常渲染，console 0 error/0 warning，`ReportingObserver` 捕获 `type=csp-violation`、`directive=script-src`、`disposition=report`。浏览器后台自动 POST 在本地 HTTP fixture 未观测到，因此只证明 violation 生成与手工 endpoint 合约，不声明 telemetry delivery 已验收。
 -   build scan 在 4 个 chunk 中发现 8 处 `Function("return this")`，另有 1 处 regenerator fallback；这是 `no-eval` enforcement 的实测 blocker。生产必须先以 `compat` enforcement + `no-eval` report-only 观察认证后 lazy workflows，再决定根因移除和逐级晋级。
 -   本地浏览器证据保存于 `output/playwright/batch6b-csp-local/`。边界：`production unchanged`、`provider_call=false`、`secrets_read=false`、`production_write=false`。
+
+# 2026-08-02 G1-F 对抗性发现
+
+-   “节点数覆盖”不足以证明 catalog 完整：相同总数下可通过等量替换隐藏漏项，简单正则也无法证明 import alias 和 Map 合并关系。最终门禁同时绑定 record-key digest、源摘要、基线摘要、AST/import identity、Map composition、collision 和 fresh build receipt，才能对同计数漂移 fail closed。
+-   311 个节点的静态 catalog 不能覆盖动态 `loadMethods`。对全部 91 个动态方法逐一声明 system、tenant passthrough 或 provider passthrough 后，validator 才能把 unknown 降为 0；Provider/租户透传是明确边界，不是声称第三方返回内容已中文化。
+-   Sticky Note 是通用节点渲染链之外的特殊组件，因此通用 `displayPlaceholder` 投影全绿仍可能在真实画布残留英文。两个特殊渲染器必须使用 current registry 生成的 render-only view，同时让 onChange、value/default 和持久化 schema 继续锚定 saved raw input；浏览器保存／重开／复制和 SQLite 回读证明该隔离成立。
+-   保存态 `display*` 属于不可信展示数据：当前 registry 存在时不能被旧流程覆盖，registry 缺失时也必须先剥离该字段再回退 raw。测试同时覆盖 `stickyNote`、`stickyNoteAgentflow`、对象引用与用户值不变、伪造字段剥离及缺失 registry。
+-   浏览器 runner 的网络合同现在精确覆盖同源 HTTP(S) 与 WS(S)，并阻断外部对应协议；其他未枚举协议仍由浏览器原生处理。因此准确结论是 approved specs 的外部 HTTP(S)/WS(S) 隔离，而不是 OS 级或所有协议完全断网。
+-   10 模块只读导航和关键 CRUD Chrome 回归均通过，但 Firefox 在本机缺失；本地 Chrome 不能替代跨浏览器、远端 CI、不可变镜像或生产证据。临时截图被 runner 清理，正式 Playbook 采图仍须等待 exact 中文版本在同版本隔离培训环境完成。
+-   当前树和本候选未发现新增 secret；但 Git 历史中的既知 Provider 凭据事件尚无所有者／Provider 侧撤销轮换、异常使用与账单核查、制品副本清理回执。代码扫描为 0 不能关闭外部安全事件，故 production promotion 保持 NO-GO。
+-   G1-F 关闭的是本地 source/UI/browser candidate，不授权 push、merge、registry、Docker、Provider 或生产。下一正确门禁是 exact commit 的远端 CI 与 Firefox 验收；只有历史凭据关账和不可变镜像、备份回滚证据同时完备后，才能提出生产 cutover 候选。
