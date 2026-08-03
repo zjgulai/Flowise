@@ -1,22 +1,24 @@
 import { createPortal } from 'react-dom'
 import PropTypes from 'prop-types'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useId, useRef } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackbarAction } from '@/store/actions'
 import { v4 as uuidv4 } from 'uuid'
 
 import {
     Chip,
+    Alert,
+    AlertTitle,
     Card,
     CardContent,
     Box,
     Typography,
     Button,
-    IconButton,
     Dialog,
     DialogActions,
     DialogContent,
     DialogTitle,
+    Link,
     Stack,
     OutlinedInput
 } from '@mui/material'
@@ -25,23 +27,39 @@ import { TooltipWithParser } from '@/ui-component/tooltip/TooltipWithParser'
 import { Dropdown } from '@/ui-component/dropdown/Dropdown'
 import { MultiDropdown } from '@/ui-component/dropdown/MultiDropdown'
 import CredentialInputHandler from '@/views/canvas/CredentialInputHandler'
-import { File } from '@/ui-component/file/File'
 import { BackdropLoader } from '@/ui-component/loading/BackdropLoader'
 import DeleteConfirmDialog from './DeleteConfirmDialog'
 import AssistantVectorStoreDialog from './AssistantVectorStoreDialog'
-import { StyledPermissionButton } from '@/ui-component/button/RBACButtons'
+import {
+    createAssistantScopeKey,
+    hasProviderBoundAssistantState,
+    INVALID_ASSISTANT_MUTATION_RESPONSE_MESSAGE,
+    INVALID_ASSISTANT_RESOURCE_MESSAGE,
+    isAssistantOperationCurrent,
+    MAX_ASSISTANT_DESCRIPTION_LENGTH,
+    MAX_ASSISTANT_INSTRUCTIONS_LENGTH,
+    MAX_ASSISTANT_NAME_LENGTH,
+    parseAssistantDetails,
+    parseAssistantSamplingParams,
+    parseAssistantToolResources,
+    parseStoredAssistantResource,
+    removeCodeInterpreterFile,
+    validateAssistantDeletionResponse,
+    validateAssistantMutationResponse,
+    validateAssistantTextFields
+} from './assistantResourceState'
+import { PermissionIconButton, StyledPermissionButton } from '@/ui-component/button/RBACButtons'
 
 // Icons
 import { IconX, IconPlus } from '@tabler/icons-react'
 
 // API
 import assistantsApi from '@/api/assistants'
-
-// Hooks
-import useApi from '@/hooks/useApi'
+import client from '@/api/client'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { useAuth } from '@/hooks/useAuth'
 import { getErrorMessage } from '@/utils/getErrorMessage'
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 import { maxScroll } from '@/store/constant'
@@ -117,14 +135,28 @@ const assistantAvailableModels = [
     }
 ]
 
-const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
+const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     const portalElement = document.getElementById('portal')
     useNotifier()
     const dispatch = useDispatch()
     const enqueueSnackbar = (...args) => dispatch(enqueueSnackbarAction(...args))
     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
     const customization = useSelector((state) => state.customization)
+    const { hasPermission } = useAuth()
+    const dialogId = `openai-assistant-${useId()}`
+    const titleId = `${dialogId}-title`
+    const contentId = `${dialogId}-content`
     const dialogRef = useRef()
+    const assistantScopeRef = useRef(null)
+    const assistantScopeGenerationRef = useRef(0)
+    const currentRequestedScopeKeyRef = useRef('')
+    const currentShowRef = useRef(show)
+    const operationGenerationRef = useRef(0)
+    const operationInFlightRef = useRef(false)
+    const operationAbortControllerRef = useRef(null)
+    const vectorStoreGenerationRef = useRef(0)
+    const assistantVectorStoreDialogOpenRef = useRef(false)
+    const loadAbortControllerRef = useRef(null)
 
     // Sanitize image URL to prevent XSS attacks via javascript:, data:, or blob: schemes
     const sanitizeImageUrl = (url) => {
@@ -145,11 +177,6 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
         return fallbackUrl
     }
 
-    const getSpecificAssistantApi = useApi(assistantsApi.getSpecificAssistant)
-    const getAssistantObjApi = useApi(assistantsApi.getAssistantObj)
-
-    const [assistantId, setAssistantId] = useState('')
-    const [openAIAssistantId, setOpenAIAssistantId] = useState('')
     const [assistantName, setAssistantName] = useState('')
     const [assistantDesc, setAssistantDesc] = useState('')
     const [assistantIcon, setAssistantIcon] = useState(`https://api.dicebear.com/7.x/bottts/svg?seed=${uuidv4()}`)
@@ -160,13 +187,228 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
     const [toolResources, setToolResources] = useState({})
     const [temperature, setTemperature] = useState(1)
     const [topP, setTopP] = useState(1)
-    const [uploadCodeInterpreterFiles, setUploadCodeInterpreterFiles] = useState('')
-    const [uploadVectorStoreFiles, setUploadVectorStoreFiles] = useState('')
     const [loading, setLoading] = useState(false)
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
     const [deleteDialogProps, setDeleteDialogProps] = useState({})
     const [assistantVectorStoreDialogOpen, setAssistantVectorStoreDialogOpen] = useState(false)
     const [assistantVectorStoreDialogProps, setAssistantVectorStoreDialogProps] = useState({})
+    const [assistantResourceValid, setAssistantResourceValid] = useState(false)
+    const assistantIdRef = useRef('')
+    const openAIAssistantIdRef = useRef('')
+    const assistantCredentialRef = useRef('')
+    const toolResourcesRef = useRef({})
+    const requestedAssistantScopeId =
+        dialogProps.data?.id ||
+        dialogProps.assistantId ||
+        dialogProps.selectedOpenAIAssistantId ||
+        (dialogProps.type === 'ADD' ? 'new' : '')
+    const requestedAssistantScopeKey = createAssistantScopeKey([
+        show,
+        dialogProps.type,
+        requestedAssistantScopeId,
+        dialogProps.data?.details ?? '',
+        dialogProps.data?.credential ?? dialogProps.credential ?? '',
+        typeof dialogProps.data?.iconSrc,
+        dialogProps.data?.iconSrc ?? ''
+    ])
+    currentRequestedScopeKeyRef.current = requestedAssistantScopeKey
+    currentShowRef.current = show
+    const isCommittedResource = assistantScopeRef.current?.key === requestedAssistantScopeKey
+    const isValidResource = assistantResourceValid && isCommittedResource
+    const openAIAssistantCreationDisabled = dialogProps.type === 'ADD'
+    const mutationPermissionId = dialogProps.type === 'ADD' ? 'assistants:create' : 'assistants:update'
+    const hasMutationPermission = hasPermission(mutationPermissionId)
+    const resourceBusyOrInvalid = !isValidResource || loading
+    const resourceControlsDisabled = resourceBusyOrInvalid || openAIAssistantCreationDisabled || !hasMutationPermission
+    const canMutateResource = isValidResource && !loading && !openAIAssistantCreationDisabled && hasMutationPermission
+    const samplingParams = parseAssistantSamplingParams({ temperature, topP })
+    const textFieldsValid = validateAssistantTextFields({
+        name: assistantName,
+        description: assistantDesc,
+        instructions: assistantInstructions
+    })
+    const credentialLocked = hasProviderBoundAssistantState({
+        openAIAssistantId: openAIAssistantIdRef.current,
+        toolResources: toolResourcesRef.current
+    })
+    const assistantModelOptions =
+        assistantModel && !assistantAvailableModels.some((model) => model.name === assistantModel)
+            ? [...assistantAvailableModels, { label: `${assistantModel}（现有模型）`, name: assistantModel }]
+            : assistantAvailableModels
+    const associatedVectorStoreId = toolResources?.file_search?.vector_store_ids?.[0] ?? ''
+    const associatedVectorStoreObject = toolResources?.file_search?.vector_store_object
+    const associatedVectorStoreLabel =
+        associatedVectorStoreId && associatedVectorStoreObject?.id === associatedVectorStoreId
+            ? associatedVectorStoreObject.name || associatedVectorStoreObject.id
+            : associatedVectorStoreId
+
+    const isAssistantScopeCurrent = (candidateScope) => assistantScopeRef.current === candidateScope
+    const isVectorStoreGenerationCurrent = (generation) => vectorStoreGenerationRef.current === generation
+
+    const commitAssistantId = (value) => {
+        assistantIdRef.current = value
+    }
+
+    const commitOpenAIAssistantId = (value) => {
+        openAIAssistantIdRef.current = value
+    }
+
+    const commitAssistantCredential = (value) => {
+        assistantCredentialRef.current = value
+        operationAbortControllerRef.current?.abort()
+        operationAbortControllerRef.current = null
+        operationGenerationRef.current += 1
+        operationInFlightRef.current = false
+        setLoading(false)
+        setAssistantCredential(value)
+    }
+
+    const handleAssistantCredentialSelect = (value) => {
+        if (value === assistantCredentialRef.current) return
+        if (
+            hasProviderBoundAssistantState({
+                openAIAssistantId: openAIAssistantIdRef.current,
+                toolResources: toolResourcesRef.current
+            })
+        ) {
+            enqueueSnackbar({
+                message: '当前助手已关联 OpenAI 端资源，只能在原凭据下维护。请迁移到自定义助手或 OpenAI 响应 API。',
+                options: { variant: 'error' }
+            })
+            return
+        }
+        commitAssistantCredential(value)
+    }
+
+    const commitToolResources = (value) => {
+        toolResourcesRef.current = value
+        setToolResources(value)
+    }
+
+    const beginOperation = () => {
+        if (operationInFlightRef.current) return null
+        operationAbortControllerRef.current?.abort()
+        const abortController = new AbortController()
+        operationAbortControllerRef.current = abortController
+        operationInFlightRef.current = true
+        return {
+            scope: assistantScopeRef.current,
+            scopeKey: currentRequestedScopeKeyRef.current,
+            generation: ++operationGenerationRef.current,
+            assistantId: assistantIdRef.current,
+            openAIAssistantId: openAIAssistantIdRef.current,
+            credential: assistantCredentialRef.current,
+            show: currentShowRef.current,
+            abortController
+        }
+    }
+
+    const isOperationCurrent = (operation) =>
+        !operation.abortController.signal.aborted &&
+        isAssistantOperationCurrent(operation, {
+            scope: assistantScopeRef.current,
+            scopeKey: currentRequestedScopeKeyRef.current,
+            generation: operationGenerationRef.current,
+            assistantId: assistantIdRef.current,
+            openAIAssistantId: openAIAssistantIdRef.current,
+            credential: assistantCredentialRef.current,
+            show: currentShowRef.current
+        })
+
+    const invalidateOperations = () => {
+        operationAbortControllerRef.current?.abort()
+        operationAbortControllerRef.current = null
+        operationGenerationRef.current += 1
+        operationInFlightRef.current = false
+        setLoading(false)
+    }
+
+    const finishOperation = (operation) => {
+        if (!isOperationCurrent(operation)) return
+        operationAbortControllerRef.current = null
+        operationInFlightRef.current = false
+        setLoading(false)
+    }
+
+    const beginVectorStoreGeneration = () => ++vectorStoreGenerationRef.current
+
+    const closeAssistantVectorStoreDialog = () => {
+        beginVectorStoreGeneration()
+        assistantVectorStoreDialogOpenRef.current = false
+        setAssistantVectorStoreDialogOpen(false)
+    }
+
+    const isAssistantVectorStoreDialogCurrent = (dialogState) =>
+        currentShowRef.current &&
+        assistantVectorStoreDialogOpenRef.current &&
+        isAssistantScopeCurrent(dialogState.assistantScope) &&
+        isVectorStoreGenerationCurrent(dialogState.vectorStoreGeneration)
+
+    const handleDialogClose = () => {
+        if (loading || operationInFlightRef.current) return
+        invalidateOperations()
+        closeAssistantVectorStoreDialog()
+        onCancel()
+    }
+
+    const notifyInvalidAssistantResource = () => {
+        enqueueSnackbar({
+            message: INVALID_ASSISTANT_RESOURCE_MESSAGE,
+            options: {
+                key: new Date().getTime() + Math.random(),
+                variant: 'error',
+                persist: true,
+                action: (key) => (
+                    <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                        <IconX />
+                    </Button>
+                )
+            }
+        })
+    }
+
+    const notifyInvalidMutationResponse = () => {
+        enqueueSnackbar({
+            message: INVALID_ASSISTANT_MUTATION_RESPONSE_MESSAGE,
+            options: {
+                key: new Date().getTime() + Math.random(),
+                variant: 'error',
+                persist: true,
+                action: (key) => (
+                    <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                        <IconX />
+                    </Button>
+                )
+            }
+        })
+    }
+
+    const syncData = (data) => {
+        commitOpenAIAssistantId(data.id)
+        setAssistantName(data.name)
+        setAssistantDesc(data.description)
+        setAssistantModel(data.model)
+        setAssistantInstructions(data.instructions)
+        setTemperature(data.temperature)
+        setTopP(data.top_p)
+        commitToolResources(data.tool_resources)
+        setAssistantTools(data.tools)
+    }
+
+    const resetAssistantResourceState = () => {
+        commitAssistantId('')
+        commitOpenAIAssistantId('')
+        commitAssistantCredential('')
+        commitToolResources({})
+        setAssistantName('')
+        setAssistantDesc('')
+        setAssistantIcon(`https://api.dicebear.com/7.x/bottts/svg?seed=${uuidv4()}`)
+        setAssistantModel('')
+        setAssistantInstructions('')
+        setAssistantTools(['code_interpreter', 'file_search'])
+        setTemperature(1)
+        setTopP(1)
+    }
 
     useEffect(() => {
         if (show) dispatch({ type: SHOW_CANVAS_DIALOG })
@@ -174,36 +416,48 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
         return () => dispatch({ type: HIDE_CANVAS_DIALOG })
     }, [show, dispatch])
 
-    useEffect(() => {
-        if (getSpecificAssistantApi.data) {
-            setAssistantId(getSpecificAssistantApi.data.id)
-            setAssistantIcon(getSpecificAssistantApi.data.iconSrc)
-            setAssistantCredential(getSpecificAssistantApi.data.credential)
+    useEffect(
+        () => () => {
+            currentShowRef.current = false
+            loadAbortControllerRef.current?.abort()
+            operationAbortControllerRef.current?.abort()
+            operationAbortControllerRef.current = null
+            operationGenerationRef.current += 1
+            operationInFlightRef.current = false
+            vectorStoreGenerationRef.current += 1
+            assistantVectorStoreDialogOpenRef.current = false
+        },
+        []
+    )
 
-            const assistantDetails = JSON.parse(getSpecificAssistantApi.data.details)
-            setOpenAIAssistantId(assistantDetails.id)
-            setAssistantName(assistantDetails.name)
-            setAssistantDesc(assistantDetails.description)
-            setAssistantModel(assistantDetails.model)
-            setAssistantInstructions(assistantDetails.instructions)
-            setTemperature(assistantDetails.temperature)
-            setTopP(assistantDetails.top_p)
-            setAssistantTools(assistantDetails.tools ?? [])
-            setToolResources(assistantDetails.tool_resources ?? {})
+    useEffect(() => {
+        loadAbortControllerRef.current?.abort()
+        const abortController = new AbortController()
+        loadAbortControllerRef.current = abortController
+        const committedScope = {
+            id: requestedAssistantScopeId,
+            key: requestedAssistantScopeKey,
+            generation: assistantScopeGenerationRef.current + 1
         }
-    }, [getSpecificAssistantApi.data])
+        assistantScopeGenerationRef.current = committedScope.generation
+        assistantScopeRef.current = committedScope
+        invalidateOperations()
+        setAssistantResourceValid(false)
+        setDeleteDialogOpen(false)
+        closeAssistantVectorStoreDialog()
+        setLoading(false)
+        resetAssistantResourceState()
 
-    useEffect(() => {
-        if (getAssistantObjApi.data) {
-            syncData(getAssistantObjApi.data)
-        }
-    }, [getAssistantObjApi.data])
+        const isLoadCurrent = () =>
+            !abortController.signal.aborted &&
+            isAssistantScopeCurrent(committedScope) &&
+            currentRequestedScopeKeyRef.current === committedScope.key &&
+            currentShowRef.current
 
-    useEffect(() => {
-        if (getAssistantObjApi.error) {
-            const errMsg = getErrorMessage(getAssistantObjApi.error, '内部服务器错误')
+        const notifyLoadError = (error) => {
+            if (!isLoadCurrent()) return
             enqueueSnackbar({
-                message: `获取助手失败：${errMsg}`,
+                message: `获取助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -216,179 +470,161 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                 }
             })
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [getAssistantObjApi.error])
 
-    useEffect(() => {
-        if (getSpecificAssistantApi.error) {
-            const errMsg = getErrorMessage(getSpecificAssistantApi.error, '未知错误')
-            enqueueSnackbar({
-                message: `获取助手失败：${errMsg}`,
-                options: {
-                    key: new Date().getTime() + Math.random(),
-                    variant: 'error',
-                    persist: true,
-                    action: (key) => (
-                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                            <IconX />
-                        </Button>
-                    )
+        const loadStoredAssistant = async (assistantToLoad) => {
+            setLoading(true)
+            try {
+                const response = await client.get(`/assistants/${encodeURIComponent(assistantToLoad)}`, {
+                    signal: abortController.signal
+                })
+                if (!isLoadCurrent()) return
+                const parsedResource = parseStoredAssistantResource(response.data)
+                if (!parsedResource.success || parsedResource.data.id !== assistantToLoad) {
+                    notifyInvalidAssistantResource()
+                    return
                 }
-            })
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [getSpecificAssistantApi.error])
-
-    useEffect(() => {
-        if (dialogProps.type === 'EDIT' && dialogProps.data) {
-            // When assistant dialog is opened from Assistants dashboard
-            setAssistantId(dialogProps.data.id)
-            setAssistantIcon(dialogProps.data.iconSrc)
-            setAssistantCredential(dialogProps.data.credential)
-
-            const assistantDetails = JSON.parse(dialogProps.data.details)
-            setOpenAIAssistantId(assistantDetails.id)
-            setAssistantName(assistantDetails.name)
-            setAssistantDesc(assistantDetails.description)
-            setAssistantModel(assistantDetails.model)
-            setAssistantInstructions(assistantDetails.instructions)
-            setTemperature(assistantDetails.temperature)
-            setTopP(assistantDetails.top_p)
-            setAssistantTools(assistantDetails.tools ?? [])
-            setToolResources(assistantDetails.tool_resources ?? {})
-        } else if (dialogProps.type === 'EDIT' && dialogProps.assistantId) {
-            // When assistant dialog is opened from OpenAIAssistant node in canvas
-            getSpecificAssistantApi.request(dialogProps.assistantId)
-        } else if (dialogProps.type === 'ADD' && dialogProps.selectedOpenAIAssistantId && dialogProps.credential) {
-            // When assistant dialog is to add new assistant from existing
-            setAssistantId('')
-            setAssistantIcon(`https://api.dicebear.com/7.x/bottts/svg?seed=${uuidv4()}`)
-            setAssistantCredential(dialogProps.credential)
-
-            getAssistantObjApi.request(dialogProps.selectedOpenAIAssistantId, dialogProps.credential)
-        } else if (dialogProps.type === 'ADD' && !dialogProps.selectedOpenAIAssistantId) {
-            // When assistant dialog is to add a blank new assistant
-            setAssistantId('')
-            setAssistantIcon(`https://api.dicebear.com/7.x/bottts/svg?seed=${uuidv4()}`)
-            setAssistantCredential('')
-
-            setOpenAIAssistantId('')
-            setAssistantName('')
-            setAssistantDesc('')
-            setAssistantModel('')
-            setAssistantInstructions('')
-            setTemperature(1)
-            setTopP(1)
-            setAssistantTools(['code_interpreter', 'file_search'])
-            setUploadCodeInterpreterFiles('')
-            setUploadVectorStoreFiles('')
-            setToolResources({})
-        }
-
-        return () => {
-            setAssistantId('')
-            setAssistantIcon(`https://api.dicebear.com/7.x/bottts/svg?seed=${uuidv4()}`)
-            setAssistantCredential('')
-
-            setOpenAIAssistantId('')
-            setAssistantName('')
-            setAssistantDesc('')
-            setAssistantModel('')
-            setAssistantInstructions('')
-            setTemperature(1)
-            setTopP(1)
-            setAssistantTools(['code_interpreter', 'file_search'])
-            setUploadCodeInterpreterFiles('')
-            setUploadVectorStoreFiles('')
-            setToolResources({})
-            setLoading(false)
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [dialogProps])
-
-    const syncData = (data) => {
-        setOpenAIAssistantId(data.id)
-        setAssistantName(data.name)
-        setAssistantDesc(data.description)
-        setAssistantModel(data.model)
-        setAssistantInstructions(data.instructions)
-        setTemperature(data.temperature)
-        setTopP(data.top_p)
-        setToolResources(data.tool_resources ?? {})
-
-        let tools = []
-        if (data.tools && data.tools.length) {
-            for (const tool of data.tools) {
-                tools.push(tool.type)
+                commitAssistantId(parsedResource.data.id)
+                setAssistantIcon(parsedResource.data.iconSrc)
+                commitAssistantCredential(parsedResource.data.credential)
+                syncData(parsedResource.data.details)
+                setAssistantResourceValid(true)
+            } catch (error) {
+                notifyLoadError(error)
+            } finally {
+                if (isLoadCurrent()) setLoading(false)
             }
         }
-        setAssistantTools(tools)
-    }
 
-    const onEditAssistantVectorStoreClick = (vectorStoreObject) => {
-        const dialogProp = {
-            title: `编辑 ${vectorStoreObject.name ? vectorStoreObject.name : vectorStoreObject.id}`,
-            type: 'EDIT',
-            cancelButtonName: '取消',
-            confirmButtonName: '保存',
-            data: vectorStoreObject,
-            credential: assistantCredential
+        const loadExistingOpenAIAssistant = async (selectedAssistantId, credential) => {
+            commitAssistantCredential(credential)
+            setLoading(true)
+            try {
+                const response = await client.get(`/openai-assistants/${encodeURIComponent(selectedAssistantId)}`, {
+                    params: { credential },
+                    signal: abortController.signal
+                })
+                if (!isLoadCurrent() || assistantCredentialRef.current !== credential) return
+                const parsedDetails = parseAssistantDetails(response.data)
+                if (!parsedDetails.success || parsedDetails.data.id !== selectedAssistantId) {
+                    notifyInvalidAssistantResource()
+                    return
+                }
+                syncData(parsedDetails.data)
+                setAssistantResourceValid(true)
+            } catch (error) {
+                notifyLoadError(error)
+            } finally {
+                if (isLoadCurrent() && assistantCredentialRef.current === credential) setLoading(false)
+            }
         }
-        setAssistantVectorStoreDialogProps(dialogProp)
-        setAssistantVectorStoreDialogOpen(true)
-    }
+
+        if (!show) return () => abortController.abort()
+
+        if (dialogProps.type === 'EDIT' && dialogProps.data) {
+            // When assistant dialog is opened from Assistants dashboard
+            const parsedResource = parseStoredAssistantResource(dialogProps.data)
+            if (!parsedResource.success) {
+                notifyInvalidAssistantResource()
+                return () => abortController.abort()
+            }
+
+            commitAssistantId(parsedResource.data.id)
+            setAssistantIcon(parsedResource.data.iconSrc)
+            commitAssistantCredential(parsedResource.data.credential)
+            syncData(parsedResource.data.details)
+            setAssistantResourceValid(true)
+        } else if (dialogProps.type === 'EDIT' && dialogProps.assistantId) {
+            // When assistant dialog is opened from OpenAIAssistant node in canvas
+            void loadStoredAssistant(dialogProps.assistantId)
+        } else if (dialogProps.type === 'ADD' && dialogProps.selectedOpenAIAssistantId && dialogProps.credential) {
+            // When assistant dialog is to add new assistant from existing
+            void loadExistingOpenAIAssistant(dialogProps.selectedOpenAIAssistantId, dialogProps.credential)
+        } else if (dialogProps.type === 'ADD' && !dialogProps.selectedOpenAIAssistantId) {
+            // When assistant dialog is to add a blank new assistant
+            setAssistantResourceValid(true)
+        }
+
+        return () => abortController.abort()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [requestedAssistantScopeKey])
 
     const onAddAssistantVectorStoreClick = () => {
+        if (!canMutateResource) return
+        const vectorStoreGeneration = beginVectorStoreGeneration()
         const dialogProp = {
-            title: `添加向量库`,
+            title: '选择既有向量库',
             type: 'ADD',
             cancelButtonName: '取消',
-            confirmButtonName: '添加',
-            credential: assistantCredential
+            confirmButtonName: '关联',
+            credential: assistantCredential,
+            assistantScope: assistantScopeRef.current,
+            assistantMutationPermissionId: mutationPermissionId,
+            vectorStoreGeneration
         }
         setAssistantVectorStoreDialogProps(dialogProp)
+        assistantVectorStoreDialogOpenRef.current = true
         setAssistantVectorStoreDialogOpen(true)
     }
 
     const addNewAssistant = async () => {
+        if (!canMutateResource) return
+        if (!textFieldsValid) {
+            enqueueSnackbar({ message: '助手名称、描述或指令超过允许长度，请缩短后重试。', options: { variant: 'error' } })
+            return
+        }
+        if (!samplingParams.success) {
+            enqueueSnackbar({ message: '温度必须在 0–2 之间，核采样概率必须在 0–1 之间。', options: { variant: 'error' } })
+            return
+        }
+        const operation = beginOperation()
+        if (!operation) return
         setLoading(true)
         try {
             const assistantDetails = {
-                id: openAIAssistantId,
+                id: operation.openAIAssistantId,
                 name: assistantName,
                 description: assistantDesc,
                 model: assistantModel,
                 instructions: assistantInstructions,
-                temperature: temperature ? parseFloat(temperature) : null,
-                top_p: topP ? parseFloat(topP) : null,
+                temperature: samplingParams.data.temperature,
+                top_p: samplingParams.data.topP,
                 tools: assistantTools,
-                tool_resources: toolResources
+                tool_resources: toolResourcesRef.current
             }
             const obj = {
                 details: JSON.stringify(assistantDetails),
                 iconSrc: assistantIcon,
-                credential: assistantCredential,
+                credential: operation.credential,
                 type: 'OPENAI'
             }
 
-            const createResp = await assistantsApi.createNewAssistant(obj)
-            if (createResp.data) {
-                enqueueSnackbar({
-                    message: '新助手已添加',
-                    options: {
-                        key: new Date().getTime() + Math.random(),
-                        variant: 'success',
-                        action: (key) => (
-                            <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                <IconX />
-                            </Button>
-                        )
-                    }
-                })
-                onConfirm(createResp.data.id)
+            const createResp = await assistantsApi.createNewAssistant(obj, { signal: operation.abortController.signal })
+            if (!isOperationCurrent(operation)) return
+            const validatedResponse = validateAssistantMutationResponse(createResp?.data, {
+                expectedCredential: operation.credential,
+                expectedIcon: assistantIcon,
+                expectedDetails: assistantDetails
+            })
+            if (!validatedResponse.success) {
+                notifyInvalidMutationResponse()
+                return
             }
-            setLoading(false)
+
+            enqueueSnackbar({
+                message: '新助手已添加',
+                options: {
+                    key: new Date().getTime() + Math.random(),
+                    variant: 'success',
+                    action: (key) => (
+                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                            <IconX />
+                        </Button>
+                    )
+                }
+            })
+            onConfirm(validatedResponse.data.id)
         } catch (error) {
+            if (!isOperationCurrent(operation)) return
             enqueueSnackbar({
                 message: `添加新助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
@@ -402,46 +638,71 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                     )
                 }
             })
-            setLoading(false)
+        } finally {
+            finishOperation(operation)
         }
     }
 
     const saveAssistant = async () => {
+        if (!canMutateResource) return
+        if (!textFieldsValid) {
+            enqueueSnackbar({ message: '助手名称、描述或指令超过允许长度，请缩短后重试。', options: { variant: 'error' } })
+            return
+        }
+        if (!samplingParams.success) {
+            enqueueSnackbar({ message: '温度必须在 0–2 之间，核采样概率必须在 0–1 之间。', options: { variant: 'error' } })
+            return
+        }
+        const operation = beginOperation()
+        if (!operation) return
         setLoading(true)
         try {
             const assistantDetails = {
+                id: operation.openAIAssistantId,
                 name: assistantName,
                 description: assistantDesc,
                 model: assistantModel,
                 instructions: assistantInstructions,
-                temperature: temperature ? parseFloat(temperature) : null,
-                top_p: topP ? parseFloat(topP) : null,
+                temperature: samplingParams.data.temperature,
+                top_p: samplingParams.data.topP,
                 tools: assistantTools,
-                tool_resources: toolResources
+                tool_resources: toolResourcesRef.current
             }
             const obj = {
                 details: JSON.stringify(assistantDetails),
                 iconSrc: assistantIcon,
-                credential: assistantCredential
+                credential: operation.credential
             }
-            const saveResp = await assistantsApi.updateAssistant(assistantId, obj)
-            if (saveResp.data) {
-                enqueueSnackbar({
-                    message: '助手已保存',
-                    options: {
-                        key: new Date().getTime() + Math.random(),
-                        variant: 'success',
-                        action: (key) => (
-                            <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                <IconX />
-                            </Button>
-                        )
-                    }
-                })
-                onConfirm(saveResp.data.id)
+            const saveResp = await assistantsApi.updateAssistant(operation.assistantId, obj, {
+                signal: operation.abortController.signal
+            })
+            if (!isOperationCurrent(operation)) return
+            const validatedResponse = validateAssistantMutationResponse(saveResp?.data, {
+                expectedAssistantId: operation.assistantId,
+                expectedCredential: operation.credential,
+                expectedIcon: assistantIcon,
+                expectedDetails: assistantDetails
+            })
+            if (!validatedResponse.success) {
+                notifyInvalidMutationResponse()
+                return
             }
-            setLoading(false)
+
+            enqueueSnackbar({
+                message: '助手已保存',
+                options: {
+                    key: new Date().getTime() + Math.random(),
+                    variant: 'success',
+                    action: (key) => (
+                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                            <IconX />
+                        </Button>
+                    )
+                }
+            })
+            onConfirm(validatedResponse.data.id)
         } catch (error) {
+            if (!isOperationCurrent(operation)) return
             enqueueSnackbar({
                 message: `保存助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
@@ -455,31 +716,42 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                     )
                 }
             })
-            setLoading(false)
+        } finally {
+            finishOperation(operation)
         }
     }
 
     const onSyncClick = async () => {
+        if (!canMutateResource) return
+        const operation = beginOperation()
+        if (!operation) return
         setLoading(true)
         try {
-            const getResp = await assistantsApi.getAssistantObj(openAIAssistantId, assistantCredential)
-            if (getResp.data) {
-                syncData(getResp.data)
-                enqueueSnackbar({
-                    message: '助手同步成功！',
-                    options: {
-                        key: new Date().getTime() + Math.random(),
-                        variant: 'success',
-                        action: (key) => (
-                            <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                <IconX />
-                            </Button>
-                        )
-                    }
-                })
+            const getResp = await assistantsApi.getAssistantObj(operation.openAIAssistantId, operation.credential, {
+                signal: operation.abortController.signal
+            })
+            if (!isOperationCurrent(operation)) return
+            const parsedDetails = parseAssistantDetails(getResp?.data)
+            if (!parsedDetails.success || parsedDetails.data.id !== operation.openAIAssistantId) {
+                notifyInvalidMutationResponse()
+                return
             }
-            setLoading(false)
+
+            syncData(parsedDetails.data)
+            enqueueSnackbar({
+                message: '助手同步成功！',
+                options: {
+                    key: new Date().getTime() + Math.random(),
+                    variant: 'success',
+                    action: (key) => (
+                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                            <IconX />
+                        </Button>
+                    )
+                }
+            })
         } catch (error) {
+            if (!isOperationCurrent(operation)) return
             enqueueSnackbar({
                 message: `同步助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
@@ -493,112 +765,17 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                     )
                 }
             })
-            setLoading(false)
-        }
-    }
-
-    const uploadFormDataToVectorStore = async (formData) => {
-        setLoading(true)
-        try {
-            const vectorStoreId = toolResources.file_search?.vector_store_ids?.length ? toolResources.file_search.vector_store_ids[0] : ''
-            const uploadResp = await assistantsApi.uploadFilesToAssistantVectorStore(vectorStoreId, assistantCredential, formData)
-            if (uploadResp.data) {
-                enqueueSnackbar({
-                    message: '文件上传成功！',
-                    options: {
-                        key: new Date().getTime() + Math.random(),
-                        variant: 'success',
-                        action: (key) => (
-                            <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                <IconX />
-                            </Button>
-                        )
-                    }
-                })
-
-                const uploadedFiles = uploadResp.data
-                const existingFiles = toolResources?.file_search.files ?? []
-
-                setToolResources({
-                    ...toolResources,
-                    file_search: {
-                        ...toolResources?.file_search,
-                        files: [...existingFiles, ...uploadedFiles]
-                    }
-                })
-            }
-            setLoading(false)
-        } catch (error) {
-            enqueueSnackbar({
-                message: `上传文件失败：${getErrorMessage(error, '未知错误')}`,
-                options: {
-                    key: new Date().getTime() + Math.random(),
-                    variant: 'error',
-                    persist: true,
-                    action: (key) => (
-                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                            <IconX />
-                        </Button>
-                    )
-                }
-            })
-            setLoading(false)
-        }
-    }
-
-    const uploadFormDataToCodeInterpreter = async (formData) => {
-        setLoading(true)
-        try {
-            const uploadResp = await assistantsApi.uploadFilesToAssistant(assistantCredential, formData)
-            if (uploadResp.data) {
-                enqueueSnackbar({
-                    message: '文件上传成功！',
-                    options: {
-                        key: new Date().getTime() + Math.random(),
-                        variant: 'success',
-                        action: (key) => (
-                            <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                <IconX />
-                            </Button>
-                        )
-                    }
-                })
-
-                const uploadedFiles = uploadResp.data
-                const existingFiles = toolResources?.code_interpreter?.files ?? []
-                const existingFileIds = toolResources?.code_interpreter?.file_ids ?? []
-
-                setToolResources({
-                    ...toolResources,
-                    code_interpreter: {
-                        ...toolResources?.code_interpreter,
-                        files: [...existingFiles, ...uploadedFiles],
-                        file_ids: [...existingFileIds, ...uploadedFiles.map((file) => file.id)]
-                    }
-                })
-            }
-            setLoading(false)
-        } catch (error) {
-            enqueueSnackbar({
-                message: `上传文件失败：${getErrorMessage(error, '未知错误')}`,
-                options: {
-                    key: new Date().getTime() + Math.random(),
-                    variant: 'error',
-                    persist: true,
-                    action: (key) => (
-                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                            <IconX />
-                        </Button>
-                    )
-                }
-            })
-            setLoading(false)
+        } finally {
+            finishOperation(operation)
         }
     }
 
     const detachVectorStore = () => {
-        setToolResources({
-            ...toolResources,
+        if (!canMutateResource) return
+        invalidateOperations()
+        beginVectorStoreGeneration()
+        commitToolResources({
+            ...toolResourcesRef.current,
             file_search: {
                 files: [],
                 vector_store_object: null,
@@ -608,34 +785,50 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
     }
 
     const onDeleteClick = () => {
+        if (resourceBusyOrInvalid || !hasPermission('assistants:delete')) return
+        const localAssistantId = assistantIdRef.current || '无本地 ID'
+        const providerAssistantId = openAIAssistantIdRef.current || '无 OpenAI ID'
         setDeleteDialogProps({
-            title: `删除助手`,
-            description: `选择删除方式：${assistantName}`,
+            title: '删除旧版 OpenAI 助手',
+            description: `助手“${
+                assistantName || '未命名助手'
+            }”；Flowise 本地 ID：${localAssistantId}；OpenAI 助手 ID：${providerAssistantId}。选择“仅删除 Flowise 记录”只会移除本地记录，OpenAI 端资源仍会保留；选择“永久删除 OpenAI 与 Flowise 记录”会先永久删除 OpenAI 端助手，再删除本地记录，操作无法恢复。`,
             cancelButtonName: '取消'
         })
         setDeleteDialogOpen(true)
     }
 
     const deleteAssistant = async (isDeleteBoth) => {
+        if (!isValidResource || !hasPermission('assistants:delete')) return
+        const operation = beginOperation()
+        if (!operation) return
         setDeleteDialogOpen(false)
+        setLoading(true)
         try {
-            const delResp = await assistantsApi.deleteAssistant(assistantId, isDeleteBoth)
-            if (delResp.data) {
-                enqueueSnackbar({
-                    message: '助手已删除',
-                    options: {
-                        key: new Date().getTime() + Math.random(),
-                        variant: 'success',
-                        action: (key) => (
-                            <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                <IconX />
-                            </Button>
-                        )
-                    }
-                })
-                onConfirm()
+            const delResp = await assistantsApi.deleteAssistant(operation.assistantId, isDeleteBoth, {
+                signal: operation.abortController.signal
+            })
+            if (!isOperationCurrent(operation)) return
+            if (!validateAssistantDeletionResponse(delResp?.data, operation.assistantId)) {
+                notifyInvalidMutationResponse()
+                return
             }
+
+            enqueueSnackbar({
+                message: '助手已删除',
+                options: {
+                    key: new Date().getTime() + Math.random(),
+                    variant: 'success',
+                    action: (key) => (
+                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                            <IconX />
+                        </Button>
+                    )
+                }
+            })
+            onConfirm()
         } catch (error) {
+            if (!isOperationCurrent(operation)) return
             enqueueSnackbar({
                 message: `删除助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
@@ -649,60 +842,44 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                     )
                 }
             })
-            onCancel()
+        } finally {
+            finishOperation(operation)
         }
     }
 
-    const onFileDeleteClick = async (fileId, toolType) => {
+    const onFileDeleteClick = (fileId, toolType) => {
+        if (!isValidResource) return
         if (toolType === 'code_interpreter') {
-            setToolResources({
-                ...toolResources,
-                code_interpreter: {
-                    ...toolResources.code_interpreter,
-                    files: toolResources.code_interpreter.files.filter((file) => file.id !== fileId),
-                    file_ids: toolResources.code_interpreter.file_ids.filter((file_id) => file_id !== fileId)
-                }
-            })
-        } else if (toolType === 'file_search') {
-            // Remove from toolResources
-            setToolResources({
-                ...toolResources,
-                file_search: {
-                    ...toolResources.file_search,
-                    files: toolResources.file_search.files.filter((file) => file.id !== fileId)
-                }
-            })
-            // Remove files from vector store
-            try {
-                const vectorStoreId = toolResources.file_search?.vector_store_ids?.length
-                    ? toolResources.file_search.vector_store_ids[0]
-                    : ''
-                await assistantsApi.deleteFilesFromAssistantVectorStore(vectorStoreId, assistantCredential, { file_ids: [fileId] })
-            } catch (error) {
-                enqueueSnackbar({
-                    message: `删除向量库文件失败：${getErrorMessage(error, '未知错误')}`,
-                    options: { variant: 'error' }
-                })
+            if (!hasPermission(mutationPermissionId)) return
+            invalidateOperations()
+            const stateUpdate = removeCodeInterpreterFile({ fileId, currentToolResources: toolResourcesRef.current })
+            if (!stateUpdate.success) {
+                notifyInvalidMutationResponse()
+                return
             }
+            commitToolResources(stateUpdate.data)
         }
     }
 
     const component = show ? (
-        <Dialog
-            fullWidth
-            maxWidth='md'
-            open={show}
-            onClose={onCancel}
-            aria-labelledby='alert-dialog-title'
-            aria-describedby='alert-dialog-description'
-        >
-            <DialogTitle sx={{ fontSize: '1rem', p: 3, pb: 0 }} id='alert-dialog-title'>
+        <Dialog fullWidth maxWidth='md' open={show} onClose={handleDialogClose} aria-labelledby={titleId}>
+            <DialogTitle sx={{ fontSize: '1rem', p: 3, pb: 0 }} id={titleId}>
                 {dialogProps.title}
             </DialogTitle>
             <DialogContent
+                id={contentId}
                 ref={dialogRef}
                 sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: '75vh', position: 'relative', px: 3, pb: 3 }}
             >
+                <Alert severity='warning' variant='outlined'>
+                    <AlertTitle>OpenAI 助手 API 将于 2026 年 8 月 26 日停止服务</AlertTitle>
+                    已停用新建旧版 OpenAI 助手及新增 OpenAI 端资源；现有助手可查看、编辑、同步、解绑、删除与迁移。保存会同时更新 OpenAI
+                    端助手和 Flowise 本地记录，但不会新建 OpenAI 端资源。助手本身可通过明确范围确认进行清理。请迁移到自定义助手或 OpenAI
+                    响应 API。{' '}
+                    <Link href='https://developers.openai.com/api/docs/assistants/migration' target='_blank' rel='noopener noreferrer'>
+                        查看 OpenAI 官方迁移指南
+                    </Link>
+                </Alert>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
                     <Box>
                         <Stack sx={{ position: 'relative' }} direction='row'>
@@ -713,6 +890,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                         </Stack>
                         <CredentialInputHandler
                             key={assistantCredential}
+                            disabled={resourceControlsDisabled || credentialLocked}
                             data={assistantCredential ? { credential: assistantCredential } : {}}
                             inputParam={{
                                 label: '连接凭据',
@@ -720,47 +898,60 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                                 type: 'credential',
                                 credentialNames: ['openAIApi']
                             }}
-                            onSelect={(newValue) => setAssistantCredential(newValue)}
+                            onSelect={handleAssistantCredentialSelect}
                         />
+                        {credentialLocked && (
+                            <Typography variant='caption' color='text.secondary'>
+                                已关联 OpenAI 端助手或文件资源，只能在原凭据下维护；请迁移到自定义助手或 OpenAI 响应 API。
+                            </Typography>
+                        )}
                     </Box>
                     <Box>
                         <Stack sx={{ position: 'relative' }} direction='row'>
-                            <Typography variant='overline'>
+                            <Typography component='label' htmlFor='assistantModel' variant='overline'>
                                 助手模型
                                 <span style={{ color: 'red' }}>&nbsp;*</span>
                             </Typography>
                         </Stack>
                         <Dropdown
                             key={assistantModel}
-                            name={assistantModel}
-                            options={assistantAvailableModels}
+                            disabled={resourceControlsDisabled}
+                            name='assistantModel'
+                            options={assistantModelOptions}
                             onSelect={(newValue) => setAssistantModel(newValue)}
                             value={assistantModel ?? '请选择一个选项'}
                         />
                     </Box>
                     <Box>
                         <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                            <Typography variant='overline'>助手名称</Typography>
+                            <Typography component='label' htmlFor='assistantName' variant='overline'>
+                                助手名称
+                            </Typography>
                             <TooltipWithParser title={'助手的名称。最长 256 个字符。'} />
                         </Stack>
                         <OutlinedInput
                             id='assistantName'
+                            disabled={resourceControlsDisabled}
                             type='string'
                             size='small'
                             fullWidth
                             placeholder='我的新助手'
                             value={assistantName}
                             name='assistantName'
+                            inputProps={{ 'aria-label': '助手名称', maxLength: MAX_ASSISTANT_NAME_LENGTH }}
                             onChange={(e) => setAssistantName(e.target.value)}
                         />
                     </Box>
                     <Box>
                         <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                            <Typography variant='overline'>助手描述</Typography>
+                            <Typography component='label' htmlFor='assistantDesc' variant='overline'>
+                                助手描述
+                            </Typography>
                             <TooltipWithParser title={'助手的描述。最长 512 个字符。'} />
                         </Stack>
                         <OutlinedInput
                             id='assistantDesc'
+                            disabled={resourceControlsDisabled}
                             type='string'
                             size='small'
                             fullWidth
@@ -769,12 +960,15 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                             rows={3}
                             value={assistantDesc}
                             name='assistantDesc'
+                            inputProps={{ 'aria-label': '助手描述', maxLength: MAX_ASSISTANT_DESCRIPTION_LENGTH }}
                             onChange={(e) => setAssistantDesc(e.target.value)}
                         />
                     </Box>
                     <Box>
                         <Stack sx={{ position: 'relative' }} direction='row'>
-                            <Typography variant='overline'>助手图标地址</Typography>
+                            <Typography component='label' htmlFor='assistantIcon' variant='overline'>
+                                助手图标地址
+                            </Typography>
                         </Stack>
                         <div
                             style={{
@@ -798,28 +992,34 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                         </div>
                         <OutlinedInput
                             id='assistantIcon'
+                            disabled={resourceControlsDisabled}
                             type='string'
                             size='small'
                             fullWidth
                             placeholder={`https://api.dicebear.com/7.x/bottts/svg?seed=${uuidv4()}`}
                             value={assistantIcon}
                             name='assistantIcon'
+                            inputProps={{ 'aria-label': '助手图标地址' }}
                             onChange={(e) => setAssistantIcon(e.target.value)}
                         />
                     </Box>
                     <Box>
                         <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                            <Typography variant='overline'>助手指令</Typography>
-                            <TooltipWithParser title={'助手使用的系统指令。最长 32768 个字符。'} />
+                            <Typography component='label' htmlFor='assistantInstructions' variant='overline'>
+                                助手指令
+                            </Typography>
+                            <TooltipWithParser title={'助手使用的系统指令。最长 256000 个字符。'} />
                         </Stack>
                         <OutlinedInput
                             id='assistantInstructions'
+                            disabled={resourceControlsDisabled}
                             type='string'
                             size='small'
                             fullWidth
                             placeholder='你是一位个人数学家教。当被问到问题时，编写并运行代码来回答。'
                             multiline={true}
                             rows={3}
+                            inputProps={{ 'aria-label': '助手指令', maxLength: MAX_ASSISTANT_INSTRUCTIONS_LENGTH }}
                             value={assistantInstructions}
                             name='assistantInstructions'
                             onChange={(e) => setAssistantInstructions(e.target.value)}
@@ -827,33 +1027,41 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                     </Box>
                     <Box>
                         <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                            <Typography variant='overline'>助手温度</Typography>
+                            <Typography component='label' htmlFor='assistantTemp' variant='overline'>
+                                助手温度
+                            </Typography>
                             <TooltipWithParser title={'控制随机性：降低温度会使输出更稳定。当温度趋近于零时，模型将变得确定性且重复。'} />
                         </Stack>
                         <OutlinedInput
                             id='assistantTemp'
+                            disabled={resourceControlsDisabled}
                             type='number'
                             size='small'
                             fullWidth
-                            value={temperature}
+                            value={temperature ?? ''}
                             name='assistantTemp'
+                            error={!samplingParams.success}
+                            inputProps={{ 'aria-label': '助手温度', min: 0, max: 2, step: 0.01 }}
                             onChange={(e) => setTemperature(e.target.value)}
                         />
                     </Box>
                     <Box>
                         <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                            <Typography variant='overline'>助手核采样概率</Typography>
+                            <Typography component='label' htmlFor='assistantTopP' variant='overline'>
+                                助手核采样概率
+                            </Typography>
                             <TooltipWithParser title={'通过核采样控制多样性：0.5 表示考虑所有按可能性加权选项的一半。'} />
                         </Stack>
                         <OutlinedInput
                             id='assistantTopP'
+                            disabled={resourceControlsDisabled}
                             type='number'
                             fullWidth
                             size='small'
-                            value={topP}
+                            value={topP ?? ''}
                             name='assistantTopP'
-                            min='0'
-                            max='1'
+                            error={!samplingParams.success}
+                            inputProps={{ 'aria-label': '助手核采样概率', min: 0, max: 1, step: 0.01 }}
                             onChange={(e) => setTopP(e.target.value)}
                         />
                     </Box>
@@ -861,12 +1069,15 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                         <>
                             <Box>
                                 <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                                    <Typography variant='overline'>助手工具</Typography>
+                                    <Typography component='label' htmlFor='assistantTools' variant='overline'>
+                                        助手工具
+                                    </Typography>
                                     <TooltipWithParser title='在助手上启用的工具列表。每个助手最多可启用 128 个工具。' />
                                 </Stack>
                                 <MultiDropdown
                                     key={JSON.stringify(assistantTools)}
-                                    name={JSON.stringify(assistantTools)}
+                                    disabled={resourceControlsDisabled}
+                                    name='assistantTools'
                                     options={[
                                         {
                                             label: '代码解释器',
@@ -918,26 +1129,23 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                                                             <span style={{ color: 'rgb(116,66,16)', marginRight: 10 }}>
                                                                 {file.filename}
                                                             </span>
-                                                            <IconButton
+                                                            <PermissionIconButton
+                                                                permissionId={mutationPermissionId}
+                                                                aria-label={`移除代码解释器文件 ${file.filename ?? file.id}`}
+                                                                disabled={resourceControlsDisabled}
                                                                 sx={{ height: 15, width: 15, p: 0 }}
                                                                 onClick={() => onFileDeleteClick(file.id, 'code_interpreter')}
                                                             >
                                                                 <IconX />
-                                                            </IconButton>
+                                                            </PermissionIconButton>
                                                         </div>
                                                     ))}
                                                 </div>
                                             )}
-                                            <File
-                                                key={uploadCodeInterpreterFiles}
-                                                fileType='*'
-                                                formDataUpload={true}
-                                                value={uploadCodeInterpreterFiles ?? ''}
-                                                placeholder='选择要上传的文件'
-                                                buttonText='上传文件'
-                                                onChange={(newValue) => setUploadCodeInterpreterFiles(newValue)}
-                                                onFormDataChange={(formData) => uploadFormDataToCodeInterpreter(formData)}
-                                            />
+                                            <Typography variant='caption' color='text.secondary'>
+                                                已停用新建旧版 OpenAI 助手及新增 OpenAI
+                                                端资源；现有代码解释器文件仅支持查看或从本地关联中移除。
+                                            </Typography>
                                         </CardContent>
                                     </Card>
                                 )}
@@ -948,23 +1156,25 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                                                 <Typography variant='overline'>文件搜索文件</Typography>
                                                 <TooltipWithParser title='文件搜索使助手能够获取您或用户上传文件中的知识。文件上传后，助手会根据用户请求自动决定何时检索内容。' />
                                             </Stack>
-                                            {toolResources?.file_search?.vector_store_object && (
+                                            {associatedVectorStoreId && (
                                                 <Chip
-                                                    label={
-                                                        toolResources?.file_search?.vector_store_object?.name
-                                                            ? toolResources?.file_search?.vector_store_object?.name
-                                                            : toolResources?.file_search?.vector_store_object?.id
-                                                    }
-                                                    component='a'
+                                                    label={associatedVectorStoreLabel}
                                                     sx={{ mb: 2, mt: 1 }}
                                                     variant='outlined'
-                                                    clickable
                                                     color='primary'
-                                                    onDelete={detachVectorStore}
-                                                    onClick={() =>
-                                                        onEditAssistantVectorStoreClick(toolResources?.file_search?.vector_store_object)
-                                                    }
                                                 />
+                                            )}
+                                            {associatedVectorStoreId && (
+                                                <StyledPermissionButton
+                                                    permissionId='assistants:update'
+                                                    disabled={!canMutateResource}
+                                                    variant='outlined'
+                                                    aria-describedby={`${dialogId}-vector-store-unbind-help`}
+                                                    onClick={detachVectorStore}
+                                                    sx={{ mb: 2, ml: 1, mt: 1 }}
+                                                >
+                                                    解绑向量库
+                                                </StyledPermissionButton>
                                             )}
                                             {toolResources?.file_search?.files?.length > 0 && (
                                                 <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -990,39 +1200,32 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                                                             <span style={{ color: 'rgb(116,66,16)', marginRight: 10 }}>
                                                                 {file.filename}
                                                             </span>
-                                                            <IconButton
-                                                                sx={{ height: 15, width: 15, p: 0 }}
-                                                                onClick={() => onFileDeleteClick(file.id, 'file_search')}
-                                                            >
-                                                                <IconX />
-                                                            </IconButton>
                                                         </div>
                                                     ))}
                                                 </div>
                                             )}
-                                            {!toolResources.file_search || !toolResources.file_search?.vector_store_ids?.length ? (
-                                                <Button
+                                            {!associatedVectorStoreId && (
+                                                <StyledPermissionButton
+                                                    permissionId={mutationPermissionId}
+                                                    disabled={resourceControlsDisabled}
                                                     variant='outlined'
-                                                    component='label'
                                                     fullWidth
                                                     startIcon={<IconPlus />}
                                                     sx={{ marginRight: '1rem' }}
                                                     onClick={() => onAddAssistantVectorStoreClick()}
                                                 >
-                                                    添加向量库
-                                                </Button>
-                                            ) : (
-                                                <File
-                                                    key={uploadVectorStoreFiles}
-                                                    fileType='*'
-                                                    formDataUpload={true}
-                                                    value={uploadVectorStoreFiles ?? ''}
-                                                    placeholder='选择要上传的文件'
-                                                    buttonText='上传文件'
-                                                    onChange={(newValue) => setUploadVectorStoreFiles(newValue)}
-                                                    onFormDataChange={(formData) => uploadFormDataToVectorStore(formData)}
-                                                />
+                                                    选择既有向量库
+                                                </StyledPermissionButton>
                                             )}
+                                            <Typography
+                                                id={`${dialogId}-vector-store-unbind-help`}
+                                                variant='caption'
+                                                color='text.secondary'
+                                            >
+                                                已停用新建旧版 OpenAI 助手及新增 OpenAI
+                                                端资源；可选择既有向量库。关联或解绑只修改当前表单，需保存主助手后生效；保存会同时更新
+                                                OpenAI 端助手和 Flowise 本地记录。
+                                            </Typography>
                                         </CardContent>
                                     </Card>
                                 )}
@@ -1032,9 +1235,13 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                 </Box>
             </DialogContent>
             <DialogActions sx={{ p: 3, pt: 0 }}>
+                <Button disabled={loading || operationInFlightRef.current} onClick={handleDialogClose}>
+                    {dialogProps.cancelButtonName ?? '关闭'}
+                </Button>
                 {dialogProps.type === 'EDIT' && (
                     <StyledPermissionButton
-                        permissionId={'assistants:create,assistants:update'}
+                        permissionId='assistants:update'
+                        disabled={resourceControlsDisabled}
                         color='secondary'
                         variant='contained'
                         onClick={() => onSyncClick()}
@@ -1045,6 +1252,7 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                 {dialogProps.type === 'EDIT' && (
                     <StyledPermissionButton
                         permissionId={'assistants:delete'}
+                        disabled={resourceBusyOrInvalid}
                         color='error'
                         variant='contained'
                         onClick={() => onDeleteClick()}
@@ -1053,8 +1261,10 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
                     </StyledPermissionButton>
                 )}
                 <StyledPermissionButton
-                    permissionId={'assistants:create,assistants:update'}
-                    disabled={!(assistantModel && assistantCredential)}
+                    permissionId={mutationPermissionId}
+                    disabled={
+                        resourceControlsDisabled || !textFieldsValid || !samplingParams.success || !(assistantModel && assistantCredential)
+                    }
                     variant='contained'
                     onClick={() => (dialogProps.type === 'ADD' ? addNewAssistant() : saveAssistant())}
                 >
@@ -1071,31 +1281,33 @@ const AssistantDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) =
             <AssistantVectorStoreDialog
                 show={assistantVectorStoreDialogOpen}
                 dialogProps={assistantVectorStoreDialogProps}
-                onCancel={() => setAssistantVectorStoreDialogOpen(false)}
-                onDelete={(vectorStoreId) => {
-                    setToolResources({
-                        ...toolResources,
-                        file_search: {
-                            vector_store_object: null,
-                            files: [],
-                            vector_store_ids: toolResources.file_search.vector_store_ids.filter((id) => vectorStoreId !== id)
-                        }
-                    })
-                    setAssistantVectorStoreDialogOpen(false)
-                }}
+                onCancel={closeAssistantVectorStoreDialog}
                 onConfirm={(vectorStoreObj, files) => {
-                    setToolResources({
-                        ...toolResources,
+                    if (!isAssistantVectorStoreDialogCurrent(assistantVectorStoreDialogProps)) {
+                        closeAssistantVectorStoreDialog()
+                        return
+                    }
+                    const currentToolResources = toolResourcesRef.current
+                    const currentVectorStoreId = currentToolResources.file_search?.vector_store_ids?.[0]
+                    const candidateToolResources = {
+                        ...currentToolResources,
                         file_search: {
-                            ...toolResources.file_search,
+                            ...currentToolResources.file_search,
                             vector_store_object: vectorStoreObj,
-                            files: files ? files : toolResources.file_search?.files,
-                            vector_store_ids: [vectorStoreObj.id]
+                            files:
+                                files ?? (vectorStoreObj?.id === currentVectorStoreId ? currentToolResources.file_search?.files ?? [] : []),
+                            vector_store_ids: vectorStoreObj?.id ? [vectorStoreObj.id] : []
                         }
-                    })
-                    setAssistantVectorStoreDialogOpen(false)
+                    }
+                    const parsedToolResources = parseAssistantToolResources(candidateToolResources)
+                    if (!parsedToolResources.success) {
+                        notifyInvalidMutationResponse()
+                        return
+                    }
+                    invalidateOperations()
+                    commitToolResources(parsedToolResources.data)
+                    closeAssistantVectorStoreDialog()
                 }}
-                setError={setError}
             />
             {loading && <BackdropLoader open={loading} />}
         </Dialog>

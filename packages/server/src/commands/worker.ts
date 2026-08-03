@@ -9,9 +9,18 @@ import { QueueEvents, QueueEventsListener } from 'bullmq'
 import { AbortControllerPool } from '../AbortControllerPool'
 import { UsageCacheManager } from '../UsageCacheManager'
 import { IdentityManager } from '../IdentityManager'
+import { getEncryptionKey } from '../utils'
+import { getTokenHashSecret, initAuthSecrets } from '../enterprise/utils/authSecrets'
+import { initializeDocumentStoreVersionTokenKey } from '../services/documentstore/documentStoreVersion'
 
 interface CustomListener extends QueueEventsListener {
     abort: (args: { id: string }, id: string) => void
+}
+
+export const initializeWorkerSecuritySecrets = async (): Promise<void> => {
+    await getEncryptionKey()
+    await initAuthSecrets()
+    initializeDocumentStoreVersionTokenKey(getTokenHashSecret())
 }
 
 export default class Worker extends BaseCommand {
@@ -21,6 +30,10 @@ export default class Worker extends BaseCommand {
 
     async run(): Promise<void> {
         logger.info('Starting Flowise Worker...')
+
+        // Standalone workers do not execute App.initDatabase(), so fail closed
+        // before queue construction unless the shared security secrets are ready.
+        await initializeWorkerSecuritySecrets()
 
         const { appDataSource, telemetry, componentNodes, cachePool, abortControllerPool, usageCacheManager, identityManager } =
             await this.prepareData()

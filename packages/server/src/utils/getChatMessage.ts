@@ -1,9 +1,11 @@
-import { MoreThanOrEqual, LessThanOrEqual, Between, In } from 'typeorm'
+import type { SelectQueryBuilder } from 'typeorm'
 import { ChatMessageRatingType, ChatType } from '../Interface'
 import { ChatMessage } from '../database/entities/ChatMessage'
 import { ChatMessageFeedback } from '../database/entities/ChatMessageFeedback'
 import { ChatFlow } from '../database/entities/ChatFlow'
 import { getRunningExpressApp } from '../utils/getRunningExpressApp'
+import { InternalFlowiseError } from '../errors/internalFlowiseError'
+import { StatusCodes } from 'http-status-codes'
 
 /**
  * Method that get chat messages.
@@ -55,19 +57,22 @@ export const utilGetChatMessage = async ({
     if (!page) page = -1
     if (!pageSize) pageSize = -1
 
+    const scopedWorkspaceId = activeWorkspaceId?.trim()
+    if (!scopedWorkspaceId) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Unauthorized access')
+    }
+
     const appServer = getRunningExpressApp()
 
-    // Check if chatflow workspaceId is same as activeWorkspaceId
-    if (activeWorkspaceId) {
-        const chatflow = await appServer.AppDataSource.getRepository(ChatFlow).findOneBy({
-            id: chatflowid,
-            workspaceId: activeWorkspaceId
-        })
-        if (!chatflow) {
-            throw new Error('Unauthorized access')
-        }
-    } else {
-        throw new Error('Unauthorized access')
+    // Fail closed before loading messages or relations unless the flow belongs to
+    // the active workspace. Relation joins below repeat this scope intentionally:
+    // legacy rows may contain poisoned cross-flow or cross-workspace foreign keys.
+    const chatflow = await appServer.AppDataSource.getRepository(ChatFlow).findOneBy({
+        id: chatflowid,
+        workspaceId: scopedWorkspaceId
+    })
+    if (!chatflow) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Unauthorized access')
     }
 
     if (feedback) {
@@ -83,42 +88,50 @@ export const utilGetChatMessage = async ({
             endDate,
             messageId,
             feedbackTypes,
+            activeWorkspaceId: scopedWorkspaceId,
             page,
             pageSize
         })
     }
 
-    let createdDateQuery
+    const query = appServer.AppDataSource.getRepository(ChatMessage).createQueryBuilder('chat_message')
+    addScopedExecutionJoin(query, scopedWorkspaceId)
+    query.where('chat_message.chatflowid = :chatflowid', { chatflowid })
+    applyMessageFilters(query, { chatTypes, chatId, memoryType, sessionId, startDate, endDate, messageId })
+    query.orderBy('chat_message.createdDate', sortOrder === 'DESC' ? 'DESC' : 'ASC')
 
-    if (startDate || endDate) {
-        if (startDate && endDate) {
-            createdDateQuery = Between(new Date(startDate), new Date(endDate))
-        } else if (startDate) {
-            createdDateQuery = MoreThanOrEqual(new Date(startDate))
-        } else if (endDate) {
-            createdDateQuery = LessThanOrEqual(new Date(endDate))
-        }
+    const messages = await query.getMany()
+    return sanitizeLoadedRelations(messages, scopedWorkspaceId)
+}
+
+type ChatMessageQuery = SelectQueryBuilder<ChatMessage>
+
+const addScopedExecutionJoin = (query: ChatMessageQuery, activeWorkspaceId: string): void => {
+    query.leftJoinAndSelect(
+        'chat_message.execution',
+        'execution',
+        'execution.id = chat_message.executionId AND execution.agentflowId = chat_message.chatflowid AND execution.workspaceId = :activeWorkspaceId',
+        { activeWorkspaceId }
+    )
+}
+
+const applyMessageFilters = (
+    query: ChatMessageQuery,
+    params: Pick<GetChatMessageParams, 'chatTypes' | 'chatId' | 'memoryType' | 'sessionId' | 'startDate' | 'endDate' | 'messageId'>
+): void => {
+    const { chatTypes, chatId, memoryType, sessionId, startDate, endDate, messageId } = params
+
+    if (chatTypes?.length) query.andWhere('chat_message.chatType IN (:...chatTypes)', { chatTypes })
+    if (chatId) query.andWhere('chat_message.chatId = :chatId', { chatId })
+    if (memoryType) query.andWhere('chat_message.memoryType = :memoryType', { memoryType })
+    if (sessionId) query.andWhere('chat_message.sessionId = :sessionId', { sessionId })
+    if (messageId) query.andWhere('chat_message.id = :messageId', { messageId })
+    if (startDate && typeof startDate === 'string') {
+        query.andWhere('chat_message.createdDate >= :startDateTime', { startDateTime: new Date(startDate) })
     }
-
-    const messages = await appServer.AppDataSource.getRepository(ChatMessage).find({
-        where: {
-            chatflowid,
-            chatType: chatTypes?.length ? In(chatTypes) : undefined,
-            chatId,
-            memoryType: memoryType ?? undefined,
-            sessionId: sessionId ?? undefined,
-            createdDate: createdDateQuery,
-            id: messageId ?? undefined
-        },
-        relations: {
-            execution: true
-        },
-        order: {
-            createdDate: sortOrder === 'DESC' ? 'DESC' : 'ASC'
-        }
-    })
-
-    return messages
+    if (endDate && typeof endDate === 'string') {
+        query.andWhere('chat_message.createdDate <= :endDateTime', { endDateTime: new Date(endDate) })
+    }
 }
 
 async function handleFeedbackQuery(params: {
@@ -132,6 +145,7 @@ async function handleFeedbackQuery(params: {
     endDate?: string
     messageId?: string
     feedbackTypes?: ChatMessageRatingType[]
+    activeWorkspaceId: string
     page: number
     pageSize: number
 }): Promise<ChatMessage[]> {
@@ -189,7 +203,11 @@ async function handleFeedbackQuery(params: {
         // If feedback types are specified, only get sessions with those feedback types
         if (feedbackTypes && feedbackTypes.length > 0) {
             sessionQuery
-                .leftJoin(ChatMessageFeedback, 'feedback', 'feedback.messageId = chat_message.id')
+                .leftJoin(
+                    ChatMessageFeedback,
+                    'feedback',
+                    'feedback.messageId = chat_message.id AND feedback.chatflowid = chat_message.chatflowid AND feedback.chatId = chat_message.chatId'
+                )
                 .andWhere('feedback.rating IN (:...feedbackTypes)', { feedbackTypes })
         }
 
@@ -233,18 +251,36 @@ async function getMessagesWithFeedback(
         endDate?: string
         messageId?: string
         feedbackTypes?: ChatMessageRatingType[]
+        activeWorkspaceId: string
     },
     useSessionList: boolean = false,
     sessionIdList?: string[]
 ): Promise<ChatMessage[]> {
-    const { chatflowid, chatTypes, sortOrder, chatId, memoryType, sessionId, startDate, endDate, messageId, feedbackTypes } = params
+    const {
+        chatflowid,
+        chatTypes,
+        sortOrder,
+        chatId,
+        memoryType,
+        sessionId,
+        startDate,
+        endDate,
+        messageId,
+        feedbackTypes,
+        activeWorkspaceId
+    } = params
 
     const appServer = getRunningExpressApp()
     const query = appServer.AppDataSource.getRepository(ChatMessage).createQueryBuilder('chat_message')
 
+    addScopedExecutionJoin(query, activeWorkspaceId)
     query
-        .leftJoinAndSelect('chat_message.execution', 'execution')
-        .leftJoinAndMapOne('chat_message.feedback', ChatMessageFeedback, 'feedback', 'feedback.messageId = chat_message.id')
+        .leftJoinAndMapOne(
+            'chat_message.feedback',
+            ChatMessageFeedback,
+            'feedback',
+            'feedback.messageId = chat_message.id AND feedback.chatflowid = chat_message.chatflowid AND feedback.chatId = chat_message.chatId'
+        )
         .where('chat_message.chatflowid = :chatflowid', { chatflowid })
 
     // Apply filters
@@ -285,11 +321,41 @@ async function getMessagesWithFeedback(
 
     query.orderBy('chat_message.createdDate', sortOrder === 'DESC' ? 'DESC' : 'ASC')
 
-    const messages = (await query.getMany()) as Array<ChatMessage & { feedback: ChatMessageFeedback }>
+    const messages = sanitizeLoadedRelations(
+        (await query.getMany()) as Array<ChatMessage & { feedback?: ChatMessageFeedback }>,
+        activeWorkspaceId
+    ) as Array<ChatMessage & { feedback: ChatMessageFeedback }>
 
     // Apply feedback type filtering with previous message inclusion
     if (feedbackTypes && feedbackTypes.length > 0) {
         return filterMessagesWithFeedback(messages, feedbackTypes)
+    }
+
+    return messages
+}
+
+const sanitizeLoadedRelations = <T extends ChatMessage>(messages: T[], activeWorkspaceId: string): T[] => {
+    for (const message of messages) {
+        const execution = message.execution
+        if (
+            execution &&
+            (execution.id !== message.executionId ||
+                execution.agentflowId !== message.chatflowid ||
+                execution.workspaceId !== activeWorkspaceId)
+        ) {
+            Reflect.deleteProperty(message, 'execution')
+        }
+
+        const messageWithFeedback = message as T & { feedback?: ChatMessageFeedback }
+        const loadedFeedback = messageWithFeedback.feedback
+        if (
+            loadedFeedback &&
+            (loadedFeedback.messageId !== message.id ||
+                loadedFeedback.chatflowid !== message.chatflowid ||
+                loadedFeedback.chatId !== message.chatId)
+        ) {
+            Reflect.deleteProperty(messageWithFeedback, 'feedback')
+        }
     }
 
     return messages

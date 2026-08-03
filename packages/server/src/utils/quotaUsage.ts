@@ -82,46 +82,50 @@ export const updatePredictionsUsage = async (
     usageCacheManager?: UsageCacheManager
 ) => {
     if (!usageCacheManager) return
+    try {
+        const quotas = await usageCacheManager.getQuotas(subscriptionId)
+        const predictionsLimit = quotas[LICENSE_QUOTAS.PREDICTIONS_LIMIT]
 
-    const quotas = await usageCacheManager.getQuotas(subscriptionId)
-    const predictionsLimit = quotas[LICENSE_QUOTAS.PREDICTIONS_LIMIT]
-
-    let currentPredictions = 0
-    const existingPredictions = await usageCacheManager.get(`predictions:${orgId}`)
-    if (existingPredictions) {
-        currentPredictions = 1 + (existingPredictions as number) > predictionsLimit ? predictionsLimit : 1 + (existingPredictions as number)
-    } else {
-        currentPredictions = 1
-    }
-
-    const currentTTL = await usageCacheManager.getTTL(`predictions:${orgId}`)
-    if (currentTTL) {
-        const currentTimestamp = Date.now()
-        const timeLeft = currentTTL - currentTimestamp
-        usageCacheManager.set(`predictions:${orgId}`, currentPredictions, timeLeft)
-    } else {
-        const subscriptionDetails = await usageCacheManager.getSubscriptionDetails(subscriptionId)
-        if (subscriptionDetails && subscriptionDetails.created) {
-            const MS_PER_DAY = 24 * 60 * 60 * 1000
-            const DAYS = 30
-            const approximateMonthMs = DAYS * MS_PER_DAY
-
-            // Calculate time elapsed since subscription creation
-            const createdTimestamp = subscriptionDetails.created * 1000 // Convert to milliseconds if timestamp is in seconds
-            const currentTimestamp = Date.now()
-            const timeElapsed = currentTimestamp - createdTimestamp
-
-            // Calculate remaining time in the current month period
-            const timeLeft = approximateMonthMs - (timeElapsed % approximateMonthMs)
-
-            usageCacheManager.set(`predictions:${orgId}`, currentPredictions, timeLeft)
+        let currentPredictions = 0
+        const existingPredictions = await usageCacheManager.get(`predictions:${orgId}`)
+        if (existingPredictions) {
+            currentPredictions =
+                1 + (existingPredictions as number) > predictionsLimit ? predictionsLimit : 1 + (existingPredictions as number)
         } else {
-            // Fallback to default 30 days if no creation date
-            const MS_PER_DAY = 24 * 60 * 60 * 1000
-            const DAYS = 30
-            const approximateMonthMs = DAYS * MS_PER_DAY
-            usageCacheManager.set(`predictions:${orgId}`, currentPredictions, approximateMonthMs)
+            currentPredictions = 1
         }
+
+        const currentTTL = await usageCacheManager.getTTL(`predictions:${orgId}`)
+        if (currentTTL) {
+            const currentTimestamp = Date.now()
+            const timeLeft = currentTTL - currentTimestamp
+            await usageCacheManager.set(`predictions:${orgId}`, currentPredictions, timeLeft)
+        } else {
+            const subscriptionDetails = await usageCacheManager.getSubscriptionDetails(subscriptionId)
+            if (subscriptionDetails && subscriptionDetails.created) {
+                const MS_PER_DAY = 24 * 60 * 60 * 1000
+                const DAYS = 30
+                const approximateMonthMs = DAYS * MS_PER_DAY
+
+                // Calculate time elapsed since subscription creation
+                const createdTimestamp = subscriptionDetails.created * 1000 // Convert to milliseconds if timestamp is in seconds
+                const currentTimestamp = Date.now()
+                const timeElapsed = currentTimestamp - createdTimestamp
+
+                // Calculate remaining time in the current month period
+                const timeLeft = approximateMonthMs - (timeElapsed % approximateMonthMs)
+
+                await usageCacheManager.set(`predictions:${orgId}`, currentPredictions, timeLeft)
+            } else {
+                // Fallback to default 30 days if no creation date
+                const MS_PER_DAY = 24 * 60 * 60 * 1000
+                const DAYS = 30
+                const approximateMonthMs = DAYS * MS_PER_DAY
+                await usageCacheManager.set(`predictions:${orgId}`, currentPredictions, approximateMonthMs)
+            }
+        }
+    } catch {
+        logger.error('[server]: Predictions usage cache update failed', { failedCount: 1 })
     }
 }
 
@@ -145,9 +149,18 @@ export const checkPredictions = async (orgId: string, subscriptionId: string, us
 }
 
 // Storage does not renew per month nor do we store the total size in database, so we just store the total size in cache
-export const updateStorageUsage = (orgId: string, _: string = '', totalSize: number, usageCacheManager?: UsageCacheManager) => {
+export const updateStorageUsage = async (
+    orgId: string,
+    _: string = '',
+    totalSize: number,
+    usageCacheManager?: UsageCacheManager
+): Promise<void> => {
     if (!usageCacheManager) return
-    usageCacheManager.set(`storage:${orgId}`, totalSize)
+    try {
+        await usageCacheManager.set(`storage:${orgId}`, totalSize)
+    } catch {
+        logger.error('[server]: Storage usage cache update failed', { failedCount: 1 })
+    }
 }
 
 export const checkStorage = async (orgId: string, subscriptionId: string, usageCacheManager: UsageCacheManager) => {

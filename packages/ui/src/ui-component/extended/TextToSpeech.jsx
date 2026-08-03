@@ -1,5 +1,5 @@
 import { useDispatch } from 'react-redux'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import PropTypes from 'prop-types'
 import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackbarAction, SET_CHATFLOW } from '@/store/actions'
 
@@ -93,6 +93,47 @@ const textToSpeechProviders = {
     }
 }
 
+export const runLatestVoiceRequest = async ({ requestId, isLatestRequest, request, onSuccess, onFailure, onSettled }) => {
+    try {
+        const response = await request()
+        const voicesData = await response?.data
+
+        if (!isLatestRequest(requestId)) return
+        onSuccess(Array.isArray(voicesData) ? voicesData : [])
+    } catch (error) {
+        if (!isLatestRequest(requestId)) return
+        onFailure(error)
+    } finally {
+        if (isLatestRequest(requestId)) onSettled()
+    }
+}
+
+export const runLatestTtsTestRequest = async ({ requestId, isLatestRequest, request, onSuccess, onFailure, onSettled, onStale }) => {
+    try {
+        const result = await request()
+        if (!isLatestRequest(requestId)) {
+            onStale?.(result)
+            return
+        }
+        onSuccess(result)
+    } catch (error) {
+        if (!isLatestRequest(requestId) || error?.name === 'AbortError') return
+        onFailure(error)
+    } finally {
+        if (isLatestRequest(requestId)) onSettled()
+    }
+}
+
+export const replaceOwnedAudioUrl = ({ ownedAudioUrlRef, nextAudioUrl, revokeObjectURL }) => {
+    if (ownedAudioUrlRef.current && ownedAudioUrlRef.current !== nextAudioUrl) {
+        revokeObjectURL(ownedAudioUrlRef.current)
+    }
+    ownedAudioUrlRef.current = nextAudioUrl || null
+    return ownedAudioUrlRef.current
+}
+
+const createSafeTtsTestError = (userMessage) => ({ userMessage })
+
 const TextToSpeech = ({ dialogProps }) => {
     const dispatch = useDispatch()
 
@@ -111,12 +152,14 @@ const TextToSpeech = ({ dialogProps }) => {
     const [testAudioRef, setTestAudioRef] = useState(null)
     const [isGeneratingTest, setIsGeneratingTest] = useState(false)
     const [resetWaveform, setResetWaveform] = useState(false)
+    const voiceRequestIdRef = useRef(0)
+    const testRequestIdRef = useRef(0)
+    const testAbortControllerRef = useRef(null)
+    const testAudioSrcRef = useRef(null)
 
     const resetTestAudio = () => {
-        if (testAudioSrc) {
-            URL.revokeObjectURL(testAudioSrc)
-            setTestAudioSrc(null)
-        }
+        replaceOwnedAudioUrl({ ownedAudioUrlRef: testAudioSrcRef, nextAudioUrl: null, revokeObjectURL: URL.revokeObjectURL })
+        setTestAudioSrc(null)
         setIsTestPlaying(false)
         setResetWaveform(true)
         setTimeout(() => setResetWaveform(false), 100)
@@ -191,7 +234,21 @@ const TextToSpeech = ({ dialogProps }) => {
         return newVal
     }
 
+    const invalidateVoiceRequests = () => {
+        voiceRequestIdRef.current += 1
+        setLoadingVoices(false)
+    }
+
+    const invalidateTestRequests = () => {
+        testRequestIdRef.current += 1
+        testAbortControllerRef.current?.abort()
+        testAbortControllerRef.current = null
+        setIsGeneratingTest(false)
+    }
+
     const handleProviderChange = (provider, configOverride = null) => {
+        invalidateVoiceRequests()
+        invalidateTestRequests()
         setSelectedProvider(provider)
         setVoices([])
         resetTestAudio()
@@ -208,28 +265,25 @@ const TextToSpeech = ({ dialogProps }) => {
     const loadVoicesForProvider = async (provider, credentialId) => {
         if (provider === 'none' || !credentialId) return
 
+        const requestId = ++voiceRequestIdRef.current
         setLoadingVoices(true)
-        try {
-            const params = new URLSearchParams({ provider })
-            params.append('credentialId', credentialId)
+        const params = new URLSearchParams({ provider })
+        params.append('credentialId', credentialId)
 
-            const response = await ttsApi.listVoices(params)
-
-            if (response.data) {
-                const voicesData = await response.data
-                setVoices(voicesData)
-            } else {
+        await runLatestVoiceRequest({
+            requestId,
+            isLatestRequest: (candidateRequestId) => voiceRequestIdRef.current === candidateRequestId,
+            request: () => ttsApi.listVoices(params),
+            onSuccess: setVoices,
+            onFailure: (error) => {
                 setVoices([])
-            }
-        } catch (error) {
-            setVoices([])
-            enqueueSnackbar({
-                message: `加载语音列表失败：${getErrorMessage(error, '网络或服务错误')}`,
-                options: { variant: 'warning' }
-            })
-        } finally {
-            setLoadingVoices(false)
-        }
+                enqueueSnackbar({
+                    message: `加载语音列表失败：${getErrorMessage(error, '网络或服务错误')}`,
+                    options: { variant: 'warning' }
+                })
+            },
+            onSettled: () => setLoadingVoices(false)
+        })
     }
 
     const testTTS = async () => {
@@ -241,97 +295,106 @@ const TextToSpeech = ({ dialogProps }) => {
             return
         }
 
+        const requestId = ++testRequestIdRef.current
+        testAbortControllerRef.current?.abort()
+        const abortController = new AbortController()
+        testAbortControllerRef.current = abortController
         setIsGeneratingTest(true)
+        const providerConfig = textToSpeech?.[selectedProvider] || {}
 
-        try {
-            const providerConfig = textToSpeech?.[selectedProvider] || {}
-            const body = {
-                text: '今天是使用 Flowise 构建智能应用的美好一天！',
-                provider: selectedProvider,
-                credentialId: providerConfig.credentialId,
-                voice: providerConfig.voice,
-                model: providerConfig.model
-            }
+        await runLatestTtsTestRequest({
+            requestId,
+            isLatestRequest: (candidateRequestId) => testRequestIdRef.current === candidateRequestId,
+            request: async () => {
+                const body = {
+                    text: '今天是使用 Flowise 构建智能应用的美好一天！',
+                    provider: selectedProvider,
+                    credentialId: providerConfig.credentialId,
+                    voice: providerConfig.voice,
+                    model: providerConfig.model
+                }
 
-            const response = await fetch('/api/v1/text-to-speech/generate', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-request-from': 'internal'
-                },
-                credentials: 'include',
-                body: JSON.stringify(body)
-            })
-
-            if (!response.ok) {
-                enqueueSnackbar({
-                    message: `语音测试失败：HTTP 请求状态码 ${response.status}`,
-                    options: { variant: 'error' }
+                const response = await fetch('/api/v1/text-to-speech/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-request-from': 'internal'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify(body),
+                    signal: abortController.signal
                 })
-                return
-            }
 
-            const audioChunks = []
-            const reader = response.body.getReader()
-            let buffer = ''
+                if (!response.ok) {
+                    throw createSafeTtsTestError(`语音测试失败：HTTP 请求状态码 ${response.status}`)
+                }
 
-            let done = false
-            while (!done) {
-                const result = await reader.read()
-                done = result.done
-                if (done) break
+                const audioChunks = []
+                const reader = response.body.getReader()
+                let buffer = ''
 
-                const chunk = new TextDecoder().decode(result.value, { stream: true })
-                buffer += chunk
-                const lines = buffer.split('\n\n')
-                buffer = lines.pop() || ''
+                let done = false
+                while (!done) {
+                    const result = await reader.read()
+                    if (testRequestIdRef.current !== requestId) {
+                        await reader.cancel().catch(() => {})
+                        return null
+                    }
+                    done = result.done
+                    if (done) break
 
-                for (const eventBlock of lines) {
-                    if (eventBlock.trim()) {
-                        const event = parseSSEEvent(eventBlock)
-                        if (event && event.event === 'tts_data' && event.data?.audioChunk) {
-                            const audioBuffer = Uint8Array.from(atob(event.data.audioChunk), (c) => c.charCodeAt(0))
-                            audioChunks.push(audioBuffer)
+                    const chunk = new TextDecoder().decode(result.value, { stream: true })
+                    buffer += chunk
+                    const lines = buffer.split('\n\n')
+                    buffer = lines.pop() || ''
+
+                    for (const eventBlock of lines) {
+                        if (eventBlock.trim()) {
+                            const event = parseSSEEvent(eventBlock)
+                            if (event && event.event === 'tts_data' && event.data?.audioChunk) {
+                                const audioBuffer = Uint8Array.from(atob(event.data.audioChunk), (c) => c.charCodeAt(0))
+                                audioChunks.push(audioBuffer)
+                            }
                         }
                     }
                 }
-            }
 
-            if (audioChunks.length > 0) {
-                // Combine all chunks into a single blob
-                const totalLength = audioChunks.reduce((sum, chunk) => sum + chunk.length, 0)
-                const combinedBuffer = new Uint8Array(totalLength)
-                let offset = 0
+                if (audioChunks.length > 0) {
+                    // Combine all chunks into a single blob
+                    const totalLength = audioChunks.reduce((sum, chunk) => sum + chunk.length, 0)
+                    const combinedBuffer = new Uint8Array(totalLength)
+                    let offset = 0
 
-                for (const chunk of audioChunks) {
-                    combinedBuffer.set(chunk, offset)
-                    offset += chunk.length
+                    for (const chunk of audioChunks) {
+                        combinedBuffer.set(chunk, offset)
+                        offset += chunk.length
+                    }
+
+                    const audioBlob = new Blob([combinedBuffer], { type: 'audio/mpeg' })
+                    return URL.createObjectURL(audioBlob)
                 }
 
-                const audioBlob = new Blob([combinedBuffer], { type: 'audio/mpeg' })
-                const audioUrl = URL.createObjectURL(audioBlob)
-
-                // Clean up previous audio
-                if (testAudioSrc) {
-                    URL.revokeObjectURL(testAudioSrc)
-                }
-
+                throw createSafeTtsTestError('语音测试失败：未收到音频数据')
+            },
+            onSuccess: (audioUrl) => {
+                if (!audioUrl) return
+                replaceOwnedAudioUrl({ ownedAudioUrlRef: testAudioSrcRef, nextAudioUrl: audioUrl, revokeObjectURL: URL.revokeObjectURL })
                 setTestAudioSrc(audioUrl)
-            } else {
+            },
+            onFailure: (error) => {
                 enqueueSnackbar({
-                    message: '语音测试失败：未收到音频数据',
+                    message: error?.userMessage || `语音测试失败：${getErrorMessage(error, '网络或浏览器错误')}`,
                     options: { variant: 'error' }
                 })
-                return
+            },
+            onStale: (audioUrl) => {
+                if (audioUrl) URL.revokeObjectURL(audioUrl)
+            },
+            onSettled: () => {
+                if (testAbortControllerRef.current === abortController) testAbortControllerRef.current = null
+                setIsGeneratingTest(false)
             }
-        } catch (error) {
-            enqueueSnackbar({
-                message: `语音测试失败：${getErrorMessage(error, '网络或浏览器错误')}`,
-                options: { variant: 'error' }
-            })
-        } finally {
-            setIsGeneratingTest(false)
-        }
+        })
     }
 
     const parseSSEEvent = (eventBlock) => {
@@ -417,6 +480,10 @@ const TextToSpeech = ({ dialogProps }) => {
         }
 
         return () => {
+            voiceRequestIdRef.current += 1
+            testRequestIdRef.current += 1
+            testAbortControllerRef.current?.abort()
+            testAbortControllerRef.current = null
             setTextToSpeech(null)
             setSelectedProvider('none')
             setVoices([])
@@ -517,9 +584,13 @@ const TextToSpeech = ({ dialogProps }) => {
                                     inputParam={inputParam}
                                     onSelect={(newValue) => {
                                         setValue(newValue, selectedProvider, 'credentialId')
+                                        invalidateVoiceRequests()
+                                        invalidateTestRequests()
+                                        resetTestAudio()
+                                        setVoices([])
                                         // Load voices when credential is updated
                                         if (newValue && selectedProvider !== 'none') {
-                                            setTimeout(() => loadVoicesForProvider(selectedProvider, newValue), 100)
+                                            loadVoicesForProvider(selectedProvider, newValue)
                                         }
                                     }}
                                 />

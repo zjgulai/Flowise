@@ -10,7 +10,6 @@ import {
     ICommonObject,
     addSingleFileToStorage,
     generateFollowUpPrompts,
-    IAction,
     addArrayFilesToStorage,
     mapMimeTypeToInputField,
     mapExtToInputField,
@@ -18,7 +17,8 @@ import {
     removeSpecificFileFromUpload,
     EvaluationRunner,
     handleEscapeCharacters,
-    IServerSideEventStreamer
+    IServerSideEventStreamer,
+    resolveFlowiseRequestTarget
 } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
 import {
@@ -73,6 +73,8 @@ import { executeAgentFlow } from './buildAgentflow'
 import { Workspace } from '../enterprise/database/entities/workspace.entity'
 import { Organization } from '../enterprise/database/entities/organization.entity'
 import { REQUEST_SCOPED_ABORT_ID_PREFIX, throwIfPredictionAborted, waitForQueuedPrediction } from './predictionCancellation'
+import { clearScopedChatMessageAction } from './scopedChatMessageAction'
+import { createWorkspaceOAuth2RefreshCapability } from '../services/oauth2CredentialRefresh'
 
 const shouldAutoPlayTTS = (textToSpeechConfig: string | undefined | null): boolean => {
     if (!textToSpeechConfig) return false
@@ -215,7 +217,9 @@ const getChatHistory = async ({
     incomingInput,
     chatId,
     isInternal,
-    isAgentFlow
+    isAgentFlow,
+    workspaceId,
+    orgId
 }: {
     endingNodes: IReactFlowNode[]
     nodes: IReactFlowNode[]
@@ -226,6 +230,8 @@ const getChatHistory = async ({
     chatId: string
     isInternal: boolean
     isAgentFlow: boolean
+    workspaceId: string
+    orgId: string
 }): Promise<IMessage[]> => {
     const prependMessages = incomingInput.history ?? []
     let chatHistory: IMessage[] = []
@@ -246,7 +252,9 @@ const getChatHistory = async ({
                 appDataSource,
                 databaseEntities,
                 logger,
-                prependMessages
+                prependMessages,
+                workspaceId,
+                orgId
             )
         }
         return chatHistory
@@ -272,7 +280,9 @@ const getChatHistory = async ({
             appDataSource,
             databaseEntities,
             logger,
-            prependMessages
+            prependMessages,
+            workspaceId,
+            orgId
         )
     }
 
@@ -311,7 +321,6 @@ export const executeFlow = async ({
     cachePool,
     usageCacheManager,
     sseStreamer,
-    baseURL,
     isInternal,
     files,
     signal,
@@ -323,6 +332,8 @@ export const executeFlow = async ({
     productId
 }: IExecuteFlowParams) => {
     throwIfPredictionAborted(signal?.signal)
+    const baseURL = resolveFlowiseRequestTarget().canonicalOrigin
+    const refreshOAuth2Credential = createWorkspaceOAuth2RefreshCapability(workspaceId)
 
     // Ensure incomingInput has all required properties with default values
     incomingInput = {
@@ -396,8 +407,10 @@ export const executeFlow = async ({
                         orgId,
                         chatId,
                         chatflowid,
+                        workspaceId,
                         appDataSource,
-                        databaseEntities: databaseEntities
+                        databaseEntities: databaseEntities,
+                        refreshOAuth2Credential
                     }
                     const speechToTextResult = await convertSpeechToText(upload, speechToTextConfig, options)
                     logger.debug(`[server]: [${orgId}]: Speech to text result: ${speechToTextResult}`)
@@ -504,7 +517,8 @@ export const executeFlow = async ({
             orgId,
             workspaceId,
             subscriptionId,
-            productId
+            productId,
+            refreshOAuth2Credential
         })
     }
 
@@ -552,7 +566,9 @@ export const executeFlow = async ({
         incomingInput,
         chatId,
         isInternal,
-        isAgentFlow
+        isAgentFlow,
+        workspaceId,
+        orgId
     })
 
     /*** Get API Config ***/
@@ -600,7 +616,8 @@ export const executeFlow = async ({
         workspaceId,
         subscriptionId,
         updateStorageUsage,
-        checkStorage
+        checkStorage,
+        refreshOAuth2Credential
     })
 
     const setVariableNodesOutput = getSetVariableNodesOutput(reactFlowNodes)
@@ -627,7 +644,8 @@ export const executeFlow = async ({
             baseURL,
             signal,
             orgId,
-            workspaceId
+            workspaceId,
+            refreshOAuth2Credential
         })
 
         if (streamResults) {
@@ -666,10 +684,13 @@ export const executeFlow = async ({
             if (agentflow.followUpPrompts) {
                 const followUpPromptsConfig = JSON.parse(agentflow.followUpPrompts)
                 const generatedFollowUpPrompts = await generateFollowUpPrompts(followUpPromptsConfig, apiMessage.content, {
+                    orgId,
+                    workspaceId,
                     chatId,
                     chatflowid: agentflow.id,
                     appDataSource,
-                    databaseEntities
+                    databaseEntities,
+                    refreshOAuth2Credential
                 })
                 if (generatedFollowUpPrompts?.questions) {
                     apiMessage.followUpPrompts = JSON.stringify(generatedFollowUpPrompts.questions)
@@ -689,33 +710,14 @@ export const executeFlow = async ({
                 orgId
             )
 
-            // Find the previous chat message with the same action id and remove the action
+            // Clear only an action owned by this exact flow and conversation.
             if (incomingInput.action && Object.keys(incomingInput.action).length) {
-                let query = await appDataSource
-                    .getRepository(ChatMessage)
-                    .createQueryBuilder('chat_message')
-                    .where('chat_message.chatId = :chatId', { chatId })
-                    .orWhere('chat_message.sessionId = :sessionId', { sessionId })
-                    .orderBy('chat_message.createdDate', 'DESC')
-                    .getMany()
-
-                for (const result of query) {
-                    if (result.action) {
-                        try {
-                            const action: IAction = JSON.parse(result.action)
-                            if (action.id === incomingInput.action.id) {
-                                const newChatMessage = new ChatMessage()
-                                Object.assign(newChatMessage, result)
-                                newChatMessage.action = null
-                                const cm = await appDataSource.getRepository(ChatMessage).create(newChatMessage)
-                                await appDataSource.getRepository(ChatMessage).save(cm)
-                                break
-                            }
-                        } catch (e) {
-                            // error converting action to JSON
-                        }
-                    }
-                }
+                await clearScopedChatMessageAction(appDataSource.getRepository(ChatMessage), {
+                    chatflowId: agentflow.id,
+                    chatId,
+                    sessionId,
+                    actionId: incomingInput.action.id
+                })
             }
 
             // Prepare response
@@ -784,7 +786,8 @@ export const executeFlow = async ({
             ...(isStreamValid && { sseStreamer, shouldStreamResponse: isStreamValid }),
             evaluationRunId,
             updateStorageUsage,
-            checkStorage
+            checkStorage,
+            refreshOAuth2Credential
         }
 
         /*** Run the ending node ***/
@@ -842,7 +845,8 @@ export const executeFlow = async ({
                         databaseEntities,
                         workspaceId,
                         orgId,
-                        logger
+                        logger,
+                        refreshOAuth2Credential
                     }
                     const customFuncNodeInstance = new nodeModule.nodeClass()
                     let moderatedResponse = await customFuncNodeInstance.init(nodeData, question, options)
@@ -879,10 +883,13 @@ export const executeFlow = async ({
         if (chatflow.followUpPrompts) {
             const followUpPromptsConfig = JSON.parse(chatflow.followUpPrompts)
             const followUpPrompts = await generateFollowUpPrompts(followUpPromptsConfig, apiMessage.content, {
+                orgId,
+                workspaceId,
                 chatId,
                 chatflowid,
                 appDataSource,
-                databaseEntities
+                databaseEntities,
+                refreshOAuth2Credential
             })
             if (followUpPrompts?.questions) {
                 apiMessage.followUpPrompts = JSON.stringify(followUpPrompts.questions)
@@ -926,8 +933,10 @@ export const executeFlow = async ({
                 orgId,
                 chatflowid,
                 chatId,
+                workspaceId,
                 appDataSource,
-                databaseEntities
+                databaseEntities,
+                refreshOAuth2Credential
             }
             await generateTTSForResponseStream(result.text, chatflow.textToSpeech, options, chatId, chatMessage?.id, sseStreamer, signal)
         }
@@ -1010,8 +1019,7 @@ export const utilBuildChatflow = async (
     }
 
     const isAgentFlow = chatflow.type === 'MULTIAGENT'
-    const httpProtocol = req.get('x-forwarded-proto') || req.protocol
-    const baseURL = `${httpProtocol}://${req.get('host')}`
+    const baseURL = resolveFlowiseRequestTarget().canonicalOrigin
     const incomingInput: IncomingInput = req.body || {} // Ensure incomingInput is never undefined
     const chatId = incomingInput.chatId ?? incomingInput.overrideConfig?.sessionId ?? uuidv4()
     const files = (req.files as Express.Multer.File[]) || []

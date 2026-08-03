@@ -3,11 +3,11 @@ export const ZH_CN_AGENTFLOW_C: ReadonlyArray<readonly [string, string]> = [
     ['node.executeFlowAgentflow.root.label@aa5516bf4d96', '执行流程'],
     ['node.executeFlowAgentflow.root/credential.label@4fd0f54ac1c9', '连接凭据'],
     [
-        'node.executeFlowAgentflow.root/inputs/executeFlowBaseURL.description@84e20cfffbee',
-        'Flowise 的基础 URL。默认使用传入请求的 URL；需要通过备用路由执行流程时可设置此项。'
+        'node.executeFlowAgentflow.root/inputs/executeFlowBaseURL.description@2f6bdca35a13',
+        'Flowise 的基础 URL。默认使用服务端规范化的 APP_URL；显式外部目标不会收到 Flow API 凭据。'
     ],
     ['node.executeFlowAgentflow.root/inputs/executeFlowBaseURL.label@70589413a3c9', '基础 URL'],
-    ['node.executeFlowAgentflow.root/inputs/executeFlowBaseURL.placeholder@f1de9e489ba8', 'http://localhost:3000'],
+    ['node.executeFlowAgentflow.root/inputs/executeFlowBaseURL.placeholder@177d9c04ecd6', 'https://flowise.example.com'],
     ['node.executeFlowAgentflow.root/inputs/executeFlowInput.label@36ecb4f86691', '输入'],
     ['node.executeFlowAgentflow.root/inputs/executeFlowOverrideConfig.description@a2b5b2551fef', '覆盖传递给流程的配置'],
     ['node.executeFlowAgentflow.root/inputs/executeFlowOverrideConfig.label@11e524377a1e', '覆盖配置'],

@@ -41,7 +41,11 @@ import ConfirmDialog from '@/ui-component/dialog/ConfirmDialog'
 import DocStoreAPIDialog from './DocStoreAPIDialog'
 
 // API
-import documentsApi from '@/api/documentstore'
+import documentsApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 
 // Hooks
 import useApi from '@/hooks/useApi'
@@ -187,30 +191,19 @@ const DocumentStoreDetails = () => {
         setShowDocumentLoaderListDialog(true)
     }
 
-    const deleteVectorStoreDataFromStore = async (storeId, docId) => {
-        try {
-            await documentsApi.deleteVectorStoreDataFromStore(storeId, docId)
-        } catch {
-            enqueueSnackbar({
-                message: '清理向量库数据失败，请稍后重试',
-                options: { variant: 'error' }
-            })
-        }
-    }
-
     const onDocStoreDelete = async (type, file) => {
         setBackdropLoading(true)
-        setShowDeleteDocStoreDialog(false)
         if (type === 'STORE') {
-            if (documentStore.recordManagerConfig) {
-                await deleteVectorStoreDataFromStore(storeId)
-            }
             try {
-                const deleteResp = await documentsApi.deleteDocumentStore(storeId)
+                const versionToken = requireDocumentStoreVersionToken(documentStore)
+                const deleteResp = await documentsApi.deleteDocumentStore(storeId, versionToken)
                 setBackdropLoading(false)
                 if (deleteResp.data) {
+                    setShowDeleteDocStoreDialog(false)
                     enqueueSnackbar({
-                        message: '文档库、加载器及关联文档分块已删除',
+                        message: documentStore.vectorStoreConfig
+                            ? '本地文档库、加载器和分块已删除；外部向量服务中的数据未自动清理'
+                            : '本地文档库、加载器和分块已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -225,6 +218,22 @@ const DocumentStoreDetails = () => {
                 }
             } catch (error) {
                 setBackdropLoading(false)
+                if (isDocumentStoreVersionConflict(error)) {
+                    setShowDeleteDocStoreDialog(false)
+                    setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    try {
+                        const latestResponse = await documentsApi.getSpecificDocumentStore(storeId)
+                        requireDocumentStoreVersionToken(latestResponse.data)
+                        setDocumentStore(latestResponse.data)
+                    } catch {
+                        setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    }
+                    enqueueSnackbar({
+                        message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                        options: { variant: 'warning' }
+                    })
+                    return
+                }
                 setError(error)
                 enqueueSnackbar({
                     message: `删除文档库失败：${getErrorMessage(error)}`,
@@ -241,15 +250,18 @@ const DocumentStoreDetails = () => {
                 })
             }
         } else if (type === 'LOADER') {
-            if (documentStore.recordManagerConfig) {
-                await deleteVectorStoreDataFromStore(storeId, file.id)
-            }
             try {
-                const deleteResp = await documentsApi.deleteLoaderFromStore(storeId, file.id)
+                const versionToken = requireDocumentStoreVersionToken(documentStore)
+                const deleteResp = await documentsApi.deleteLoaderFromStore(storeId, file.id, versionToken)
                 setBackdropLoading(false)
                 if (deleteResp.data) {
+                    setShowDeleteDocStoreDialog(false)
+                    const advancedVersionToken = requireDocumentStoreVersionToken(deleteResp.data)
+                    setDocumentStore((current) => ({ ...current, versionToken: advancedVersionToken }))
                     enqueueSnackbar({
-                        message: '加载器及关联文档分块已删除',
+                        message: documentStore.vectorStoreConfig
+                            ? '本地加载器和关联分块已删除；外部向量服务中的数据未自动清理'
+                            : '本地加载器和关联分块已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -263,8 +275,24 @@ const DocumentStoreDetails = () => {
                     onConfirm()
                 }
             } catch (error) {
-                setError(error)
                 setBackdropLoading(false)
+                if (isDocumentStoreVersionConflict(error)) {
+                    setShowDeleteDocStoreDialog(false)
+                    setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    try {
+                        const latestResponse = await documentsApi.getSpecificDocumentStore(storeId)
+                        requireDocumentStoreVersionToken(latestResponse.data)
+                        setDocumentStore(latestResponse.data)
+                    } catch {
+                        setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    }
+                    enqueueSnackbar({
+                        message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                        options: { variant: 'warning' }
+                    })
+                    return
+                }
+                setError(error)
                 enqueueSnackbar({
                     message: `删除文档加载器失败：${getErrorMessage(error)}`,
                     options: {
@@ -305,13 +333,8 @@ const DocumentStoreDetails = () => {
 
         let description = `确定删除“${displayName}”吗？此操作会删除文档库中与其关联的全部文档分块。`
 
-        if (
-            recordManagerConfig &&
-            vectorStoreConfig &&
-            Object.keys(recordManagerConfig).length > 0 &&
-            Object.keys(vectorStoreConfig).length > 0
-        ) {
-            description = `确定删除“${displayName}”吗？此操作会删除文档库中与其关联的全部文档分块，并从向量数据库中移除实际数据。`
+        if (vectorStoreConfig && Object.keys(vectorStoreConfig).length > 0) {
+            description += '此操作不会删除外部向量服务中的数据；需按受控清理流程另行处理。本地删除与外部清理无法保证原子性。'
         }
 
         const props = {
@@ -328,15 +351,10 @@ const DocumentStoreDetails = () => {
     }
 
     const onStoreDelete = (vectorStoreConfig, recordManagerConfig) => {
-        let description = `确定删除文档库“${getSpecificDocumentStore.data?.name}”吗？此操作会删除其中的全部加载器和文档分块。`
+        let description = `确定删除文档库“${documentStore?.name}”吗？此操作会删除其中的全部加载器和文档分块。`
 
-        if (
-            recordManagerConfig &&
-            vectorStoreConfig &&
-            Object.keys(recordManagerConfig).length > 0 &&
-            Object.keys(vectorStoreConfig).length > 0
-        ) {
-            description = `确定删除文档库“${getSpecificDocumentStore.data?.name}”吗？此操作会删除其中的全部加载器和文档分块，并从向量数据库中移除实际数据。`
+        if (vectorStoreConfig && Object.keys(vectorStoreConfig).length > 0) {
+            description += '此操作不会删除外部向量服务中的数据；需按受控清理流程另行处理。本地删除与外部清理无法保证原子性。'
         }
 
         const props = {
@@ -364,8 +382,12 @@ const DocumentStoreDetails = () => {
             setAnchorEl(null)
             setBackdropLoading(true)
             try {
-                const resp = await documentsApi.refreshLoader(storeId)
+                const resp = await documentsApi.refreshLoader(storeId, documentStore.versionToken)
                 if (resp.data) {
+                    requireDocumentStoreVersionToken(resp.data)
+                    const latestResponse = await documentsApi.getSpecificDocumentStore(storeId)
+                    requireDocumentStoreVersionToken(latestResponse.data)
+                    setDocumentStore(latestResponse.data)
                     enqueueSnackbar({
                         message: '文档库刷新成功',
                         options: {
@@ -382,6 +404,21 @@ const DocumentStoreDetails = () => {
                 setBackdropLoading(false)
             } catch (error) {
                 setBackdropLoading(false)
+                if (isDocumentStoreVersionConflict(error)) {
+                    setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    try {
+                        const latestResponse = await documentsApi.getSpecificDocumentStore(storeId)
+                        requireDocumentStoreVersionToken(latestResponse.data)
+                        setDocumentStore(latestResponse.data)
+                    } catch {
+                        setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    }
+                    enqueueSnackbar({
+                        message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                        options: { variant: 'warning' }
+                    })
+                    return
+                }
                 enqueueSnackbar({
                     message: `刷新文档库失败：${getErrorMessage(error)}`,
                     options: {
@@ -402,7 +439,8 @@ const DocumentStoreDetails = () => {
         const data = {
             name: documentStore.name,
             description: documentStore.description,
-            id: documentStore.id
+            id: documentStore.id,
+            versionToken: documentStore.versionToken
         }
         const dialogProp = {
             title: '编辑文档库',
@@ -472,7 +510,7 @@ const DocumentStoreDetails = () => {
                     <Stack flexDirection='column' sx={{ gap: 3 }}>
                         <ViewHeader
                             isBackButton={true}
-                            isEditButton={hasPermission('documentStores:create,documentStores:update')}
+                            isEditButton={hasPermission('documentStores:update')}
                             search={false}
                             title={documentStore?.name}
                             description={documentStore?.description}
@@ -481,7 +519,7 @@ const DocumentStoreDetails = () => {
                         >
                             {(documentStore?.status === 'STALE' || documentStore?.status === 'UPSERTING') && (
                                 <PermissionIconButton
-                                    permissionId={'documentStores:view'}
+                                    permissionId={'documentStores:upsert-config'}
                                     onClick={onConfirm}
                                     size='small'
                                     color='primary'
@@ -582,7 +620,7 @@ const DocumentStoreDetails = () => {
                             </StyledMenu>
                         </ViewHeader>
                         <DocumentStoreStatus status={documentStore?.status} />
-                        {getSpecificDocumentStore.data?.whereUsed?.length > 0 && (
+                        {documentStore?.whereUsed?.length > 0 && (
                             <Stack flexDirection='row' sx={{ gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
                                 <div
                                     style={{
@@ -600,7 +638,7 @@ const DocumentStoreDetails = () => {
                                     <IconVectorBezier2 style={{ marginRight: 5 }} size={17} />
                                     关联对话流程：
                                 </div>
-                                {getSpecificDocumentStore.data.whereUsed.map((chatflowUsed, index) => (
+                                {documentStore.whereUsed.map((chatflowUsed, index) => (
                                     <Chip
                                         key={index}
                                         clickable
@@ -747,7 +785,7 @@ const DocumentStoreDetails = () => {
                                 </Table>
                             </TableContainer>
                         )}
-                        {getSpecificDocumentStore.data?.status === 'STALE' && (
+                        {documentStore?.status === 'STALE' && (
                             <div style={{ width: '100%', textAlign: 'center', marginTop: '20px' }}>
                                 <Typography
                                     color='warning'

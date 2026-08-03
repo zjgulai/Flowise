@@ -5,10 +5,13 @@
  * rate limiter middleware delegation, and request routing to the service layer.
  */
 import { Request, Response, NextFunction } from 'express'
+import { StatusCodes } from 'http-status-codes'
+import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 
 // --- Mock setup ---
 const mockHandleMcpRequest = jest.fn()
 const mockHandleMcpDeleteRequest = jest.fn()
+const mockGetChatflowByIdAndVerifyToken = jest.fn()
 
 jest.mock('../../services/mcp-endpoint', () => ({
     __esModule: true,
@@ -18,12 +21,19 @@ jest.mock('../../services/mcp-endpoint', () => ({
     }
 }))
 
-const mockGetRateLimiter = jest.fn().mockReturnValue((_req: any, _res: any, next: any) => next())
+jest.mock('../../services/mcp-server', () => ({
+    __esModule: true,
+    default: {
+        getChatflowByIdAndVerifyToken: (...args: any[]) => mockGetChatflowByIdAndVerifyToken(...args)
+    }
+}))
+
+const mockGetRateLimiterById = jest.fn().mockReturnValue((_req: any, _res: any, next: any) => next())
 
 jest.mock('../../utils/rateLimit', () => ({
     RateLimiterManager: {
         getInstance: () => ({
-            getRateLimiter: () => mockGetRateLimiter()
+            getRateLimiterById: (id: string) => mockGetRateLimiterById(id)
         })
     }
 }))
@@ -67,16 +77,17 @@ function mockNext(): NextFunction {
 
 beforeEach(() => {
     jest.clearAllMocks()
+    mockGetChatflowByIdAndVerifyToken.mockResolvedValue({ id: 'flow-123' })
 })
 
 describe('MCP Endpoint Controller', () => {
     describe('authenticateToken', () => {
-        it('returns 401 when Authorization header is missing', () => {
+        it('returns 401 when Authorization header is missing', async () => {
             const req = mockReq({ headers: {} })
             const res = mockRes()
             const next = mockNext()
 
-            mcpEndpointController.authenticateToken(req, res, next)
+            await mcpEndpointController.authenticateToken(req, res, next)
 
             expect(res.status).toHaveBeenCalledWith(401)
             expect(res.json).toHaveBeenCalledWith(
@@ -86,60 +97,117 @@ describe('MCP Endpoint Controller', () => {
                 })
             )
             expect(next).not.toHaveBeenCalled()
+            expect(mockGetChatflowByIdAndVerifyToken).not.toHaveBeenCalled()
         })
 
-        it('returns 401 when Authorization header is not Bearer', () => {
+        it('returns 401 when Authorization header is not Bearer', async () => {
             const req = mockReq({ headers: { authorization: 'Basic dXNlcjpwYXNz' } })
             const res = mockRes()
             const next = mockNext()
 
-            mcpEndpointController.authenticateToken(req, res, next)
+            await mcpEndpointController.authenticateToken(req, res, next)
 
             expect(res.status).toHaveBeenCalledWith(401)
             expect(next).not.toHaveBeenCalled()
         })
 
-        it('returns 401 when Bearer token is empty', () => {
+        it('returns 401 when Bearer token is empty', async () => {
             const req = mockReq({ headers: { authorization: 'Bearer ' } })
             const res = mockRes()
             const next = mockNext()
 
-            mcpEndpointController.authenticateToken(req, res, next)
+            await mcpEndpointController.authenticateToken(req, res, next)
 
             expect(res.status).toHaveBeenCalledWith(401)
             expect(next).not.toHaveBeenCalled()
         })
 
-        it('sets res.locals.token and calls next on valid Bearer token', () => {
-            const req = mockReq({ headers: { authorization: 'Bearer my-secret-token' } })
+        it('verifies and binds the ChatFlow before calling next', async () => {
+            const token = 'a'.repeat(64)
+            const chatflow = { id: 'flow-123' }
+            mockGetChatflowByIdAndVerifyToken.mockResolvedValue(chatflow)
+            const req = mockReq({ headers: { authorization: `Bearer ${token}` } })
             const res = mockRes()
             const next = mockNext()
 
-            mcpEndpointController.authenticateToken(req, res, next)
+            await mcpEndpointController.authenticateToken(req, res, next)
 
-            expect(res.locals.token).toBe('my-secret-token')
+            expect(mockGetChatflowByIdAndVerifyToken).toHaveBeenCalledWith('flow-123', token)
+            expect(res.locals.mcpToken).toBe(token)
+            expect(res.locals.mcpChatflow).toBe(chatflow)
             expect(next).toHaveBeenCalled()
+            expect(res.status).not.toHaveBeenCalled()
+        })
+
+        it('rejects a well-formed but invalid Bearer token before calling next', async () => {
+            mockGetChatflowByIdAndVerifyToken.mockRejectedValue(
+                new InternalFlowiseError(StatusCodes.UNAUTHORIZED, 'provider detail must not escape')
+            )
+            const req = mockReq({ headers: { authorization: `Bearer ${'b'.repeat(64)}` } })
+            const res = mockRes()
+            const next = mockNext()
+
+            await mcpEndpointController.authenticateToken(req, res, next)
+
+            expect(res.status).toHaveBeenCalledWith(StatusCodes.UNAUTHORIZED)
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.objectContaining({ message: 'Unauthorized' }) }))
+            expect(next).not.toHaveBeenCalled()
+        })
+
+        it('returns a fixed not-found response for a disabled or absent MCP server', async () => {
+            mockGetChatflowByIdAndVerifyToken.mockRejectedValue(
+                new InternalFlowiseError(StatusCodes.NOT_FOUND, 'provider detail must not escape')
+            )
+            const req = mockReq({ headers: { authorization: `Bearer ${'c'.repeat(64)}` } })
+            const res = mockRes()
+            const next = mockNext()
+
+            await mcpEndpointController.authenticateToken(req, res, next)
+
+            expect(res.status).toHaveBeenCalledWith(StatusCodes.NOT_FOUND)
+            expect(res.json).toHaveBeenCalledWith(
+                expect.objectContaining({ error: expect.objectContaining({ message: 'MCP server not found' }) })
+            )
+            expect(next).not.toHaveBeenCalled()
+        })
+
+        it('forwards unexpected verification failures without exposing them in a response', async () => {
+            const error = new Error('database secret')
+            mockGetChatflowByIdAndVerifyToken.mockRejectedValue(error)
+            const req = mockReq({ headers: { authorization: `Bearer ${'d'.repeat(64)}` } })
+            const res = mockRes()
+            const next = mockNext()
+
+            await mcpEndpointController.authenticateToken(req, res, next)
+
+            expect(next).toHaveBeenCalledWith(error)
             expect(res.status).not.toHaveBeenCalled()
         })
     })
 
     describe('handlePost', () => {
-        it('calls service with chatflowId and token from res.locals.token', async () => {
+        it('calls the service with the middleware-bound token and ChatFlow', async () => {
             const req = mockReq({ params: { chatflowId: 'flow-123' } })
             const res = mockRes()
-            res.locals.token = 'my-secret-token'
+            const token = 'a'.repeat(64)
+            const chatflow = { id: 'flow-123' }
+            res.locals.mcpToken = token
+            res.locals.mcpChatflow = chatflow
             const next = mockNext()
             mockHandleMcpRequest.mockResolvedValue(undefined)
 
             await mcpEndpointController.handlePost(req, res, next)
 
-            expect(mockHandleMcpRequest).toHaveBeenCalledWith('flow-123', 'my-secret-token', req, res)
+            expect(mockHandleMcpRequest).toHaveBeenCalledWith('flow-123', token, req, res, chatflow)
         })
 
         it('calls next(error) on unexpected errors', async () => {
             const req = mockReq({ params: { chatflowId: 'flow-123' } })
             const res = mockRes()
-            res.locals.token = 'token'
+            const token = 'b'.repeat(64)
+            const chatflow = { id: 'flow-123' }
+            res.locals.mcpToken = token
+            res.locals.mcpChatflow = chatflow
             const next = mockNext()
             const error = new Error('Unexpected')
             mockHandleMcpRequest.mockRejectedValue(error)
@@ -147,6 +215,20 @@ describe('MCP Endpoint Controller', () => {
             await mcpEndpointController.handlePost(req, res, next)
 
             expect(next).toHaveBeenCalledWith(error)
+        })
+
+        it('fails closed when the verified ChatFlow context is missing or mismatched', async () => {
+            const req = mockReq({ params: { chatflowId: 'flow-123' } })
+            const res = mockRes()
+            res.locals.mcpToken = 'c'.repeat(64)
+            res.locals.mcpChatflow = { id: 'flow-other' }
+            const next = mockNext()
+
+            await mcpEndpointController.handlePost(req, res, next)
+
+            expect(res.status).toHaveBeenCalledWith(StatusCodes.UNAUTHORIZED)
+            expect(mockHandleMcpRequest).not.toHaveBeenCalled()
+            expect(next).not.toHaveBeenCalled()
         })
     })
 
@@ -164,14 +246,14 @@ describe('MCP Endpoint Controller', () => {
     })
 
     describe('getRateLimiterMiddleware', () => {
-        it('delegates to RateLimiterManager', async () => {
+        it('binds the limiter to the chatflowId route parameter', async () => {
             const req = mockReq()
             const res = mockRes()
             const next = mockNext()
 
             await mcpEndpointController.getRateLimiterMiddleware(req, res, next)
 
-            expect(mockGetRateLimiter).toHaveBeenCalled()
+            expect(mockGetRateLimiterById).toHaveBeenCalledWith('flow-123')
         })
     })
 })

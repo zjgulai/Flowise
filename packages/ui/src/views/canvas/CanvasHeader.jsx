@@ -41,6 +41,7 @@ import { generateExportFlowData } from '@/utils/genericHelper'
 import { getErrorMessage } from '@/utils/getErrorMessage'
 import { uiBaseURL } from '@/store/constant'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction, SET_CHATFLOW } from '@/store/actions'
+import { getCanvasSavePermission } from './canvasSavePermission'
 
 // Clock icon (unchecked) and calendar-check icon (checked), mirroring MaterialUISwitch style
 const clockIcon = `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" height="20" width="20" viewBox="0 0 20 20"><path fill="${encodeURIComponent(
@@ -121,7 +122,15 @@ const LockedScheduleSwitch = styled(ScheduleSwitch, { shouldForwardProp: (prop) 
 
 // ==============================|| CANVAS HEADER ||============================== //
 
-const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, handleDeleteFlow, handleLoadFlow }) => {
+const CanvasHeader = ({
+    chatflow,
+    isAgentCanvas,
+    isAgentflowV2,
+    handleSaveFlow,
+    handleDeleteFlow,
+    handleLoadFlow,
+    isSaveDisabled = false
+}) => {
     const theme = useTheme()
     const dispatch = useDispatch()
     const navigate = useNavigate()
@@ -148,7 +157,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
     const enqueueSnackbar = (...args) => dispatch(enqueueSnackbarAction(...args))
     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
 
-    const [savePermission, setSavePermission] = useState(isAgentCanvas ? 'agentflows:create' : 'chatflows:create')
+    const savePermission = getCanvasSavePermission({ isAgentCanvas, persistedFlowId: chatflow?.id })
 
     const title = isAgentCanvas ? '智能体流程' : '对话流程'
 
@@ -334,20 +343,19 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
     }
 
     const onSaveChatflowClick = () => {
-        if (chatflow.id) handleSaveFlow(flowName)
+        if (isSaveDisabled) return
+        if (chatflow?.id) handleSaveFlow(flowName)
         else setFlowDialogOpen(true)
     }
 
     const onConfirmSaveName = (flowName) => {
         setFlowDialogOpen(false)
-        setSavePermission(isAgentCanvas ? 'agentflows:update' : 'chatflows:update')
         handleSaveFlow(flowName)
     }
 
     useEffect(() => {
         if (updateChatflowApi.data) {
             setFlowName(updateChatflowApi.data.name)
-            setSavePermission(isAgentCanvas ? 'agentflows:update' : 'chatflows:update')
             dispatch({ type: SET_CHATFLOW, chatflow: updateChatflowApi.data })
         }
         setEditingFlowName(false)
@@ -608,7 +616,12 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                         </ButtonBase>
                     )}
                     <Available permission={savePermission}>
-                        <ButtonBase title={`保存${title}`} sx={{ borderRadius: '50%', mr: 2 }}>
+                        <ButtonBase
+                            title={isSaveDisabled ? '流程数据未能安全加载，暂时无法保存' : `保存${title}`}
+                            sx={{ borderRadius: '50%', mr: 2 }}
+                            disabled={isSaveDisabled}
+                            onClick={onSaveChatflowClick}
+                        >
                             <Avatar
                                 variant='rounded'
                                 sx={{
@@ -623,7 +636,6 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                                     }
                                 }}
                                 color='inherit'
-                                onClick={onSaveChatflowClick}
                             >
                                 <IconDeviceFloppy stroke={1.5} size='1.3rem' />
                             </Avatar>
@@ -705,7 +717,8 @@ CanvasHeader.propTypes = {
     handleDeleteFlow: PropTypes.func,
     handleLoadFlow: PropTypes.func,
     isAgentCanvas: PropTypes.bool,
-    isAgentflowV2: PropTypes.bool
+    isAgentflowV2: PropTypes.bool,
+    isSaveDisabled: PropTypes.bool
 }
 
 export default CanvasHeader

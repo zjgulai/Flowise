@@ -79,7 +79,7 @@ describe('production UI safety contracts', () => {
 
         expect(source).toContain('flowise_logo.png')
         expect(source).toContain('onError=')
-        expect(source).toContain("data.iconSrc.startsWith('/')")
+        expect(source).toContain("iconSrc.startsWith('/')")
         expect(source).toContain('data.iconSrc || !data.color')
     })
 
@@ -165,6 +165,7 @@ describe('production UI safety contracts', () => {
         expect(documents).toContain('新增文档库')
         expect(documents).toContain("id='btn_createDocumentStore'")
         expect(documents).toContain("aria-label='文档库操作'")
+        expect(documents).toContain("const canRenameDocumentStore = hasPermission('documentStores:update')")
         expect(documents).toContain("gridTemplateColumns={{ xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' }}")
         expect(documents).toContain('文档库已删除')
         expect(documents).not.toContain('Add New')
@@ -201,7 +202,7 @@ describe('production UI safety contracts', () => {
         expect(dialog).toContain('dismissSubmitError()')
         expect(dialog).toContain('setIsSubmitting(true)')
         expect(dialog).toContain('setIsSubmitting(false)')
-        expect(dialog).toContain('disabled={isSubmitting || !documentStoreName.trim()}')
+        expect(dialog).toContain('disabled={isSubmitting || hasVersionConflict || !documentStoreName.trim()}')
         expect(dialog).toContain('正在提交…')
         expect(dialog).toContain("id='txtInput_documentStoreName'")
         expect(dialog).toContain("id='txtInput_documentStoreDescription'")
@@ -216,7 +217,21 @@ describe('production UI safety contracts', () => {
         expect(boundary).toContain('onBack')
         expect(boundary).toContain('backLabel')
         expect(details).toContain("backLabel='返回文档库列表'")
+        expect(details).toContain("isEditButton={hasPermission('documentStores:update')}")
+        expect(details).toMatch(/permissionId=\{'documentStores:upsert-config'\}[\s\S]*?title='刷新文档库'/)
         expect(chunks).toContain("backLabel='返回文档库列表'")
+    })
+
+    it('hides provider-backed document description generation without upsert-config permission', () => {
+        const nodeInputs = read('../views/canvas/NodeInputHandler.jsx')
+        const assistant = read('../views/assistants/custom/CustomAssistantConfigurePreview.jsx')
+
+        expect(nodeInputs).toMatch(
+            /<Available permission='documentStores:upsert-config'>[\s\S]*?title='生成知识库描述'[\s\S]*?<\/Available>/
+        )
+        expect(assistant).toMatch(
+            /<Available permission='documentStores:upsert-config'>[\s\S]*?title='使用模型生成说明'[\s\S]*?<\/Available>/
+        )
     })
 
     it('keeps ViewHeader actions and search usable on narrow screens', () => {
@@ -301,14 +316,14 @@ describe('production UI safety contracts', () => {
         expect(executions).toContain("nextMonthAriaLabel='下个月'")
         expect(details).toContain("format('YYYY-MM-DD HH:mm:ss')")
         expect(table).toContain("aria-label='执行记录表'")
-        expect(table).toContain("'aria-label': `选择执行记录 ${row.agentflow?.name || row.id}`")
+        expect(table).toContain("'aria-label': `选择执行记录 ${row.agentflow?.name || row.id}（ID：${row.id}）`")
         expect(table).toContain('最近更新时间')
         expect(table).toContain('创建时间')
         expect(table.match(/format\('YYYY-MM-DD HH:mm:ss'\)/g)).toHaveLength(2)
         expect(table).not.toContain('Last Updated')
     })
 
-    it('renders the shared file picker placeholder separately from real file data', () => {
+    it('renders shared file-picker placeholders while the deprecated assistant blocks new uploads', () => {
         const file = read('../ui-component/file/File.jsx')
         const dataset = read('../views/datasets/AddEditDatasetDialog.jsx')
         const upload = read('../views/datasets/UploadCSVFileDialog.jsx')
@@ -328,10 +343,9 @@ describe('production UI safety contracts', () => {
         expect(canvas).toContain("placeholder='选择要上传的文件'")
         expect(canvas).toContain("buttonText='上传文件'")
         expect(canvas).not.toContain("'Choose a file to upload'")
-        expect(assistant).toContain("value={uploadCodeInterpreterFiles ?? ''}")
-        expect(assistant).toContain("value={uploadVectorStoreFiles ?? ''}")
-        expect(assistant.match(/placeholder='选择要上传的文件'/g)).toHaveLength(2)
-        expect(assistant.match(/buttonText='上传文件'/g)).toHaveLength(2)
+        expect(assistant).not.toContain('uploadCodeInterpreterFiles')
+        expect(assistant).not.toContain('uploadVectorStoreFiles')
+        expect(assistant).not.toContain("buttonText='上传文件'")
     })
 
     it('labels MCP server annotations as unverified and fails closed when risk hints are incomplete', () => {
@@ -360,7 +374,9 @@ describe('production UI safety contracts', () => {
 
         expect(source).toContain("text: '今天是使用 Flowise 构建智能应用的美好一天！'")
         expect(source).toContain('语音测试失败：HTTP 请求状态码 ${response.status}')
-        expect(source).toContain("message: '语音测试失败：未收到音频数据'")
+        expect(source).toContain("throw createSafeTtsTestError('语音测试失败：未收到音频数据')")
+        expect(source).toContain('message: error?.userMessage ||')
+        expect(source).toContain('testAbortControllerRef.current?.abort()')
         expect(source).toContain("getErrorMessage(error, '网络或浏览器错误')")
         expect(source).not.toMatch(/console\.error\s*\(/)
         expect(source).not.toContain("throw new Error('未收到音频数据')")
@@ -543,6 +559,11 @@ describe('production UI safety contracts', () => {
         expect(profile).toContain("getErrorMessage(importAllApi.error, '导入文件无效')")
         expect(profile).toContain("getErrorMessage(exportAllApi.error, '服务器内部错误')")
         expect(profile).not.toContain("from '@/utils/errorHandler'")
+        expect(profile).toContain('旧版 OpenAI／Azure 助手仅供归档，不属于可恢复的工作区备份。')
+        expect(profile).not.toContain("{ value: 'Assistants OpenAI'")
+        expect(profile).not.toContain("{ value: 'Assistants Azure'")
+        expect(profile).not.toContain("data.includes('Assistants OpenAI')")
+        expect(profile).not.toContain("data.includes('Assistants Azure')")
         expect(cloudMenu).toContain("<ListItemButton\n                            component='a'")
         expect(cloudMenu).not.toContain("<a href='https://docs.flowiseai.com'")
         expect(trial).toContain("component='a'")
@@ -551,6 +572,46 @@ describe('production UI safety contracts', () => {
 
     it('keeps the assistant tool-delete icon accessible in Chinese', () => {
         expect(read('../views/assistants/custom/CustomAssistantConfigurePreview.jsx')).toContain("aria-label='删除工具'")
+    })
+
+    it('makes the deprecated OpenAI Assistants area legacy-only with an explicit migration path', () => {
+        const landing = read('../views/assistants/index.jsx')
+        const layout = read('../views/assistants/openai/OpenAIAssistantLayout.jsx')
+        const dialog = read('../views/assistants/openai/AssistantDialog.jsx')
+        const nodeInput = read('../views/canvas/NodeInputHandler.jsx')
+        const vectorDialog = read('../views/assistants/openai/AssistantVectorStoreDialog.jsx')
+
+        expect(landing).toContain('2026 年 8 月 26 日停止服务')
+        expect(landing).toContain("label='2026-08-26 停止服务'")
+        expect(layout).toContain('OpenAI 助手 API 将于 2026 年 8 月 26 日停止服务')
+        expect(layout).toContain('https://developers.openai.com/api/docs/assistants/migration')
+        expect(layout).toContain("navigate('/assistants/custom')")
+        expect(layout).not.toContain('LoadAssistantDialog')
+        expect(layout).not.toContain("import ErrorBoundary from '@/ErrorBoundary'")
+        expect(layout).toContain('onClick={() => void loadAssistants()}')
+        expect(layout).not.toContain('useApi(assistantsApi.getAllAssistants)')
+        expect(layout).toContain("assistantsApi.getAllAssistants('OPENAI', { signal: abortController.signal })")
+        expect(layout).toContain('loadAbortControllerRef.current?.abort()')
+        expect(layout).not.toContain('onClick={addNew}')
+        expect(layout).not.toContain('JSON.parse(data.details)')
+        expect(layout).toContain('无效助手记录，已安全跳过')
+        expect(layout).toContain('未找到匹配的 OpenAI 助手')
+        expect(dialog).toContain("const openAIAssistantCreationDisabled = dialogProps.type === 'ADD'")
+        expect(dialog).toContain('OpenAI 助手 API 将于 2026 年 8 月 26 日停止服务')
+        expect(nodeInput).toContain("const CREATEABLE_OPTIONS = ['selectedTool']")
+        expect(nodeInput).toContain('isCreateNewOption={CREATEABLE_OPTIONS.includes(inputParam.name)}')
+        expect(nodeInput).not.toContain("title: '添加新助手'")
+        expect(vectorDialog).not.toContain('setError(')
+        expect(dialog).not.toContain('<ConfirmDialog')
+        expect(vectorDialog).not.toContain('<ConfirmDialog')
+        expect(vectorDialog).not.toContain('createAssistantVectorStore')
+        expect(vectorDialog).not.toContain('updateAssistantVectorStore')
+        expect(vectorDialog).not.toContain('deleteAssistantVectorStore')
+        expect(dialog).not.toContain('uploadFilesToAssistant(')
+        expect(dialog).not.toContain('uploadFilesToAssistantVectorStore')
+        expect(dialog).not.toContain('deleteFilesFromAssistantVectorStore')
+        expect(dialog).not.toContain('deleteAssistantVectorStore')
+        expect(dialog).toContain('关联或解绑只修改当前表单，需保存主助手后生效')
     })
 
     it('fails closed until organization setup is explicitly allowed by auth resolve', () => {

@@ -49,7 +49,7 @@ export const ZH_CN_NODE_SOURCES_E: ReadonlyArray<readonly [string, string]> = [
     ['node.description@c86fcb82c533', '要忽略的路径数组'],
     ['node.description@c898bd6cf848', '要写入的值所组成的 JSON 数组（例如 [["A1", "B1"], ["A2", "B2"]]）'],
     ['node.description@c89a84d82324', '留空则使用 Provider 默认值。K2 思考模式使用 1；K2.6/K2.5 非思考模式使用 0.6。'],
-    ['node.description@c8c1f9c1246a', '用户的唯一标识符。仅当 "Use Flowise Chat ID" 为 OFF 时必填。'],
+    ['node.description@c8c1f9c1246a', '用户的唯一标识符。仅当“使用 Flowise Chat ID”关闭时必填。'],
     ['node.description@c8c4942dd1df', '频道 ID'],
     ['node.description@c8c8d924da5d', '请用斯瓦希里语／韩语／日语／孟加拉语撰写一段文字，详细回答问题。\n问题：{question}\n正文：'],
     ['node.description@c8f923cdaa5f', '共享时使用的权限角色'],
@@ -123,10 +123,10 @@ export const ZH_CN_NODE_SOURCES_E: ReadonlyArray<readonly [string, string]> = [
     ['node.description@d4bd97e383f2', '要列出频道的团队 ID'],
     [
         'node.description@d55464d69c02',
-        '可以从任意 Figma 文件 URL 中读取文件键：https://www.figma.com/file/:key/:title. 例如，在 https://www.figma.com/file/12345/Website, 文件键为 12345'
+        '可以从任意 Figma 文件 URL 中读取文件键：https://www.figma.com/file/:key/:title。例如，在 https://www.figma.com/file/12345/Website，文件键为 12345'
     ],
     ['node.description@d5a887a92f65', 'Top P 参数可能不适用于某些模型。请检查相应模型支持的参数'],
-    ['node.description@d5e1e2ed52b0', '可连接到以下节点之一：Start、Agent、Condition、LLM Node、Tool Node、Custom Function、Execute Flow'],
+    ['node.description@d5e1e2ed52b0', '可连接以下节点之一：开始、智能体、条件、大语言模型、工具节点、自定义函数、执行流程'],
     ['node.description@d6034de09065', '需要对嵌入进行聚类时使用此项。'],
     ['node.description@d60a114b99b9', '执行 HTTP GET 请求'],
     ['node.description@d641ef5b4f0e', '将 LLM 调用的输出解析为给定的 JSON 结构。'],
@@ -168,7 +168,6 @@ export const ZH_CN_NODE_SOURCES_E: ReadonlyArray<readonly [string, string]> = [
     ],
     ['node.description@db5a758aaf5b', '不使用对话历史中的任何消息。请确保使用系统提示词、用户提示词或消息历史中的至少一项。'],
     ['node.description@db83b2eae0f4', '连续至少 500 ms 不再有连接时，视为导航完成。'],
-    ['node.description@db8f56927ca6', 'Flowise 的基础 URL。默认使用传入请求的 URL；需要通过其他路由执行 Agentflow 时可修改此项。'],
     ['node.description@db90d7c7a570', '从文本文件加载数据'],
     ['node.description@dba9c52c4e57', '宣扬、促成或鼓励有害行为的内容。'],
     ['node.description@dbd425ff8e31', '使用 Cohere API 为给定文本生成嵌入'],

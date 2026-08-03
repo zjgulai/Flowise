@@ -14,18 +14,23 @@ import { Organization } from './enterprise/database/entities/organization.entity
 import { Workspace } from './enterprise/database/entities/workspace.entity'
 import { LoggedInUser } from './enterprise/Interface.Enterprise'
 import { initializeJwtCookieMiddleware, verifyToken, verifyTokenForBullMQDashboard } from './enterprise/middleware/passport'
-import { initAuthSecrets } from './enterprise/utils/authSecrets'
+import { getTokenHashSecret, initAuthSecrets } from './enterprise/utils/authSecrets'
 import { IdentityManager } from './IdentityManager'
 import { MODE, Platform } from './Interface'
 import { IMetricsProvider } from './Interface.Metrics'
 import { OpenTelemetry } from './metrics/OpenTelemetry'
 import { Prometheus } from './metrics/Prometheus'
+import { isApiV1Path, isCanonicalApiV1Path, rejectNonCanonicalApiPath } from './middlewares/canonicalApiPath'
 import errorHandlerMiddleware from './middlewares/errors'
+import { createMcpRequestObservability } from './middlewares/mcpRequestObservability'
 import { NodesPool } from './NodesPool'
 import { QueueManager } from './queue/QueueManager'
 import { ScheduleBeat } from './schedule/ScheduleBeat'
 import { RedisEventSubscriber } from './queue/RedisEventSubscriber'
 import { initWebhookListenerRegistry } from './services/webhook-listener'
+import { initializeDocumentStoreVersionTokenKey } from './services/documentstore/documentStoreVersion'
+import { migrateLegacyMcpServerTokens } from './services/mcp-server/mcpTokenSecurity'
+import mcpEndpointRouter from './routes/mcp-endpoint'
 import flowiseApiV1Router from './routes'
 import { UsageCacheManager } from './UsageCacheManager'
 import { getEncryptionKey, getNodeModulesPackagePath } from './utils'
@@ -118,6 +123,13 @@ export class App {
             // Initialize auth secrets (env → AWS Secrets Manager → filesystem)
             await initAuthSecrets()
             logger.info('🔐 [server]: Auth initialized successfully')
+
+            const mcpTokenMigration = await migrateLegacyMcpServerTokens(this.AppDataSource)
+            logger.info('mcp_bearer_token_migration_completed', mcpTokenMigration)
+
+            // Derive the Document Store OCC signing key only after TOKEN_HASH_SECRET is available.
+            initializeDocumentStoreVersionTokenKey(getTokenHashSecret())
+            logger.info('🔐 [server]: Document store version token key initialized successfully')
 
             // Initialize Rate Limit
             this.rateLimiterManager = RateLimiterManager.getInstance()
@@ -216,6 +228,24 @@ export class App {
             this.app.use(CSP_REPORT_ENDPOINT, createCspReportRouter())
         }
 
+        // MCP has its own CORS policy and a 1 MiB JSON parser installed only
+        // after its rate-limit and bearer-token checks. Mount it before the
+        // global parsers so an unauthenticated MCP request cannot consume the
+        // generic large-body allowance or inherit the generic CORS policy. Its
+        // case-insensitive scoped observer records only allowlisted metadata and
+        // never reads the Authorization header or request body. It must precede
+        // the canonical casing guard so rejected mixed-case MCP probes retain an
+        // audit and metrics receipt.
+        this.app.use(
+            '/api/v1/mcp',
+            createMcpRequestObservability(() => this.metricsProvider)
+        )
+
+        // The MCP router is mounted before the generic authentication stack, so
+        // enforce the same canonical API casing before that early boundary.
+        this.app.use(rejectNonCanonicalApiPath)
+        this.app.use('/api/v1/mcp', mcpEndpointRouter)
+
         this.app.use(express.json({ limit: flowise_file_size_limit, verify: captureRawBody }))
         this.app.use(express.urlencoded({ limit: flowise_file_size_limit, extended: true, verify: captureRawBody }))
 
@@ -236,16 +266,13 @@ export class App {
 
         const denylistURLs = process.env.DENYLIST_URLS ? process.env.DENYLIST_URLS.split(',') : []
         const whitelistURLs = WHITELIST_URLS.filter((url) => !denylistURLs.includes(url))
-        const URL_CASE_INSENSITIVE_REGEX: RegExp = /\/api\/v1\//i
-        const URL_CASE_SENSITIVE_REGEX: RegExp = /\/api\/v1\//
-
         await initializeJwtCookieMiddleware(this.app, this.identityManager)
 
         this.app.use(async (req, res, next) => {
             // Step 1: Check if the req path contains /api/v1 regardless of case
-            if (URL_CASE_INSENSITIVE_REGEX.test(req.path)) {
+            if (isApiV1Path(req.path)) {
                 // Step 2: Check if the req path is casesensitive
-                if (URL_CASE_SENSITIVE_REGEX.test(req.path)) {
+                if (isCanonicalApiV1Path(req.path)) {
                     // Step 3: Check if the req path is in the whitelist
                     const isWhitelisted = whitelistURLs.some((url) => req.path.startsWith(url))
                     if (isWhitelisted) {

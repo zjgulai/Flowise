@@ -10,7 +10,8 @@ import {
     ISeqAgentNode,
     IUsedTool,
     IDocument,
-    IServerSideEventStreamer
+    IServerSideEventStreamer,
+    OAuth2CredentialRefreshCapability
 } from 'flowise-components'
 import { omit, cloneDeep, flatten, uniq } from 'lodash'
 import { StateGraph, END, START } from '@langchain/langgraph'
@@ -53,7 +54,8 @@ export const buildAgentGraph = async ({
     baseURL,
     signal,
     orgId,
-    workspaceId
+    workspaceId,
+    refreshOAuth2Credential
 }: {
     agentflow: IChatFlow
     flowConfig: IFlowConfig
@@ -74,7 +76,8 @@ export const buildAgentGraph = async ({
     baseURL: string
     signal?: AbortController
     orgId: string
-    workspaceId?: string
+    workspaceId: string
+    refreshOAuth2Credential: OAuth2CredentialRefreshCapability
 }): Promise<any> => {
     try {
         const chatflowid = flowConfig.chatflowid
@@ -97,7 +100,8 @@ export const buildAgentGraph = async ({
             cachePool,
             uploads,
             baseURL,
-            signal: signal ?? new AbortController()
+            signal: signal ?? new AbortController(),
+            refreshOAuth2Credential
         }
 
         let streamResults
@@ -392,7 +396,18 @@ export const buildAgentGraph = async ({
             }
         } catch (e) {
             // clear agent memory because checkpoints were saved during runtime
-            await clearSessionMemory(nodes, componentNodes, chatId, appDataSource, orgId, sessionId)
+            await clearSessionMemory(
+                nodes,
+                componentNodes,
+                chatId,
+                appDataSource,
+                orgId,
+                sessionId,
+                undefined,
+                undefined,
+                workspaceId,
+                chatflowid
+            )
             if (getErrorMessage(e).includes('Aborted')) {
                 if (shouldStreamResponse && sseStreamer) {
                     sseStreamer.streamAbortEvent(chatId)

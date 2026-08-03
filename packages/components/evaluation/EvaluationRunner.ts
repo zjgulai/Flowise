@@ -1,6 +1,6 @@
-import axios from 'axios'
 import { v4 as uuidv4 } from 'uuid'
 import { ICommonObject } from '../src'
+import { FLOWISE_REQUEST_ERROR, requestFlowisePrediction } from '../src/internalFlowRequest'
 
 import { getModelConfigByModelName, MODEL_TYPE } from '../src/modelLoader'
 
@@ -76,11 +76,9 @@ export class EvaluationRunner {
         }
     }
 
-    baseURL = ''
-
-    constructor(baseURL: string) {
-        this.baseURL = baseURL
-    }
+    // Keep the constructor signature for server compatibility. Internal calls
+    // are always resolved from canonical APP_URL by requestFlowisePrediction.
+    constructor(_baseURL: string) {}
 
     getChatflowApiKey(chatflowId: string, apiKeys: { chatflowId: string; apiKey: string }[] = []) {
         return apiKeys.find((item) => item.chatflowId === chatflowId)?.apiKey || ''
@@ -121,17 +119,6 @@ export class EvaluationRunner {
         for (let i = 0; i < data.dataset.rows.length; i++) {
             const item = data.dataset.rows[i]
             const uuid = uuidv4()
-
-            const headers: any = {
-                'X-Request-ID': uuid,
-                'X-Flowise-Evaluation': 'true'
-            }
-            if (apiKey) {
-                headers['Authorization'] = `Bearer ${apiKey}`
-            }
-            let axiosConfig = {
-                headers: headers
-            }
             let startTime = performance.now()
             const runData: any = {}
             runData.chatflowId = chatflowId
@@ -141,11 +128,16 @@ export class EvaluationRunner {
                 postData.overrideConfig = { sessionId: data.sessionId }
             }
             try {
-                let response = await axios.post(`${this.baseURL}/api/v1/prediction/${chatflowId}`, postData, axiosConfig)
+                const responseData = await requestFlowisePrediction({
+                    flowId: chatflowId,
+                    apiKey,
+                    evaluationRequestId: uuid,
+                    body: postData
+                })
                 let agentFlowMetrics: any[] = []
-                if (response?.data?.agentFlowExecutedData) {
-                    for (let i = 0; i < response.data.agentFlowExecutedData.length; i++) {
-                        const agentFlowExecutedData = response.data.agentFlowExecutedData[i]
+                if (responseData?.agentFlowExecutedData) {
+                    for (let i = 0; i < responseData.agentFlowExecutedData.length; i++) {
+                        const agentFlowExecutedData = responseData.agentFlowExecutedData[i]
                         const input_tokens = agentFlowExecutedData?.data?.output?.usageMetadata?.input_tokens || 0
                         const output_tokens = agentFlowExecutedData?.data?.output?.usageMetadata?.output_tokens || 0
                         const total_tokens =
@@ -178,8 +170,8 @@ export class EvaluationRunner {
                 }
                 const endTime = performance.now()
                 const timeTaken = (endTime - startTime).toFixed(2)
-                if (response?.data?.metrics) {
-                    runData.metrics = response.data.metrics
+                if (responseData?.metrics) {
+                    runData.metrics = responseData.metrics
                     runData.metrics.push({
                         apiLatency: timeTaken
                     })
@@ -195,29 +187,17 @@ export class EvaluationRunner {
                 }
                 runData.status = 'complete'
                 let resultText = ''
-                if (response.data.text) resultText = response.data.text
-                else if (response.data.json) resultText = '```json\n' + JSON.stringify(response.data.json, null, 2)
-                else resultText = JSON.stringify(response.data, null, 2)
+                if (responseData.text) resultText = responseData.text
+                else if (responseData.json) resultText = '```json\n' + JSON.stringify(responseData.json, null, 2)
+                else resultText = JSON.stringify(responseData, null, 2)
 
                 runData.actualOutput = resultText
                 runData.latency = timeTaken
                 runData.error = ''
-            } catch (error: any) {
+            } catch {
                 runData.status = 'error'
                 runData.actualOutput = ''
-                runData.error = error?.response?.data?.message
-                    ? error.response.data.message
-                    : error?.message
-                    ? error.message
-                    : 'Unknown error'
-                try {
-                    if (runData.error.indexOf('-') > -1) {
-                        // if there is a dash, remove all content before
-                        runData.error = 'Error: ' + runData.error.substr(runData.error.indexOf('-') + 1).trim()
-                    }
-                } catch (error) {
-                    //stay silent
-                }
+                runData.error = FLOWISE_REQUEST_ERROR
                 const endTime = performance.now()
                 const timeTaken = (endTime - startTime).toFixed(2)
                 runData.metrics = [

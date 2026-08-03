@@ -179,7 +179,7 @@ export class UsageCacheManager {
         const cacheKey = `subscription:${subscriptionId}`
         const existingData = (await this.getSubscriptionDataFromCache(subscriptionId)) || {}
         const updatedData = { ...existingData, ...data }
-        this.set(cacheKey, updatedData, 3600000) // Cache for 1 hour
+        await this.set(cacheKey, updatedData, 3600000) // Cache for 1 hour
     }
 
     public async get<T>(key: string): Promise<T | null> {
@@ -203,10 +203,9 @@ export class UsageCacheManager {
         }
     }
 
-    public set<T>(key: string, value: T, ttl?: number) {
-        if (this.cache) {
-            this.cache.set(key, value, ttl)
-        }
+    public async set<T>(key: string, value: T, ttl?: number): Promise<void> {
+        if (!this.cache) await this.initialize()
+        await this.cache.set(key, value, ttl)
     }
 
     public mset<T>(keys: [{ key: string; value: T; ttl: number }]) {

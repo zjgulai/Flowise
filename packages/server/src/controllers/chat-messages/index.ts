@@ -1,15 +1,18 @@
 import { Request, Response, NextFunction } from 'express'
 import { ChatMessageRatingType, ChatType, IReactFlowObject } from '../../Interface'
+import { EnumChatflowType } from '../../database/entities/ChatFlow'
 import chatflowsService from '../../services/chatflows'
 import chatMessagesService from '../../services/chat-messages'
-import { aMonthAgo, clearSessionMemory } from '../../utils'
+import { clearSessionMemory } from '../../utils'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
-import { Between, DeleteResult, FindOptionsWhere, In } from 'typeorm'
+import { DeleteResult } from 'typeorm'
 import { ChatMessage } from '../../database/entities/ChatMessage'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { StatusCodes } from 'http-status-codes'
 import { utilGetChatMessage } from '../../utils/getChatMessage'
 import { getPageAndLimitParams } from '../../utils/pagination'
+import logger from '../../utils/logger'
+import { validateFlowAPIKey } from '../../utils/validateKey'
 
 const getFeedbackTypeFilters = (_feedbackTypeFilters: ChatMessageRatingType[]): ChatMessageRatingType[] | undefined => {
     try {
@@ -33,6 +36,57 @@ const getFeedbackTypeFilters = (_feedbackTypeFilters: ChatMessageRatingType[]): 
     }
 }
 
+type ChatflowPermissionAction = 'view' | 'delete'
+
+const assertChatflowPermission = (req: Request, type: unknown, action: ChatflowPermissionAction): void => {
+    if (req.user?.isOrganizationAdmin) return
+    const permission =
+        type === EnumChatflowType.CHATFLOW
+            ? `chatflows:${action}`
+            : type === EnumChatflowType.AGENTFLOW || type === EnumChatflowType.MULTIAGENT
+            ? `agentflows:${action}`
+            : type === EnumChatflowType.ASSISTANT
+            ? `assistants:${action}`
+            : undefined
+    if (!permission || !req.user?.permissions?.includes(permission)) {
+        throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Forbidden')
+    }
+}
+
+const getAuthorizedChatflow = async (req: Request, action: ChatflowPermissionAction, requestedChatflowId?: string) => {
+    const chatflowId = requestedChatflowId || req.params?.id
+    if (!chatflowId) {
+        throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, 'Chatflow id is required')
+    }
+    const workspaceId = req.user?.activeWorkspaceId
+    if (!workspaceId) {
+        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Workspace not found')
+    }
+    const chatflow = await chatflowsService.getChatflowByIdForWorkspace(chatflowId, workspaceId)
+    if (!chatflow) {
+        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Chatflow not found')
+    }
+    assertChatflowPermission(req, chatflow.type, action)
+    return { chatflow, workspaceId }
+}
+
+const parseStrictBooleanQuery = (value: unknown, name: string): boolean => {
+    if (value === undefined || value === false || value === 'false') return false
+    if (value === true || value === 'true') return true
+    throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, `${name} must be true or false`)
+}
+
+const groupChatMessagesBySession = (messages: ChatMessage[]): Map<string, ChatMessage[]> => {
+    const groups = new Map<string, ChatMessage[]>()
+    for (const message of messages) {
+        const key = JSON.stringify([message.chatId, message.memoryType ?? null, message.sessionId ?? null])
+        const existing = groups.get(key)
+        if (existing) existing.push(message)
+        else groups.set(key, [message])
+    }
+    return groups
+}
+
 const createChatMessage = async (req: Request, res: Response, next: NextFunction) => {
     try {
         if (!req.body) {
@@ -50,6 +104,7 @@ const createChatMessage = async (req: Request, res: Response, next: NextFunction
 
 const getAllChatMessages = async (req: Request, res: Response, next: NextFunction) => {
     try {
+        const { workspaceId } = await getAuthorizedChatflow(req, 'view')
         const _chatTypes = req.query?.chatType as string | undefined
         let chatTypes: ChatType[] | undefined
         if (_chatTypes) {
@@ -63,7 +118,6 @@ const getAllChatMessages = async (req: Request, res: Response, next: NextFunctio
                 chatTypes = [_chatTypes as ChatType]
             }
         }
-        const activeWorkspaceId = req.user?.activeWorkspaceId
         const sortOrder = req.query?.order as string | undefined
         const chatId = req.query?.chatId as string | undefined
         const memoryType = req.query?.memoryType as string | undefined
@@ -79,12 +133,6 @@ const getAllChatMessages = async (req: Request, res: Response, next: NextFunctio
         if (feedbackTypeFilters) {
             feedbackTypeFilters = getFeedbackTypeFilters(feedbackTypeFilters)
         }
-        if (typeof req.params === 'undefined' || !req.params.id) {
-            throw new InternalFlowiseError(
-                StatusCodes.PRECONDITION_FAILED,
-                `Error: chatMessageController.getAllChatMessages - id not provided!`
-            )
-        }
         const apiResponse = await chatMessagesService.getAllChatMessages(
             req.params.id,
             chatTypes,
@@ -97,7 +145,7 @@ const getAllChatMessages = async (req: Request, res: Response, next: NextFunctio
             messageId,
             feedback,
             feedbackTypeFilters,
-            activeWorkspaceId,
+            workspaceId,
             page,
             limit
         )
@@ -109,7 +157,7 @@ const getAllChatMessages = async (req: Request, res: Response, next: NextFunctio
 
 const getAllInternalChatMessages = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const activeWorkspaceId = req.user?.activeWorkspaceId
+        const { workspaceId } = await getAuthorizedChatflow(req, 'view')
         const sortOrder = req.query?.order as string | undefined
         const chatId = req.query?.chatId as string | undefined
         const memoryType = req.query?.memoryType as string | undefined
@@ -134,7 +182,7 @@ const getAllInternalChatMessages = async (req: Request, res: Response, next: Nex
             messageId,
             feedback,
             feedbackTypeFilters,
-            activeWorkspaceId
+            workspaceId
         )
         return res.json(parseAPIResponse(apiResponse))
     } catch (error) {
@@ -145,35 +193,15 @@ const getAllInternalChatMessages = async (req: Request, res: Response, next: Nex
 const removeAllChatMessages = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const appServer = getRunningExpressApp()
-        if (typeof req.params === 'undefined' || !req.params.id) {
-            throw new InternalFlowiseError(
-                StatusCodes.PRECONDITION_FAILED,
-                'Error: chatMessagesController.removeAllChatMessages - id not provided!'
-            )
-        }
         const orgId = req.user?.activeOrganizationId
         if (!orgId) {
-            throw new InternalFlowiseError(
-                StatusCodes.NOT_FOUND,
-                `Error: chatMessagesController.removeAllChatMessages - organization ${orgId} not found!`
-            )
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Organization not found')
         }
-        const workspaceId = req.user?.activeWorkspaceId
-        if (!workspaceId) {
-            throw new InternalFlowiseError(
-                StatusCodes.NOT_FOUND,
-                `Error: chatMessagesController.removeAllChatMessages - workspace ${workspaceId} not found!`
-            )
-        }
+        const { chatflow, workspaceId } = await getAuthorizedChatflow(req, 'delete')
         const chatflowid = req.params.id
-        const chatflow = await chatflowsService.getChatflowByIdForWorkspace(req.params.id, workspaceId)
-        if (!chatflow) {
-            return res.status(404).send('Chatflow not found')
-        }
-        const flowData = chatflow.flowData
-        const parsedFlowData: IReactFlowObject = JSON.parse(flowData)
+        const parsedFlowData: IReactFlowObject = JSON.parse(chatflow.flowData)
         const nodes = parsedFlowData.nodes
-        const chatId = req.query?.chatId as string
+        const chatId = req.query?.chatId as string | undefined
         const memoryType = req.query?.memoryType as string | undefined
         const sessionId = req.query?.sessionId as string | undefined
         const _chatTypes = req.query?.chatType as string | undefined
@@ -191,114 +219,61 @@ const removeAllChatMessages = async (req: Request, res: Response, next: NextFunc
         }
         const startDate = req.query?.startDate as string | undefined
         const endDate = req.query?.endDate as string | undefined
-        const isClearFromViewMessageDialog = req.query?.isClearFromViewMessageDialog as string | undefined
+        const isClearFromViewMessageDialog = parseStrictBooleanQuery(
+            req.query?.isClearFromViewMessageDialog,
+            'isClearFromViewMessageDialog'
+        )
+        const hardDelete = parseStrictBooleanQuery(req.query?.hardDelete, 'hardDelete')
         let feedbackTypeFilters = req.query?.feedbackType as ChatMessageRatingType[] | undefined
         if (feedbackTypeFilters) {
             feedbackTypeFilters = getFeedbackTypeFilters(feedbackTypeFilters)
         }
 
-        if (!chatId) {
-            const isFeedback = feedbackTypeFilters?.length ? true : false
-            const hardDelete = req.query?.hardDelete as boolean | undefined
+        const messages = await utilGetChatMessage({
+            chatflowid,
+            chatTypes,
+            chatId,
+            memoryType,
+            sessionId,
+            startDate,
+            endDate,
+            feedback: feedbackTypeFilters?.length ? true : false,
+            feedbackTypes: feedbackTypeFilters,
+            activeWorkspaceId: workspaceId
+        })
+        if (messages.length === 0) {
+            const result: DeleteResult = { raw: [], affected: 0 }
+            return res.json(result)
+        }
 
-            const messages = await utilGetChatMessage({
-                chatflowid,
-                chatTypes,
-                sessionId,
-                startDate,
-                endDate,
-                feedback: isFeedback,
-                feedbackTypes: feedbackTypeFilters,
-                activeWorkspaceId: workspaceId
-            })
-            const messageIds = messages.map((message) => message.id)
-
-            if (messages.length === 0) {
-                const result: DeleteResult = { raw: [], affected: 0 }
-                return res.json(result)
-            }
-
-            // Categorize by chatId_memoryType_sessionId
-            const chatIdMap = new Map<string, ChatMessage[]>()
-            messages.forEach((message) => {
-                const chatId = message.chatId
-                const memoryType = message.memoryType
-                const sessionId = message.sessionId
-                const composite_key = `${chatId}_${memoryType}_${sessionId}`
-                if (!chatIdMap.has(composite_key)) {
-                    chatIdMap.set(composite_key, [])
-                }
-                chatIdMap.get(composite_key)?.push(message)
-            })
-
-            // If hardDelete is ON, we clearSessionMemory from third party integrations
-            if (hardDelete) {
-                for (const [composite_key] of chatIdMap) {
-                    const [chatId, memoryType, sessionId] = composite_key.split('_')
-                    try {
-                        await clearSessionMemory(
-                            nodes,
-                            appServer.nodesPool.componentNodes,
-                            chatId,
-                            appServer.AppDataSource,
-                            orgId,
-                            sessionId,
-                            memoryType,
-                            isClearFromViewMessageDialog
-                        )
-                    } catch (e) {
-                        console.error('Error clearing chat messages')
-                    }
-                }
-            }
-
-            const apiResponse = await chatMessagesService.removeChatMessagesByMessageIds(
-                chatflowid,
-                chatIdMap,
-                messageIds,
-                orgId,
-                workspaceId,
-                appServer.usageCacheManager
-            )
-            return res.json(apiResponse)
-        } else {
-            try {
+        const sessionGroups = groupChatMessagesBySession(messages)
+        const shouldClearThirdPartyMemory = Boolean(chatId) || hardDelete
+        if (shouldClearThirdPartyMemory) {
+            for (const group of sessionGroups.values()) {
+                const message = group[0]
                 await clearSessionMemory(
                     nodes,
                     appServer.nodesPool.componentNodes,
-                    chatId,
+                    message.chatId,
                     appServer.AppDataSource,
                     orgId,
-                    sessionId,
-                    memoryType,
-                    isClearFromViewMessageDialog
+                    message.sessionId,
+                    message.memoryType,
+                    isClearFromViewMessageDialog,
+                    workspaceId,
+                    chatflowid
                 )
-            } catch (e) {
-                return res.status(500).send('Error clearing chat messages')
             }
-
-            const deleteOptions: FindOptionsWhere<ChatMessage> = { chatflowid }
-            if (chatId) deleteOptions.chatId = chatId
-            if (memoryType) deleteOptions.memoryType = memoryType
-            if (sessionId) deleteOptions.sessionId = sessionId
-            if (chatTypes && chatTypes.length > 0) {
-                deleteOptions.chatType = In(chatTypes)
-            }
-            if (startDate && endDate) {
-                const fromDate = new Date(startDate)
-                const toDate = new Date(endDate)
-                deleteOptions.createdDate = Between(fromDate ?? aMonthAgo(), toDate ?? new Date())
-            }
-            const apiResponse = await chatMessagesService.removeAllChatMessages(
-                chatId,
-                chatflowid,
-                deleteOptions,
-                orgId,
-                workspaceId,
-                appServer.usageCacheManager
-            )
-            return res.json(apiResponse)
         }
+
+        const apiResponse = await chatMessagesService.removeChatMessagesByMessageIds(
+            chatflowid,
+            messages.map((message) => message.id),
+            orgId,
+            workspaceId,
+            appServer.usageCacheManager
+        )
+        return res.json(apiResponse)
     } catch (error) {
         next(error)
     }
@@ -312,7 +287,16 @@ const abortChatMessage = async (req: Request, res: Response, next: NextFunction)
                 `Error: chatMessagesController.abortChatMessage - chatflowid or chatid not provided!`
             )
         }
-        await chatMessagesService.abortChatMessage(req.params.chatid, req.params.chatflowid)
+        const chatflowId = req.params.chatflowid
+        if (req.user) {
+            await getAuthorizedChatflow(req, 'view', chatflowId)
+        } else {
+            const chatflow = await chatflowsService.getChatflowById(chatflowId)
+            if (!(await validateFlowAPIKey(req, chatflow))) {
+                throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, 'Chat abort is not authorized')
+            }
+        }
+        await chatMessagesService.abortChatMessage(req.params.chatid, chatflowId)
         return res.json({ status: 200, message: 'Chat message aborted' })
     } catch (error) {
         next(error)
@@ -348,8 +332,8 @@ const parseAPIResponse = (apiResponse: ChatMessage | ChatMessage[]): ChatMessage
             if (parsedResponse.artifacts) {
                 parsedResponse.artifacts = JSON.parse(parsedResponse.artifacts)
             }
-        } catch (e) {
-            console.error('Error parsing chat message response', e)
+        } catch {
+            logger.warn('[server]: Unable to parse chat message metadata')
         }
 
         return parsedResponse

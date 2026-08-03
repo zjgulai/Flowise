@@ -1,4 +1,5 @@
 import express, { NextFunction, Request, Response } from 'express'
+import { StatusCodes } from 'http-status-codes'
 import request from 'supertest'
 
 const mockCredentialRepository = {
@@ -6,12 +7,20 @@ const mockCredentialRepository = {
     update: jest.fn()
 }
 const mockSecureAxiosRequest = jest.fn()
+const mockCreateFixedOriginPolicy = jest.fn((origin: string) => ({
+    enforceDefaultDenyList: true,
+    validateUrl: (url: URL) => {
+        if (url.origin !== origin) throw new Error('Request target is denied by policy.')
+    }
+}))
 const mockDecryptCredentialData = jest.fn()
 const mockEncryptCredentialData = jest.fn()
 const mockReloadSessionAuthorization = jest.fn()
 
 jest.mock('flowise-components', () => ({
     secureAxiosRequest: mockSecureAxiosRequest,
+    createFixedOriginPolicy: mockCreateFixedOriginPolicy,
+    resolveFlowiseRequestTarget: () => ({ canonicalOrigin: 'https://flowise.example.invalid' }),
     StorageProviderFactory: {
         getProvider: () => ({ getLoggerTransports: () => [] })
     }
@@ -127,7 +136,7 @@ describe('OAuth2 state and credential authorization boundaries', () => {
             if (where.workspaceId && where.workspaceId !== credential.workspaceId) return null
             return credential
         })
-        mockCredentialRepository.update.mockResolvedValue(undefined)
+        mockCredentialRepository.update.mockResolvedValue({ affected: 1 })
         mockDecryptCredentialData.mockResolvedValue(credentialConfig)
         mockEncryptCredentialData.mockResolvedValue('encrypted-updated-config')
         mockSecureAxiosRequest.mockResolvedValue({
@@ -135,6 +144,9 @@ describe('OAuth2 state and credential authorization boundaries', () => {
             data: { access_token: 'synthetic-access-token', refresh_token: 'synthetic-refresh-token', expires_in: 3600 }
         })
         mockReloadSessionAuthorization.mockImplementation(async (user) => user)
+        delete process.env.OAUTH2_SECURITY_CHECK
+        delete process.env.HTTP_SECURITY_CHECK
+        delete process.env.OAUTH2_ALLOWED_TOKEN_DOMAINS
     })
 
     it('keeps the provider callback session-aware while refresh stays behind global JWT authorization', () => {
@@ -192,6 +204,72 @@ describe('OAuth2 state and credential authorization boundaries', () => {
         expect(state).toBeTruthy()
         expect(state).not.toBe(credential.id)
         expect(state).toMatch(/^[A-Za-z0-9_-]{43,}$/)
+    })
+
+    it('uses only the configured canonical callback despite Host and credential overrides', async () => {
+        const { app, principals } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        mockDecryptCredentialData.mockResolvedValueOnce({
+            ...credentialConfig,
+            redirect_uri: 'https://attacker.example/callback',
+            response_type: 'token',
+            response_mode: 'fragment'
+        })
+
+        const response = await request(app)
+            .post('/oauth2-credential/authorize/credential-1')
+            .set('Host', 'attacker.example')
+            .set('x-forwarded-proto', 'http')
+
+        expect(response.status).toBe(200)
+        const authorizationUrl = new URL(response.body.authorizationUrl)
+        expect(response.body.redirectUri).toBe('https://flowise.example.invalid/api/v1/oauth2-credential/callback')
+        expect(authorizationUrl.searchParams.get('redirect_uri')).toBe('https://flowise.example.invalid/api/v1/oauth2-credential/callback')
+        expect(authorizationUrl.searchParams.get('response_type')).toBe('code')
+        expect(authorizationUrl.searchParams.get('response_mode')).toBe('query')
+    })
+
+    it('rejects case-insensitive reserved additional parameters before storing state', async () => {
+        const { app, principals, sessions } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        mockDecryptCredentialData.mockResolvedValueOnce({
+            ...credentialConfig,
+            additionalParameters: 'ReDiReCt_UrI=https%3A%2F%2Fattacker.example%2Fcallback'
+        })
+
+        const response = await request(app).post('/oauth2-credential/authorize/credential-1')
+
+        expect(response.status).toBe(400)
+        expect(response.body.message).toBe('OAuth2 credential configuration is invalid')
+        expect(sessions.get('session-a')?.flowiseOAuth2States).toBeUndefined()
+    })
+
+    it.each([
+        ['clientId', { clientId: { secret: true } }],
+        ['scope', { scope: { secret: true } }]
+    ])('rejects malformed authorization %s before storing state', async (_field, override) => {
+        const { app, principals, sessions } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        mockDecryptCredentialData.mockResolvedValueOnce({ ...credentialConfig, ...override })
+
+        const response = await request(app).post('/oauth2-credential/authorize/credential-1')
+
+        expect(response.status).toBe(400)
+        expect(response.body.message).toBe('OAuth2 credential configuration is invalid')
+        expect(sessions.get('session-a')?.flowiseOAuth2States).toBeUndefined()
+    })
+
+    it('keeps authorization endpoint validation fail closed when legacy security switches are disabled', async () => {
+        process.env.OAUTH2_SECURITY_CHECK = 'false'
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        const { app, principals } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        mockDecryptCredentialData.mockResolvedValueOnce({ ...credentialConfig, authorizationUrl: 'https://127.0.0.1/authorize' })
+
+        const response = await request(app).post('/oauth2-credential/authorize/credential-1')
+
+        expect(response.status).toBe(400)
+        expect(response.body.message).toBe('OAuth2 credential configuration is invalid')
     })
 
     it('does not allow a shared workspace to initiate a token-writing OAuth flow', async () => {
@@ -290,6 +368,109 @@ describe('OAuth2 state and credential authorization boundaries', () => {
         expect(replay.status).toBeGreaterThanOrEqual(400)
         expect(mockSecureAxiosRequest).not.toHaveBeenCalled()
         expect(mockCredentialRepository.update).not.toHaveBeenCalled()
+    })
+
+    it('does not render Provider error descriptions or secrets in callback pages', async () => {
+        const { app, principals } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        const { state } = await authorize(app)
+
+        const response = await request(app).get(
+            `/oauth2-credential/callback?error=access_denied&error_description=provider-secret-description&state=${state}`
+        )
+
+        expect(response.status).toBe(400)
+        expect(response.text).toBe('error:Authorization denied:The OAuth provider did not authorize this request.')
+        expect(response.text).not.toContain('provider-secret-description')
+    })
+
+    it('uses a fixed-origin secure request policy and bounded response for callback token exchange', async () => {
+        const { app, principals } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        const { state } = await authorize(app)
+
+        const response = await request(app).get(`/oauth2-credential/callback?code=synthetic-code&state=${state}`)
+
+        expect(response.status).toBe(200)
+        expect(mockCreateFixedOriginPolicy).toHaveBeenCalledWith('https://login.microsoftonline.com')
+        expect(mockSecureAxiosRequest).toHaveBeenCalledWith(
+            expect.objectContaining({
+                method: 'POST',
+                url: 'https://login.microsoftonline.com/token',
+                maxContentLength: 1024 * 1024,
+                maxBodyLength: 1024 * 1024,
+                timeout: 30_000
+            }),
+            5,
+            undefined,
+            expect.objectContaining({ enforceDefaultDenyList: true, validateUrl: expect.any(Function) })
+        )
+        const policy = mockSecureAxiosRequest.mock.calls[0][3]
+        expect(() => policy.validateUrl(new URL('https://attacker.example/token'))).toThrow('Request target is denied by policy.')
+    })
+
+    it('keeps callback token endpoint validation fail closed when legacy security switches are disabled', async () => {
+        process.env.OAUTH2_SECURITY_CHECK = 'false'
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        const { app, principals } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        mockDecryptCredentialData
+            .mockResolvedValueOnce(credentialConfig)
+            .mockResolvedValueOnce({ ...credentialConfig, accessTokenUrl: 'https://127.0.0.1/token' })
+        const { state } = await authorize(app)
+
+        const response = await request(app).get(`/oauth2-credential/callback?code=synthetic-code&state=${state}`)
+
+        expect(response.status).toBe(400)
+        expect(response.text).toBe('error:Invalid token endpoint URL:The configured token endpoint is not allowed.')
+        expect(mockSecureAxiosRequest).not.toHaveBeenCalled()
+    })
+
+    it('renders a fixed callback error when token exchange rejects with Provider secrets', async () => {
+        const { app, principals } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        const { state } = await authorize(app)
+        mockSecureAxiosRequest.mockRejectedValueOnce(new Error('client-secret provider-secret'))
+
+        const response = await request(app).get(`/oauth2-credential/callback?code=synthetic-code&state=${state}`)
+
+        expect(response.status).toBe(500)
+        expect(response.text).toBe('error:OAuth callback failed:The authorization could not be completed.')
+        expect(response.text).not.toContain('client-secret')
+        expect(response.text).not.toContain('provider-secret')
+    })
+
+    it.each([
+        ['non-string access token', { access_token: { secret: true } }],
+        ['oversized access token', { access_token: 'x'.repeat(128 * 1024 + 1) }],
+        ['invalid expiry', { access_token: 'token', expires_in: Number.POSITIVE_INFINITY }]
+    ])('rejects a %s without persisting Provider data', async (_name, tokenData) => {
+        const { app, principals } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        const { state } = await authorize(app)
+        mockSecureAxiosRequest.mockResolvedValueOnce({ status: 200, data: tokenData })
+
+        const response = await request(app).get(`/oauth2-credential/callback?code=synthetic-code&state=${state}`)
+
+        expect(response.status).toBe(StatusCodes.BAD_GATEWAY)
+        expect(response.text).toBe('error:Token exchange failed:The OAuth provider returned an invalid token response.')
+        expect(mockCredentialRepository.update).not.toHaveBeenCalled()
+    })
+
+    it('fails closed when the workspace-scoped credential CAS loses a race', async () => {
+        const { app, principals } = buildApp()
+        principals.set('session-a', clonePrincipal(permittedUser))
+        const { state } = await authorize(app)
+        mockCredentialRepository.update.mockResolvedValueOnce({ affected: 0 })
+
+        const response = await request(app).get(`/oauth2-credential/callback?code=synthetic-code&state=${state}`)
+
+        expect(mockCredentialRepository.update).toHaveBeenCalledWith(
+            { id: credential.id, workspaceId: credential.workspaceId, encryptedData: credential.encryptedData },
+            expect.objectContaining({ encryptedData: 'encrypted-updated-config', updatedDate: expect.any(Date) })
+        )
+        expect(response.status).toBe(500)
+        expect(response.text).toBe('error:OAuth callback failed:The authorization could not be completed.')
     })
 
     it('requires credentials:update and active-workspace access to refresh tokens', async () => {

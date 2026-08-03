@@ -35,6 +35,12 @@ describe('stripProtectedFields', () => {
         expect(result).toHaveProperty('name', 'test')
     })
 
+    it('removes mcpServerConfig from input', () => {
+        const result = stripProtectedFields({ mcpServerConfig: '{"token":"attacker-token"}', name: 'test' })
+        expect(result).not.toHaveProperty('mcpServerConfig')
+        expect(result).toHaveProperty('name', 'test')
+    })
+
     it('removes webhookSecretConfigured from input', () => {
         const result = stripProtectedFields({ webhookSecretConfigured: true, name: 'test' })
         expect(result).not.toHaveProperty('webhookSecretConfigured')
@@ -48,6 +54,7 @@ describe('stripProtectedFields', () => {
             updatedDate: '2026-01-02T00:00:00.000Z',
             workspaceId: '11111111-2222-3333-4444-555555555555',
             organizationId: 'org-789',
+            mcpServerConfig: '{"token":"secret"}',
             webhookSecret: 'some-secret',
             webhookSecretConfigured: true,
             details: '{"name":"my assistant"}',

@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改与生产验收执行计划
 date: 2026-07-10
-last_updated: 2026-08-02
+last_updated: 2026-08-03
 status: in_progress
 evidence_model: L0-L4
 ---
@@ -374,10 +374,46 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   [x] GCM 最小修复的独立代码／安全复审均无 MEDIUM+；保留两项非阻断 LOW：sink 负例以静态源码合同为主，测试 helper 的 switch-key 归一化可进一步加强。
 -   [!] G1-G 只证明 source、CI、build-only artifact 和隔离双浏览器候选；没有 registry 发布、main readiness、Provider 调用、生产 secret 操作、生产切换或部署后验收。
 
-## Gate G1-H：PR Ready 与实质审查（进行中）
+## Gate G1-H：PR Ready 后对抗性加固（进行中）
 
--   [x] 已核对 PR head/base、OPEN/Draft、`CLEAN/MERGEABLE`、全部 exact-head checks、0 个 review thread，以及仓库当前无 branch protection／ruleset；平台不强制审批不等于治理批准。
--   [x] 已识别 CodeRabbit 当前 `SUCCESS` 仅表示 Draft review skipped，不作为实质审查或批准证据。
--   [x] 已完成本地分支审计、PR 门禁审计与残余风险复核；Codex formal helper 未在有界窗口内产出终态，已终止且残留进程为 0，因此只记录 actionable finding 0，不声明 helper clean。
--   [~] 同步本计划、进度、发现和 PR 描述后，将 PR 转为 Ready 以触发 exact-head 实质审查；完成条件仍包括 CodeRabbit 终态、全部新增讨论收口和独立 GitHub 审批。
--   [!] 即使 Ready 后 checks 全绿，merge、main readiness／制品发布、历史 Provider 凭据关账、备份／回滚、生产 secret/key 操作及 cutover 仍需后续独立门禁；production promotion 保持 NO-GO。
+-   [x] 本地加固批次开始前，PR `#14` 为 `OPEN/Ready`，PR head 与本地提交基线均为 `48573043d5340c61c49553e97deff7141be577d5`；该状态只绑定已提交基线。
+-   [x] 当前实现覆盖 workspace／capability 作用域、DocumentStore integer revision CAS 与四数据库迁移、HTTP／OpenAI／MCP 资源有界生命周期、删除／计量修正及 UI 合同；Provider 调用继续禁用。
+-   [x] 已关闭独立复审发现的 Axios 编码后字节欠计、生命周期初始化清理、不可逆存储超时早退、累计下载额度和 MCP cache／空响应流清理问题；相关终审无剩余 MEDIUM+。
+-   [x] 稳定实现树已通过 components `37/37` suites、`1314/1314` tests，server `133/133` suites、`1815/1815` tests，TypeScript/build、security `341/341`、release Node `77/77` ＋ Python `138/138`、metadata、E2E runner、production audit、lint／format／diff 门禁。
+-   [x] 同一稳定树的隔离 Chrome 150 与 Firefox ESR 140.13 均完成 5 specs／7 tests，API Key、Variable、Chatflow、PC core 与 10 模块壳层全绿，runner cleanup 为 complete。
+-   [~] 执行精确候选冻结、秘密扫描及独立代码／安全终审；全部通过才允许原子提交并推送 PR 分支。
+-   [ ] 新提交推送后等待 exact-head Node／Docker CI、CodeRabbit 实质终态、全部新增讨论收口及独立 GitHub 审批；`48573043` 的既有 CI 不替代新候选证据。
+-   [!] 本门禁未调用 Provider，未读取、输出或变更生产 secret，未执行生产写入或部署；merge、main readiness／制品发布、历史 Provider 凭据关账、备份／恢复、生产 key continuity 与 cutover 仍需后续独立门禁，production promotion 保持 NO-GO。
+
+## Gate G1-J：DocumentStore 代际、租户与物化一致性加固
+
+-   [x] 将 DocumentStore 并发身份收敛为 `workspaceId + id + generationId + integer revision`，版本指纹使用由强 `TOKEN_HASH_SECRET` 派生的 domain-separated HMAC-SHA256；Web 与独立 Worker 均在队列初始化前 fail-closed 完成密钥初始化，保持 ETag 与队列 claim wire format 不变。
+-   [x] DocumentStore Loader／Vector 运行时在动态导入或 Provider 初始化前强制 workspace 归属和物化状态；Chatflow 保存／更新前解析、去重并校验 Loader、Vector、Agent 和 Retriever 的全部引用，`whereUsed` 以完整 Store 集合同步并在首个 CAS 写入前预检目标存在性与全部旧索引结构。
+-   [x] 通用 DocumentStore create／update 仅接受名称和描述；loaders、whereUsed、配置、状态、revision 与 generation 由服务端所有。Loader／chunk／vector 配置变化会使物化状态转为 `STALE`，相同配置保持当前状态。
+-   [x] Provider 返回元数据使用容器宽度、深度、节点、字符串与 data-descriptor 预算；超宽对象在读取任意 property descriptor/getter 前降级为空，错误和队列 envelope 只保留固定可允许状态。
+-   [x] 工作区导入改为 create-only allowlist、全量 ID 重建、精确 typed-reference remap、事务内关系预检与有界批量查询；深度、节点、字节、集合、危险键和嵌入 JSON 统一预算。DocumentStore、Custom Assistant 与 `whereUsed` 在同一事务内同步，旧版 OpenAI／Azure Assistant 退出可恢复备份合同并固定返回 410。
+-   [x] ChatMessage／Execution 关系按 workspace、flow、session 与父元组过滤；Evaluation 批删严格限制 UUID、去重、500 项、精确 boolean、全版本扩展上限、事务归属与 affected；CustomTool、Schedule 与 Execution 的读写和级联删除均在租户边界内 fail closed。
+-   [x] Chatflow generic API 按实际类型映射 `chatflows:*`／`agentflows:*`，ASSISTANT 退出 generic 读写与 capability 路径；`mcpServerConfig` 默认 `select:false`，仅 MCP 专用授权和 Token 校验路径显式读取，MCP／Webhook 更新使用旧值 CAS、workspace／type 条件与 `affected=1`，Token 使用常量时间比较。
+-   [x] 文件型认证 secret 采用 `O_NOFOLLOW`、regular-file、原子 no-overwrite 与 `0600/0700` 权限；多实例可用 domain-separated fingerprint 进行启动一致性校验。全局错误边界固定中文 5xx／Provider 401 文案、请求 UUID 和无原始异常日志。
+-   [x] 当前稳定源代码树通过 server `153/153` suites、`2102/2102` tests，components `40/40` suites、`1338/1338` tests，UI `47/47` suites、`607/607` tests；三包 TypeScript／production build、security `341/341`、release Node `77/77` ＋ Python `138/138`、E2E runner `26/26`、metadata 311 节点／91 动态方法 unknown `0`、production audit high/critical `0`、候选 ESLint／Prettier／diff-check 全绿。
+-   [x] 当前稳定源代码树的隔离 Chrome 150 run `1e4a257f-6fa3-47bb-991c-5f63c6b6ffc4` 与官方签名／notarized Firefox ESR 140.13 run `8382b941-e56c-4fe2-9299-1989e60196e6` 均完成 5 specs／7 tests，runner cleanup、挂载、下载、进程、端口与临时目录残留为 0。
+-   [~] 冻结包含计划文档的精确路径清单与二进制 diff SHA-256，执行秘密／生成物／symlink 检查及两条独立终审；全部通过后才允许按清单原子提交并推送 PR `#14` 分支。
+-   [ ] 新提交必须等待 exact-head Node／Docker CI、实质 CodeRabbit 终态和独立 GitHub 审批；既有 `48573043` 证据不能替代新候选。
+-   [!] production promotion 仍为 NO-GO：Provider／存储外部副作用与最终数据库 CAS 之间缺 durable outbox／幂等 reconciliation，workspace 删除缺 tombstone/outbox，Chatflow 与 DocumentStore 使用索引仍是跨 aggregate 的提交后同步；历史 Provider 凭据关账、main readiness、备份恢复、生产 key continuity、cutover 与部署后验收也未关闭。
+
+## Gate G1-K：工作区可移植性、MCP 与 Provider 权限收敛（进行中）
+
+-   [x] 所有工作区导入来源在 ID 重建和数据库事务前执行组件目录驱动清洗：Flow、嵌套 Agent／Tool wrapper、Custom Assistant 与 DocumentStore 的凭据、密码、Header、MCP 和 Provider 敏感选项移除，Variable value 强制为空；受信组件的端点／主机目标为保持结构可移植性可能保留，manifest 与 UI 均要求在绑定新凭据或重新部署前逐项复核；manifest 不参与授权判断。
+-   [x] 导入依赖改为完整自闭合，不再查询或绑定目标工作区既有 Flow、Tool、DocumentStore、Execution 或 ChatMessage；旧版部分导入必须重新生成 record-closure 文件。
+-   [x] feedback-only 导出先取反馈再按 `messageId + chatflowid` 精确批量取父消息，消息引用的 Execution 按 ID ＋ workspace 精确批量读取；无关消息／执行超过上限不再误拒小型闭包。
+-   [x] DocumentStore 执行与导出组件边界与 UI provider 列表一致：Meilisearch 的 `BaseRetriever` 合法，LlamaIndex、`documentStoreVS`、`memoryVectorStore` 和隐藏 Loader 继续 fail closed；`includeHeaders`／`splitByHeaders` 不再被误当秘密 Header 删除。
+-   [x] 组件 metadata 新增显式 `workspaceExportPolicy: rebind`：本地文件／目录、数据库连接串、TLS 文件、TypeORM `additionalConfig` 和 Flow／Tool 任意 `overrideConfig` 在导出与所有导入来源中移除；受信端点／主机仍可保留但必须人工复核。8 个 `loadConfig: true` 动态子配置全部纳入同一递归清洗，空选择和未知选择均 fail closed。
+-   [x] MCP 旧明文 Token 迁移改为禁用并清除，必须管理员显式重新启用并领取新 Token；公开 endpoint 不再兼容明文，Token 响应 no-store，描述上限 4,096，JSON 解析位于 bearer 鉴权／限流之后。
+-   [x] MCP 公开请求在整个 `/api/v1/mcp` 命名空间、canonical casing 拒绝和 JSON parser 之前建立早期可观测边界；合法、无 ID、未授权、混合大小写、限流、超限和未知路由均只记录固定路由、方法、状态、耗时、完成类别与随机请求 ID，Prometheus／OpenTelemetry 按同一终态去重计数，chatflowId、原始路径、Header、query、body 和 Token 均不进入审计。
+-   [x] Agentflow 生成、Assistant 指令生成、TTS voice、DocumentStore 工具描述、Evaluation 及仍可读的旧版 OpenAI Assistant／Vector Store Provider 路径均要求业务权限与 `credentials:view` 的合取权限。
+-   [x] 更新后稳定树通过 server `162/162` suites／`2219/2219` tests、components `41/41` suites／`1339/1339` tests、UI `50/50` suites／`622/622` tests；根构建 6/6 workspace、三包 production build、release Node `77/77` ＋ Python `138/138`、security `341/341`、E2E runner `26/26`、metadata 311 节点／91 动态方法 unknown `0`、生产依赖 high/critical `0`；最终 lint／format／diff-check 随新 freeze 复算。
+-   [x] 同一稳定树的隔离 Chrome 150 run `100b0677-1b71-44d1-aeb4-0f2ceeda475e` 与官方 SHA-512、SHA-256、Apple 签名及 notarization 验真的 Firefox ESR 140.13 run `fd0f645a-a91d-471f-b10d-809fc1580d3b` 均完成 5 specs／7 tests；runner、临时数据、浏览器、挂载、进程和诊断目录清理完成。
+-   [x] 冻结前独立代码复核覆盖 32 个 G1-K 目标文件并允许进入全量门禁；首个 temp-index 冻结后复审继续发现并关闭 Provider-backed OpenAI Assistant 凭据权限旁路、未知 MCP 路由回落全局 parser、无 ID MCP 命名空间缺观察收据 3 个 MEDIUM，以及 audit chatflowId 高基数、Provider 畸形分页误报空文件集 2 个 LOW。旧 freeze 与哈希随即作废，更新后聚焦 `6/6` suites／`77/77` tests、ESLint、TypeScript 和复审均通过。
+-   [~] 生成新的精确 temp-index 候选、路径清单与二进制 patch 哈希，执行秘密／生成物／symlink 检查和冻结后双审；旧 G1-J 全量结果和 `48573043` 远端证据不能替代。
+-   [ ] 仅在新候选代码／安全双审 GO、路径与二进制 patch 哈希复算一致、真实索引仍为空后，才允许精确原子提交和 non-force push；不授权 merge、镜像发布或部署。
+-   [!] `workspace:import` 明确是可引入流程、模板和 Custom Tool 代码的高信任能力，只授予受控管理员；production promotion 继续受 durable outbox、公开 BOLA／multipart、API Key、TLS、历史 Provider 凭据、main readiness、备份恢复、密钥连续性和部署验收阻断。

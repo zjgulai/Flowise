@@ -6,7 +6,10 @@
  */
 export const ZH_CN_NODE_SOURCES_C: ReadonlyArray<readonly [string, string]> = [
     ['node.deprecateMessage@6f04c247412e', '请改用 HuggingFace Inference 聊天模型'],
-    ['node.deprecateMessage@813f68f6bfcc', 'OpenAI Assistant 已弃用，并将在未来版本中移除。请改用自定义助手。'],
+    [
+        'node.deprecateMessage@2f2b034b57f2',
+        'OpenAI Assistants API 将于 2026 年 8 月 26 日停止服务。请迁移到自定义助手或 OpenAI Responses API，并参阅 OpenAI Assistants 迁移指南。'
+    ],
     ['node.deprecateMessage@8d522e8a549b', '请改用 Fireworks 聊天模型'],
     ['node.deprecateMessage@8fe5b094322c', '请改用 Azure OpenAI 聊天模型'],
     ['node.description@60dbfbd9c139', '用于对 LLM 执行查询的链'],
@@ -198,7 +201,6 @@ export const ZH_CN_NODE_SOURCES_C: ReadonlyArray<readonly [string, string]> = [
     ['node.description@83d8adb62097', '从 Notion 数据库加载数据（每行作为一个独立文档，所有属性作为元数据）'],
     ['node.description@843445fe80fa', '面向 Browserless 的 MCP 服务器，可抓取页面、生成截图和 PDF 等'],
     ['node.description@848f0ca2c125', '邮件主题'],
-    ['node.description@84e20cfffbee', 'Flowise 的基础 URL。默认使用传入请求的 URL；需要通过替代路由执行流程时可设置此项。'],
     ['node.description@8611c33c7785', '采样模式使用的随机数生成种子，用于提高实验的可重复性。'],
     ['node.description@86d09565267b', 'Exa Search API 封装——专为 LLM 使用场景设计的搜索引擎'],
     ['node.description@87044030344f', '如果提供 YAML 链接，将忽略上传的 YAML 文件并使用该链接'],

@@ -6,7 +6,13 @@
  * don't crash at module-load time, even though the class is never instantiated
  * in these tests.
  */
-class Stub {}
+class Stub {
+    constructor(...args) {
+        // Preserve constructor arguments so security-focused tests can assert
+        // transport options without loading the mapped ESM dependency.
+        this.__args = args
+    }
+}
 
 module.exports = new Proxy(
     {},

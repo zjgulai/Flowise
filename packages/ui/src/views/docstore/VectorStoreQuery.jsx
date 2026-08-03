@@ -6,7 +6,7 @@ import { cloneDeep } from 'lodash'
 import { v4 as uuidv4 } from 'uuid'
 
 // material-ui
-import { Box, Card, Grid, Stack, Typography, OutlinedInput, IconButton, Button } from '@mui/material'
+import { Alert, Box, Card, Grid, Stack, Typography, OutlinedInput, IconButton, Button } from '@mui/material'
 import Embeddings from '@mui/icons-material/DynamicFeed'
 import { useTheme, styled } from '@mui/material/styles'
 import CardContent from '@mui/material/CardContent'
@@ -23,7 +23,11 @@ import DocStoreInputHandler from '@/views/docstore/DocStoreInputHandler'
 import { PermissionButton } from '@/ui-component/button/RBACButtons'
 
 // API
-import documentsApi from '@/api/documentstore'
+import documentsApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 import nodesApi from '@/api/nodes'
 
 // Hooks
@@ -75,6 +79,7 @@ const VectorStoreQuery = () => {
     const [showExpandedChunkDialog, setShowExpandedChunkDialog] = useState(false)
     const [expandedChunkDialogProps, setExpandedChunkDialogProps] = useState({})
     const [documentStore, setDocumentStore] = useState({})
+    const [hasVersionConflict, setHasVersionConflict] = useState(false)
     const [query, setQuery] = useState('')
 
     const [timeTaken, setTimeTaken] = useState(-1)
@@ -134,6 +139,7 @@ const VectorStoreQuery = () => {
     }
 
     const saveConfig = async () => {
+        if (hasVersionConflict) return
         setLoading(true)
         const data = {
             storeId: storeId
@@ -152,9 +158,11 @@ const VectorStoreQuery = () => {
         }
 
         try {
-            const updateResp = await documentsApi.updateVectorStoreConfig(data)
+            const updateResp = await documentsApi.updateVectorStoreConfig(data, documentStore.versionToken)
             setLoading(false)
             if (updateResp.data) {
+                requireDocumentStoreVersionToken(updateResp.data)
+                setDocumentStore(updateResp.data)
                 enqueueSnackbar({
                     message: '向量库配置已更新',
                     options: {
@@ -170,6 +178,15 @@ const VectorStoreQuery = () => {
             }
         } catch (error) {
             setLoading(false)
+            if (isDocumentStoreVersionConflict(error)) {
+                setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                setHasVersionConflict(true)
+                enqueueSnackbar({
+                    message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                    options: { variant: 'warning' }
+                })
+                return
+            }
             enqueueSnackbar({
                 message: `更新向量库配置失败：${getErrorMessage(error)}`,
                 options: {
@@ -185,6 +202,8 @@ const VectorStoreQuery = () => {
             })
         }
     }
+
+    const reloadLatestValues = () => window.location.reload()
 
     useEffect(() => {
         if (queryVectorStoreApi.data) {
@@ -267,6 +286,7 @@ const VectorStoreQuery = () => {
                         onBack={() => navigate(-1)}
                     >
                         <PermissionButton
+                            disabled={hasVersionConflict}
                             permissionId={'documentStores:upsert-config'}
                             variant='outlined'
                             color='secondary'
@@ -277,6 +297,18 @@ const VectorStoreQuery = () => {
                             保存配置
                         </PermissionButton>
                     </ViewHeader>
+                    {hasVersionConflict && (
+                        <Alert
+                            severity='warning'
+                            action={
+                                <Button color='inherit' size='small' onClick={reloadLatestValues}>
+                                    重新载入最新值
+                                </Button>
+                            }
+                        >
+                            当前向量库配置草稿已保留，但不能与新版本令牌混用。重新载入将放弃当前草稿。
+                        </Alert>
+                    )}
                     <div style={{ width: '100%' }}></div>
                     <div>
                         <Grid container spacing={2}>

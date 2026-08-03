@@ -1,7 +1,8 @@
-import { FLOWISE_METRIC_COUNTERS, IMetricsProvider } from '../Interface.Metrics'
+import { FLOWISE_METRIC_COUNTERS, IHttpRequestMetricObservation, IMetricsProvider } from '../Interface.Metrics'
 import express from 'express'
 import promClient, { Counter, Histogram, Registry } from 'prom-client'
 import { getVersion } from 'flowise-components'
+import { EARLY_HTTP_METRICS_OBSERVED } from '../middlewares/mcpRequestObservability'
 
 export class Prometheus implements IMetricsProvider {
     private app: express.Application
@@ -132,16 +133,24 @@ export class Prometheus implements IMetricsProvider {
         // Runs after each requests
         this.app.use((req, res, next) => {
             res.on('finish', async () => {
-                if (res.locals.startEpoch) {
-                    this.requestCounter.inc()
+                if (res.locals.startEpoch && !res.locals[EARLY_HTTP_METRICS_OBSERVED]) {
                     const responseTimeInMs = Date.now() - res.locals.startEpoch
-                    this.httpRequestDurationMicroseconds
-                        .labels(req.method, req.baseUrl, res.statusCode.toString())
-                        .observe(responseTimeInMs)
+                    this.observeHttpRequest({
+                        method: req.method,
+                        route: req.baseUrl || req.path,
+                        statusCode: res.statusCode,
+                        durationMs: responseTimeInMs
+                    })
                 }
             })
             next()
         })
+    }
+
+    public observeHttpRequest({ method, route, statusCode, durationMs }: IHttpRequestMetricObservation): void {
+        if (!this.requestCounter || !this.httpRequestDurationMicroseconds) return
+        this.requestCounter.labels(method, route, statusCode.toString()).inc()
+        this.httpRequestDurationMicroseconds.labels(method, route, statusCode.toString()).observe(durationMs)
     }
 
     public incrementCounter(counter: FLOWISE_METRIC_COUNTERS, payload: any) {

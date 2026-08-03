@@ -7,10 +7,9 @@ import {
     INodeParams,
     IServerSideEventStreamer
 } from '../../../src/Interface'
-import { AxiosRequestConfig } from 'axios'
-import { secureAxiosRequest } from '../../../src/httpSecurity'
+import { FLOWISE_REQUEST_ERROR, requestFlowisePrediction } from '../../../src/internalFlowRequest'
 import { getCredentialData, getCredentialParam, processTemplateVariables, parseJsonBody } from '../../../src/utils'
-import { isValidURL } from '../../../src/validator'
+import { isValidUUID } from '../../../src/validator'
 import { DataSource } from 'typeorm'
 import { BaseMessageLike } from '@langchain/core/messages'
 import { updateFlowState } from '../utils'
@@ -65,6 +64,7 @@ class ExecuteFlow_Agentflow implements INode {
                 name: 'executeFlowOverrideConfig',
                 description: 'Override the config passed to the flow',
                 type: 'json',
+                workspaceExportPolicy: 'rebind',
                 optional: true,
                 acceptVariable: true
             },
@@ -73,8 +73,8 @@ class ExecuteFlow_Agentflow implements INode {
                 name: 'executeFlowBaseURL',
                 type: 'string',
                 description:
-                    'Base URL to Flowise. By default, it is the URL of the incoming request. Useful when you need to execute flow through an alternative route.',
-                placeholder: 'http://localhost:3000',
+                    'Base URL to Flowise. By default, the server canonical APP_URL is used. Explicit external targets never receive a Flow API credential.',
+                placeholder: 'https://flowise.example.com',
                 optional: true
             },
             {
@@ -160,7 +160,7 @@ class ExecuteFlow_Agentflow implements INode {
     }
 
     async run(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
-        const baseURL = (nodeData.inputs?.executeFlowBaseURL as string) || (options.baseURL as string)
+        const configuredBaseUrl = nodeData.inputs?.executeFlowBaseURL
         const selectedFlowId = nodeData.inputs?.executeFlowSelectedFlow as string
         const flowInput = nodeData.inputs?.executeFlowInput as string
         const returnResponseAs = nodeData.inputs?.executeFlowReturnResponseAs as string
@@ -184,38 +184,30 @@ class ExecuteFlow_Agentflow implements INode {
             const credentialData = await getCredentialData(nodeData.credential ?? '', options)
             const chatflowApiKey = getCredentialParam('chatflowApiKey', credentialData, nodeData)
 
-            if (!baseURL || !isValidURL(baseURL)) throw new Error('Invalid base URL: must be a valid URL')
+            if (!selectedFlowId || !isValidUUID(selectedFlowId)) throw new Error(FLOWISE_REQUEST_ERROR)
 
             if (selectedFlowId === options.chatflowid) throw new Error('Cannot call the same agentflow!')
 
-            let headers: Record<string, string> = {
-                'Content-Type': 'application/json',
-                'flowise-tool': 'true'
-            }
-            if (chatflowApiKey) headers = { ...headers, Authorization: `Bearer ${chatflowApiKey}` }
-
-            const finalUrl = `${baseURL}/api/v1/prediction/${selectedFlowId}`
-            const requestConfig: AxiosRequestConfig = {
-                method: 'POST',
-                url: finalUrl,
-                headers,
-                data: {
+            const response = await requestFlowisePrediction({
+                configuredBaseUrl,
+                flowId: selectedFlowId,
+                apiKey: chatflowApiKey,
+                flowiseTool: true,
+                body: {
                     question: flowInput,
                     chatId: options.chatId,
                     overrideConfig
                 }
-            }
-
-            const response = await secureAxiosRequest(requestConfig)
+            })
 
             let resultText = ''
-            const { sourceDocuments, usedTools, artifacts, fileAnnotations } = response.data
+            const { sourceDocuments, usedTools, artifacts, fileAnnotations } = response
             const flattenedSourceDocuments = Array.isArray(sourceDocuments) ? flatten(sourceDocuments) : []
             const flattenedUsedTools = Array.isArray(usedTools) ? flatten(usedTools) : []
             const flattenedArtifacts = Array.isArray(artifacts) ? flatten(artifacts) : []
-            if (response.data.text) resultText = response.data.text
-            else if (response.data.json) resultText = '```json\n' + JSON.stringify(response.data.json, null, 2)
-            else resultText = JSON.stringify(response.data, null, 2)
+            if (response.text) resultText = response.text
+            else if (response.json) resultText = '```json\n' + JSON.stringify(response.json, null, 2)
+            else resultText = JSON.stringify(response, null, 2)
 
             if (isLastNode && sseStreamer) {
                 sseStreamer.streamTokenEvent(options.chatId, resultText)
@@ -292,37 +284,8 @@ class ExecuteFlow_Agentflow implements INode {
             }
 
             return returnOutput
-        } catch (error) {
-            console.error('ExecuteFlow Error:', error)
-
-            // Format error response
-            const errorResponse: any = {
-                id: nodeData.id,
-                name: this.name,
-                input: {
-                    messages: [
-                        {
-                            role: 'user',
-                            content: flowInput
-                        }
-                    ]
-                },
-                error: {
-                    name: error.name || 'Error',
-                    message: error.message || 'An error occurred during the execution of the flow'
-                },
-                state
-            }
-
-            // Add more error details if available
-            if (error.response) {
-                errorResponse.error.status = error.response.status
-                errorResponse.error.statusText = error.response.statusText
-                errorResponse.error.data = error.response.data
-                errorResponse.error.headers = error.response.headers
-            }
-
-            throw new Error(error)
+        } catch {
+            throw new Error(FLOWISE_REQUEST_ERROR)
         }
     }
 }

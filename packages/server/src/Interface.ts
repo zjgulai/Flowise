@@ -501,7 +501,12 @@ export interface IVariableOverride {
 
 export interface IMcpServerConfig {
     enabled: boolean
-    token: string
+    configured?: boolean
+    hasToken?: boolean
+    /** Returned only once by token-issuing operations; never persisted or returned by GET. */
+    token?: string
+    /** Internal versioned keyed digest; public DTOs must omit it. */
+    tokenHash?: string
     description?: string
     toolName?: string
 }

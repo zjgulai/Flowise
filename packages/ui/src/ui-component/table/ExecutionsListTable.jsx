@@ -261,7 +261,7 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
                                                     checked={isItemSelected}
                                                     onClick={(event) => handleClick(event, row.id)}
                                                     inputProps={{
-                                                        'aria-label': `选择执行记录 ${row.agentflow?.name || row.id}`
+                                                        'aria-label': `选择执行记录 ${row.agentflow?.name || row.id}（ID：${row.id}）`
                                                     }}
                                                 />
                                             </StyledTableCell>

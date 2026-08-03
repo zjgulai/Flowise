@@ -4,14 +4,9 @@ import { RunnableConfig } from '@langchain/core/runnables'
 import { CallbackManagerForToolRun, Callbacks, CallbackManager, parseCallbackConfigArg } from '@langchain/core/callbacks/manager'
 import { StructuredTool } from '@langchain/core/tools'
 import { ICommonObject, IDatabaseEntity, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
-import {
-    getCredentialData,
-    getCredentialParam,
-    executeJavaScriptCode,
-    createCodeExecutionSandbox,
-    parseWithTypeConversion
-} from '../../../src/utils'
-import { isValidUUID, isValidURL } from '../../../src/validator'
+import { requestFlowisePrediction } from '../../../src/internalFlowRequest'
+import { getCredentialData, getCredentialParam, parseWithTypeConversion } from '../../../src/utils'
+import { isValidUUID } from '../../../src/validator'
 import { v4 as uuidv4 } from 'uuid'
 
 class AgentAsTool_Tools implements INode {
@@ -74,6 +69,7 @@ class AgentAsTool_Tools implements INode {
                 name: 'overrideConfig',
                 description: 'Override the config passed to the Agentflow.',
                 type: 'json',
+                workspaceExportPolicy: 'rebind',
                 optional: true,
                 additionalParams: true,
                 acceptVariable: true
@@ -83,8 +79,8 @@ class AgentAsTool_Tools implements INode {
                 name: 'baseURL',
                 type: 'string',
                 description:
-                    'Base URL to Flowise. By default, it is the URL of the incoming request. Useful when you need to execute the Agentflow through an alternative route.',
-                placeholder: 'http://localhost:3000',
+                    'Base URL to Flowise. By default, the server canonical APP_URL is used. Explicit external targets never receive a Flow API credential.',
+                placeholder: 'https://flowise.example.com',
                 optional: true,
                 additionalParams: true
             },
@@ -165,25 +161,17 @@ class AgentAsTool_Tools implements INode {
 
         const startNewSession = nodeData.inputs?.startNewSession as boolean
 
-        const baseURL = (nodeData.inputs?.baseURL as string) || (options.baseURL as string)
+        const configuredBaseUrl = nodeData.inputs?.baseURL
 
         // Validate agentflowid is a valid UUID
         if (!selectedAgentflowId || !isValidUUID(selectedAgentflowId)) {
             throw new Error('Invalid agentflow ID: must be a valid UUID')
         }
 
-        // Validate baseURL is a valid URL
-        if (!baseURL || !isValidURL(baseURL)) {
-            throw new Error('Invalid base URL: must be a valid URL')
-        }
-
         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
         const agentflowApiKey = getCredentialParam('agentflowApiKey', credentialData, nodeData)
 
         if (selectedAgentflowId === options.chatflowid) throw new Error('Cannot call the same agentflow!')
-
-        let headers = {}
-        if (agentflowApiKey) headers = { Authorization: `Bearer ${agentflowApiKey}` }
 
         let toolInput = ''
         if (useQuestionFromChat) {
@@ -196,12 +184,12 @@ class AgentAsTool_Tools implements INode {
 
         return new AgentflowTool({
             name,
-            baseURL,
+            baseURL: configuredBaseUrl,
             description,
             returnDirect,
             agentflowid: selectedAgentflowId,
             startNewSession,
-            headers,
+            apiKey: agentflowApiKey,
             input: toolInput,
             overrideConfig
         })
@@ -223,9 +211,9 @@ class AgentflowTool extends StructuredTool {
 
     startNewSession = false
 
-    baseURL = 'http://localhost:3000'
+    baseURL?: unknown
 
-    headers = {}
+    apiKey?: unknown
 
     overrideConfig?: object
 
@@ -242,7 +230,7 @@ class AgentflowTool extends StructuredTool {
         agentflowid,
         startNewSession,
         baseURL,
-        headers,
+        apiKey,
         overrideConfig
     }: {
         name: string
@@ -251,8 +239,8 @@ class AgentflowTool extends StructuredTool {
         input: string
         agentflowid: string
         startNewSession: boolean
-        baseURL: string
-        headers: ICommonObject
+        baseURL?: unknown
+        apiKey?: unknown
         overrideConfig?: object
     }) {
         super()
@@ -261,7 +249,7 @@ class AgentflowTool extends StructuredTool {
         this.input = input
         this.baseURL = baseURL
         this.startNewSession = startNewSession
-        this.headers = headers
+        this.apiKey = apiKey
         this.agentflowid = agentflowid
         this.overrideConfig = overrideConfig
         this.returnDirect = returnDirect
@@ -333,46 +321,14 @@ class AgentflowTool extends StructuredTool {
             }
         }
 
-        const options = {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'flowise-tool': 'true',
-                ...this.headers
-            },
-            body: JSON.stringify(body)
-        }
-
-        const code = `
-const fetch = require('node-fetch');
-const url = $apiURL;
-
-const body = $callBody;
-
-const options = $callOptions;
-
-try {
-	const response = await fetch(url, options);
-	const resp = await response.json();
-	return resp.text;
-} catch (error) {
-	console.error(error);
-	return '';
-}
-`
-
-        // Create additional sandbox variables
-        const additionalSandbox: ICommonObject = {
-            $callOptions: options,
-            $callBody: body,
-            $apiURL: `${this.baseURL}/api/v1/prediction/${this.agentflowid}`
-        }
-
-        const sandbox = createCodeExecutionSandbox('', [], {}, additionalSandbox)
-
-        let response = await executeJavaScriptCode(code, sandbox, {
-            useSandbox: false
+        const responseData = await requestFlowisePrediction({
+            configuredBaseUrl: this.baseURL,
+            flowId: this.agentflowid,
+            apiKey: this.apiKey,
+            flowiseTool: true,
+            body
         })
+        let response = responseData?.text ?? ''
 
         if (typeof response === 'object') {
             response = JSON.stringify(response)

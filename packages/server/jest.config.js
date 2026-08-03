@@ -4,6 +4,10 @@ module.exports = {
     // Set the test environment to Node.js
     testEnvironment: 'node',
 
+    // Production requires explicit startup initialization. Tests use an
+    // isolated, fixed strong secret rather than adding a runtime fallback.
+    setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
+
     // Define the root directory for tests and modules
     roots: ['<rootDir>/src'],
 

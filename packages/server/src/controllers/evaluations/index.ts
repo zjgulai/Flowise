@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { StatusCodes } from 'http-status-codes'
+import { resolveFlowiseRequestTarget } from 'flowise-components'
 import evaluationsService from '../../services/evaluations'
 import { getPageAndLimitParams } from '../../utils/pagination'
 
@@ -29,7 +30,7 @@ const createEvaluation = async (req: Request, res: Response, next: NextFunction)
         const body = req.body
         body.workspaceId = workspaceId
 
-        const baseURL = `${process.env.APP_URL}`
+        const baseURL = resolveFlowiseRequestTarget().canonicalOrigin
         const apiResponse = await evaluationsService.createEvaluation(body, baseURL, orgId, workspaceId)
         return res.json(apiResponse)
     } catch (error) {
@@ -53,7 +54,7 @@ const runAgain = async (req: Request, res: Response, next: NextFunction) => {
                 `Error: evaluationsService.runAgain - workspace ${workspaceId} not found!`
             )
         }
-        const baseURL = `${process.env.APP_URL}`
+        const baseURL = resolveFlowiseRequestTarget().canonicalOrigin
         const apiResponse = await evaluationsService.runAgain(req.params.id, baseURL, orgId, workspaceId)
         return res.json(apiResponse)
     } catch (error) {
@@ -156,14 +157,11 @@ const getVersions = async (req: Request, res: Response, next: NextFunction) => {
 
 const patchDeleteEvaluations = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const ids = req.body.ids ?? []
-        const isDeleteAllVersion = req.body.isDeleteAllVersion ?? false
+        const ids = req.body?.ids
+        const isDeleteAllVersion = req.body?.isDeleteAllVersion
         const workspaceId = req.user?.activeWorkspaceId
         if (!workspaceId) {
-            throw new InternalFlowiseError(
-                StatusCodes.NOT_FOUND,
-                `Error: evaluationsService.patchDeleteEvaluations - workspace ${workspaceId} not found!`
-            )
+            throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Evaluation deletion is not authorized')
         }
         const apiResponse = await evaluationsService.patchDeleteEvaluations(ids, workspaceId, isDeleteAllVersion)
         return res.json(apiResponse)

@@ -17,6 +17,7 @@ export const SwitchInput = ({ label, value, onChange, disabled = false }) => {
             >
                 {label && <Typography>{label}</Typography>}
                 <Switch
+                    inputProps={label ? { 'aria-label': label } : undefined}
                     disabled={disabled}
                     checked={myValue}
                     onChange={(event) => {

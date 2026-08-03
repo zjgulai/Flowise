@@ -18,6 +18,34 @@ import { getAvailableNodesForVariable } from '@/utils/genericHelper'
 import { getMetadataDisplayText, getMetadataOptionSearchText } from '@/utils/componentMetadataDisplay'
 
 const filterMetadataOptions = createFilterOptions({ stringify: getMetadataOptionSearchText })
+const LOAD_STATUS = {
+    IDLE: 'idle',
+    LOADING: 'loading',
+    READY: 'ready',
+    EMPTY: 'empty',
+    ERROR: 'error'
+}
+const EMPTY_OPTIONS_MESSAGE = '暂无可用选项'
+const LOAD_OPTIONS_ERROR_MESSAGE = '加载选项失败，请稍后重试'
+const SAFE_COMPONENT_NAME = /^[A-Za-z0-9_-]{1,128}$/
+
+export const buildNodeLoadMethodUrl = (nodeName) => {
+    if (typeof nodeName !== 'string' || !SAFE_COMPONENT_NAME.test(nodeName)) {
+        throw new Error('invalid component name')
+    }
+    return `${baseURL}/api/v1/node-load-method/${encodeURIComponent(nodeName)}`
+}
+
+export const parseAsyncMultiValue = (value) => {
+    if (Array.isArray(value)) return value
+    if (value === 'choose an option' || typeof value !== 'string' || value.length === 0) return []
+    try {
+        const parsed = JSON.parse(value)
+        return Array.isArray(parsed) ? parsed : []
+    } catch {
+        return []
+    }
+}
 
 const StyledPopper = styled(Popper)({
     boxShadow: '0px 8px 10px -5px rgb(0 0 0 / 20%), 0px 16px 24px 2px rgb(0 0 0 / 14%), 0px 6px 30px 5px rgb(0 0 0 / 12%)',
@@ -40,7 +68,7 @@ const fetchList = async ({ name, nodeData, previousNodes, currentNode }) => {
         credentialId = nodeData.inputs.credential || nodeData.inputs?.['FLOWISE_CREDENTIAL_ID']
     }
 
-    let config = {
+    const config = {
         headers: {
             'x-request-from': 'internal',
             'Content-type': 'application/json'
@@ -48,19 +76,12 @@ const fetchList = async ({ name, nodeData, previousNodes, currentNode }) => {
         withCredentials: true
     }
 
-    let lists = await axios
-        .post(
-            `${baseURL}/api/v1/node-load-method/${nodeData.name}`,
-            { ...nodeData, loadMethod, previousNodes, currentNode, credential: credentialId },
-            config
-        )
-        .then(async function (response) {
-            return response.data
-        })
-        .catch(function () {
-            return []
-        })
-    return lists
+    const response = await axios.post(
+        buildNodeLoadMethodUrl(nodeData.name),
+        { ...nodeData, loadMethod, previousNodes, currentNode, credential: credentialId },
+        config
+    )
+    return Array.isArray(response.data) ? response.data : []
 }
 
 export const AsyncDropdown = ({
@@ -83,14 +104,10 @@ export const AsyncDropdown = ({
     const [open, setOpen] = useState(false)
     const [options, setOptions] = useState([])
     const [loading, setLoading] = useState(false)
+    const [loadStatus, setLoadStatus] = useState(LOAD_STATUS.IDLE)
     const findMatchingOptions = (options = [], value) => {
         if (multiple) {
-            let values = []
-            if ('choose an option' !== value && value && typeof value === 'string') {
-                values = JSON.parse(value)
-            } else {
-                values = value
-            }
+            const values = parseAsyncMultiValue(value)
             return options.filter((option) => values.includes(option.name))
         }
         return options.find((option) => option.name === value)
@@ -101,34 +118,28 @@ export const AsyncDropdown = ({
     const { reactFlowInstance } = useContext(flowContext)
 
     const fetchCredentialList = async () => {
-        try {
-            let names = ''
-            if (credentialNames.length > 1) {
-                names = credentialNames.join('&credentialName=')
-            } else {
-                names = credentialNames[0]
-            }
-            const resp = await credentialsApi.getCredentialsByName(names)
-            if (resp.data) {
-                const returnList = []
-                for (let i = 0; i < resp.data.length; i += 1) {
-                    const data = {
-                        label: resp.data[i].name,
-                        name: resp.data[i].id
-                    }
-                    returnList.push(data)
-                }
-                return returnList
-            }
-        } catch {
-            return []
+        let names = ''
+        if (credentialNames.length > 1) {
+            names = credentialNames.join('&credentialName=')
+        } else {
+            names = credentialNames[0]
         }
+        const resp = await credentialsApi.getCredentialsByName(names)
+        if (!Array.isArray(resp.data)) return []
+
+        return resp.data.map((credential) => ({
+            label: credential.name,
+            name: credential.id
+        }))
     }
 
     useEffect(() => {
-        setLoading(true)
-        ;(async () => {
-            const fetchData = async () => {
+        let active = true
+
+        const fetchData = async () => {
+            setLoading(true)
+            setLoadStatus(LOAD_STATUS.LOADING)
+            try {
                 let response = []
                 if (credentialNames.length) {
                     response = await fetchCredentialList()
@@ -162,21 +173,34 @@ export const AsyncDropdown = ({
 
                     response = await fetchList(body)
                 }
-                for (let j = 0; j < response.length; j += 1) {
-                    if (response[j].imageSrc) {
-                        const imageSrc = `${baseURL}/api/v1/node-icon/${response[j].name}`
-                        response[j].imageSrc = imageSrc
-                    }
-                }
-                if (isCreateNewOption) setOptions([...response, ...addNewOption])
-                else setOptions([...response])
-                setLoading(false)
+
+                if (!active) return
+
+                const loadedOptions = response.map((option) =>
+                    option.imageSrc ? { ...option, imageSrc: `${baseURL}/api/v1/node-icon/${encodeURIComponent(option.name)}` } : option
+                )
+                setOptions(isCreateNewOption ? [...loadedOptions, ...addNewOption] : loadedOptions)
+                setLoadStatus(loadedOptions.length ? LOAD_STATUS.READY : LOAD_STATUS.EMPTY)
+            } catch {
+                if (!active) return
+                setOptions(isCreateNewOption ? [...addNewOption] : [])
+                setLoadStatus(LOAD_STATUS.ERROR)
+            } finally {
+                if (active) setLoading(false)
             }
-            fetchData()
-        })()
+        }
+
+        fetchData()
+
+        return () => {
+            active = false
+        }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
+
+    const loadMessage =
+        loadStatus === LOAD_STATUS.ERROR ? LOAD_OPTIONS_ERROR_MESSAGE : loadStatus === LOAD_STATUS.EMPTY ? EMPTY_OPTIONS_MESSAGE : ''
 
     return (
         <>
@@ -197,6 +221,7 @@ export const AsyncDropdown = ({
                     setOpen(false)
                 }}
                 options={options}
+                noOptionsText={loadStatus === LOAD_STATUS.ERROR ? LOAD_OPTIONS_ERROR_MESSAGE : EMPTY_OPTIONS_MESSAGE}
                 filterOptions={filterMetadataOptions}
                 getOptionLabel={(option) =>
                     typeof option === 'string' ? option : getMetadataDisplayText(option, 'label', option.label || option.name || '')
@@ -232,6 +257,12 @@ export const AsyncDropdown = ({
                         <TextField
                             {...params}
                             value={internalValue}
+                            error={loadStatus === LOAD_STATUS.ERROR}
+                            helperText={loadMessage || params.helperText}
+                            FormHelperTextProps={{
+                                ...(params.FormHelperTextProps || {}),
+                                role: loadStatus === LOAD_STATUS.ERROR ? 'alert' : 'status'
+                            }}
                             sx={{
                                 height: '100%',
                                 '& .MuiInputBase-root': {
@@ -277,13 +308,7 @@ export const AsyncDropdown = ({
                     return !multiple ? (
                         textField
                     ) : (
-                        <Tooltip
-                            title={
-                                typeof internalValue === 'string' ? internalValue.replace(/[[\]"]/g, '').replace(/,/g, ', ') : internalValue
-                            }
-                            placement='top'
-                            arrow
-                        >
+                        <Tooltip title={parseAsyncMultiValue(internalValue).join(', ')} placement='top' arrow>
                             {textField}
                         </Tooltip>
                     )
@@ -320,7 +345,7 @@ export const AsyncDropdown = ({
 AsyncDropdown.propTypes = {
     name: PropTypes.string,
     nodeData: PropTypes.object,
-    value: PropTypes.string,
+    value: PropTypes.oneOfType([PropTypes.string, PropTypes.array, PropTypes.object]),
     onSelect: PropTypes.func,
     onCreateNew: PropTypes.func,
     disabled: PropTypes.bool,

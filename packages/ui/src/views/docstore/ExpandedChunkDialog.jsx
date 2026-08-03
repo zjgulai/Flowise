@@ -6,14 +6,23 @@ import ReactJson from 'flowise-react-json-view'
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 
 // Material
-import { Button, Dialog, IconButton, DialogContent, DialogTitle, Typography } from '@mui/material'
+import { Alert, Button, Dialog, IconButton, DialogContent, DialogTitle, Typography } from '@mui/material'
 import { IconEdit, IconTrash, IconX, IconLanguage } from '@tabler/icons-react'
 
 // Project imports
 import { CodeEditor } from '@/ui-component/editor/CodeEditor'
 import { PermissionButton, PermissionIconButton } from '@/ui-component/button/RBACButtons'
 
-const ExpandedChunkDialog = ({ show, dialogProps, onCancel, onChunkEdit, onDeleteChunk, isReadOnly }) => {
+const ExpandedChunkDialog = ({
+    show,
+    dialogProps,
+    onCancel,
+    onChunkEdit,
+    onDeleteChunk,
+    isReadOnly,
+    hasVersionConflict,
+    onReloadLatestValues
+}) => {
     const portalElement = document.getElementById('portal')
 
     const customization = useSelector((state) => state.customization)
@@ -135,6 +144,19 @@ const ExpandedChunkDialog = ({ show, dialogProps, onCancel, onChunkEdit, onDelet
                 )}
             </DialogTitle>
             <DialogContent>
+                {hasVersionConflict && (
+                    <Alert
+                        severity='warning'
+                        sx={{ mb: 2 }}
+                        action={
+                            <Button color='inherit' size='small' onClick={onReloadLatestValues}>
+                                重新载入最新值
+                            </Button>
+                        }
+                    >
+                        当前分块草稿已保留，但不能与新版本令牌混用。重新载入将放弃当前草稿。
+                    </Alert>
+                )}
                 {selectedChunk && selectedChunkNumber && (
                     <div>
                         <div
@@ -249,7 +271,9 @@ ExpandedChunkDialog.propTypes = {
     onCancel: PropTypes.func,
     onChunkEdit: PropTypes.func,
     onDeleteChunk: PropTypes.func,
-    isReadOnly: PropTypes.bool
+    isReadOnly: PropTypes.bool,
+    hasVersionConflict: PropTypes.bool,
+    onReloadLatestValues: PropTypes.func
 }
 
 export default ExpandedChunkDialog

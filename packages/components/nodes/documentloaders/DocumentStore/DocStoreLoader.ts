@@ -3,6 +3,9 @@ import { DataSource } from 'typeorm'
 import { Document } from '@langchain/core/documents'
 import { handleEscapeCharacters } from '../../../src'
 
+const DOCUMENT_STORE_SCOPE_ERROR = 'Document Store workspace context is required'
+const DOCUMENT_STORE_UNAVAILABLE_ERROR = 'Document Store is unavailable'
+
 class DocStore_DocumentLoaders implements INode {
     label: string
     name: string
@@ -77,9 +80,17 @@ class DocStore_DocumentLoaders implements INode {
     }
 
     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
-        const selectedStore = nodeData.inputs?.selectedStore as string
+        const workspaceId = typeof options.workspaceId === 'string' ? options.workspaceId.trim() : ''
+        if (!workspaceId) throw new Error(DOCUMENT_STORE_SCOPE_ERROR)
+
+        const selectedStore = typeof nodeData.inputs?.selectedStore === 'string' ? nodeData.inputs.selectedStore.trim() : ''
+        if (!selectedStore) throw new Error(DOCUMENT_STORE_UNAVAILABLE_ERROR)
+
         const appDataSource = options.appDataSource as DataSource
         const databaseEntities = options.databaseEntities as IDatabaseEntity
+        const store = await appDataSource.getRepository(databaseEntities['DocumentStore']).findOneBy({ id: selectedStore, workspaceId })
+        if (!store || store.status !== 'SYNC') throw new Error(DOCUMENT_STORE_UNAVAILABLE_ERROR)
+
         const chunks = await appDataSource
             .getRepository(databaseEntities['DocumentStoreFileChunk'])
             .find({ where: { storeId: selectedStore } })

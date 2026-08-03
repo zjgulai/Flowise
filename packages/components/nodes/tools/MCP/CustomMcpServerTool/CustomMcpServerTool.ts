@@ -3,6 +3,53 @@ import { ICommonObject, IDatabaseEntity, INode, INodeData, INodeOptionsValue, IN
 import { MCPToolkit } from '../core'
 import { decryptCredentialData } from '../../../../src/utils'
 import { DataSource } from 'typeorm'
+import { createHash } from 'crypto'
+
+const MCP_CACHE_REFRESH_ERROR = 'MCP server cache refresh failed'
+const MCP_TOOLKIT_CLOSE_TIMEOUT_MS = 1_000
+
+function normalizeUpdatedDate(value: unknown): string {
+    if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString()
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+}
+
+function createConfigFingerprint(serverRecord: Record<string, any>): string {
+    const authConfigDigest = createHash('sha256')
+        .update(typeof serverRecord.authConfig === 'string' ? serverRecord.authConfig : '')
+        .digest('hex')
+    const securityConfig = JSON.stringify({
+        workspaceId: serverRecord.workspaceId,
+        serverId: serverRecord.id,
+        url: serverRecord.serverUrl,
+        transportType: 'sse',
+        authType: serverRecord.authType,
+        authConfigDigest,
+        status: serverRecord.status,
+        updatedDate: normalizeUpdatedDate(serverRecord.updatedDate)
+    })
+    return createHash('sha256').update(securityConfig).digest('hex')
+}
+
+async function closeToolkitBestEffort(cachedResult: any): Promise<void> {
+    const toolkit = cachedResult?.toolkit
+    const closeTarget =
+        typeof toolkit?.close === 'function' ? toolkit : typeof toolkit?.client?.close === 'function' ? toolkit.client : undefined
+    if (!closeTarget) return
+
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+        await Promise.race([
+            Promise.resolve().then(() => closeTarget.close.call(closeTarget)),
+            new Promise<void>((resolve) => {
+                timeout = setTimeout(resolve, MCP_TOOLKIT_CLOSE_TIMEOUT_MS)
+            })
+        ])
+    } catch {
+        // Resource cleanup is best effort and must not expose SDK details.
+    } finally {
+        if (timeout) clearTimeout(timeout)
+    }
+}
 
 class CustomMcpServerTool implements INode {
     label: string
@@ -107,8 +154,9 @@ class CustomMcpServerTool implements INode {
         if (_mcpActions) {
             try {
                 mcpActions = typeof _mcpActions === 'string' ? JSON.parse(_mcpActions) : _mcpActions
-            } catch (error) {
-                console.error('Error parsing mcp actions:', error)
+            } catch {
+                // Fail closed without logging user-controlled parser details.
+                mcpActions = []
             }
         }
 
@@ -134,54 +182,126 @@ class CustomMcpServerTool implements INode {
             throw new Error('Workspace context is required to load MCP server')
         }
 
-        const serverRecord = await appDataSource.getRepository(databaseEntities['CustomMcpServer']).findOneBy({ id: serverId, workspaceId })
-        if (!serverRecord) {
-            throw new Error(`MCP server ${serverId} not found`)
+        const repository = appDataSource.getRepository(databaseEntities['CustomMcpServer'])
+        const loadAuthorizedRecord = async (): Promise<any> => {
+            const serverRecord = await repository.findOneBy({ id: serverId, workspaceId })
+            if (!serverRecord) throw new Error(`MCP server ${serverId} not found`)
+            if (serverRecord.status !== 'AUTHORIZED') {
+                throw new Error(`MCP server "${serverRecord.name}" is not authorized. Please authorize it in the Tools page first.`)
+            }
+            return serverRecord
         }
-        if (serverRecord.status !== 'AUTHORIZED') {
-            throw new Error(`MCP server "${serverRecord.name}" is not authorized. Please authorize it in the Tools page first.`)
-        }
-
-        // Build headers from encrypted authConfig — only when authType explicitly requires them
-        let headers: Record<string, string> = {}
-        if (serverRecord.authType === 'CUSTOM_HEADERS' && serverRecord.authConfig) {
-            try {
-                const decrypted = await decryptCredentialData(serverRecord.authConfig)
-                if (decrypted?.headers && typeof decrypted.headers === 'object') {
-                    headers = decrypted.headers as Record<string, string>
+        const buildServerParams = async (serverRecord: any): Promise<Record<string, unknown>> => {
+            // Decrypt on every load, including cache hits, so a stale in-memory
+            // secret cannot bypass a current credential-decryption failure.
+            let headers: Record<string, string> = {}
+            if (serverRecord.authType === 'CUSTOM_HEADERS') {
+                if (!serverRecord.authConfig) throw new Error('MCP server credentials unavailable')
+                try {
+                    const decrypted = await decryptCredentialData(serverRecord.authConfig)
+                    if (decrypted?.headers && typeof decrypted.headers === 'object' && !Array.isArray(decrypted.headers)) {
+                        headers = decrypted.headers as Record<string, string>
+                    } else throw new Error('Invalid MCP header configuration')
+                } catch {
+                    throw new Error('MCP server credentials unavailable')
                 }
+            }
+            return {
+                url: serverRecord.serverUrl,
+                ...(Object.keys(headers).length > 0 ? { headers } : {})
+            }
+        }
+        const initializeToolkit = async (
+            serverParams: Record<string, unknown>,
+            configFingerprint: string
+        ): Promise<{ toolkit: MCPToolkit; tools: Tool[] }> => {
+            const toolkit = new MCPToolkit(serverParams, 'sse')
+            toolkit.getToolCallHeaders = async () => {
+                try {
+                    const latestRecord = await loadAuthorizedRecord()
+                    if (createConfigFingerprint(latestRecord) !== configFingerprint) throw new Error(MCP_CACHE_REFRESH_ERROR)
+                    const latestParams = await buildServerParams(latestRecord)
+                    return (latestParams.headers as Record<string, string> | undefined) ?? {}
+                } catch {
+                    // Previously returned tool objects must fail closed after a
+                    // URL or credential rotation instead of reusing old config.
+                    throw new Error(MCP_CACHE_REFRESH_ERROR)
+                }
+            }
+            try {
+                await toolkit.initialize()
+                const tools = (toolkit.tools ?? []).map((tool: Tool) => {
+                    tool.name = this.formatToolName(tool.name)
+                    return tool
+                }) as Tool[]
+                return { toolkit, tools }
             } catch {
-                // authConfig decryption failed — proceed without headers
+                await closeToolkitBestEffort({ toolkit })
+                throw new Error(MCP_CACHE_REFRESH_ERROR)
+            }
+        }
+        const initializeVerifiedToolkit = async (
+            serverParams: Record<string, unknown>,
+            configFingerprint: string
+        ): Promise<{ toolkit: MCPToolkit; tools: Tool[] }> => {
+            const initialized = await initializeToolkit(serverParams, configFingerprint)
+            try {
+                const latestRecord = await loadAuthorizedRecord()
+                if (createConfigFingerprint(latestRecord) !== configFingerprint) throw new Error(MCP_CACHE_REFRESH_ERROR)
+                return initialized
+            } catch {
+                await closeToolkitBestEffort(initialized)
+                throw new Error(MCP_CACHE_REFRESH_ERROR)
             }
         }
 
-        const serverParams: any = {
-            url: serverRecord.serverUrl,
-            ...(Object.keys(headers).length > 0 ? { headers } : {})
+        const cachePool = options.cachePool as any
+        const supportsSafeCache =
+            cachePool &&
+            typeof cachePool.getMCPCache === 'function' &&
+            typeof cachePool.addMCPCache === 'function' &&
+            typeof cachePool.removeMCPCache === 'function' &&
+            typeof cachePool.withMCPCacheLock === 'function'
+        if (!supportsSafeCache) {
+            const serverRecord = await loadAuthorizedRecord()
+            const configFingerprint = createConfigFingerprint(serverRecord)
+            const serverParams = await buildServerParams(serverRecord)
+            return (await initializeVerifiedToolkit(serverParams, configFingerprint)).tools
         }
 
-        if (options.cachePool) {
-            const cacheKey = `mcpServer_${serverId}`
-            const cachedResult = await options.cachePool.getMCPCache(cacheKey)
+        const cacheKey = `customMcpServer:${workspaceId}:${serverId}`
+        return cachePool.withMCPCacheLock(cacheKey, async () => {
+            // The record must be read after acquiring the scoped lock. A caller
+            // that waited behind a rotation must never restore its older snapshot.
+            const serverRecord = await loadAuthorizedRecord()
+            const configFingerprint = createConfigFingerprint(serverRecord)
+            const serverParams = await buildServerParams(serverRecord)
+            const cachedResult = await cachePool.getMCPCache(cacheKey)
+            if (cachedResult?.configFingerprint === configFingerprint && Array.isArray(cachedResult.tools)) {
+                return cachedResult.tools as Tool[]
+            }
+
             if (cachedResult) {
-                return cachedResult.tools
+                let removedResult: any
+                try {
+                    // Detach stale credentials before cleanup. A broken SDK
+                    // close must never keep the old entry reachable.
+                    removedResult = await cachePool.removeMCPCache(cacheKey)
+                } catch {
+                    throw new Error(MCP_CACHE_REFRESH_ERROR)
+                }
+                await closeToolkitBestEffort(removedResult ?? cachedResult)
             }
-        }
 
-        const toolkit = new MCPToolkit(serverParams, 'sse')
-        await toolkit.initialize()
-
-        const tools = toolkit.tools ?? []
-
-        if (options.cachePool) {
-            const cacheKey = `mcpServer_${serverId}`
-            await options.cachePool.addMCPCache(cacheKey, { toolkit, tools })
-        }
-
-        return tools.map((tool: Tool) => {
-            tool.name = this.formatToolName(tool.name)
-            return tool
-        }) as Tool[]
+            const initialized = await initializeVerifiedToolkit(serverParams, configFingerprint)
+            try {
+                await cachePool.addMCPCache(cacheKey, { ...initialized, configFingerprint })
+            } catch {
+                await closeToolkitBestEffort(initialized)
+                throw new Error(MCP_CACHE_REFRESH_ERROR)
+            }
+            return initialized.tools
+        })
     }
 
     /**

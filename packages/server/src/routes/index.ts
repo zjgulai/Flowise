@@ -27,7 +27,6 @@ import leadsRouter from './leads'
 import loadPromptRouter from './load-prompts'
 import logsRouter from './log'
 import marketplacesRouter from './marketplaces'
-import mcpEndpointRouter from './mcp-endpoint'
 import mcpServerRouter from './mcp-server'
 import nodeConfigRouter from './node-configs'
 import nodeCustomFunctionRouter from './node-custom-functions'
@@ -132,7 +131,6 @@ router.use('/agentflowv2-generator', agentflowv2GeneratorRouter)
 router.use('/text-to-speech', textToSpeechRouter)
 router.use('/custom-mcp-servers', customMcpServersRouter)
 router.use('/mcp-server', mcpServerRouter)
-router.use('/mcp', mcpEndpointRouter)
 
 router.use('/auth', authRouter)
 router.use('/audit', IdentityManager.checkFeatureByPlan('feat:login-activity'), auditRouter)

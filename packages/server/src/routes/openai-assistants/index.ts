@@ -7,8 +7,13 @@ const router = express.Router()
 // CREATE
 
 // READ
-router.get('/', checkPermission('assistants:view'), openaiAssistantsController.getAllOpenaiAssistants)
-router.get(['/', '/:id'], checkPermission('assistants:view'), openaiAssistantsController.getSingleOpenaiAssistant)
+router.get('/', checkPermission('assistants:view'), checkPermission('credentials:view'), openaiAssistantsController.getAllOpenaiAssistants)
+router.get(
+    ['/', '/:id'],
+    checkPermission('assistants:view'),
+    checkPermission('credentials:view'),
+    openaiAssistantsController.getSingleOpenaiAssistant
+)
 
 // UPDATE
 

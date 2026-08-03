@@ -5,7 +5,8 @@ import {
     IMessage,
     mapExtToInputField,
     mapMimeTypeToInputField,
-    removeSpecificFileFromUpload
+    removeSpecificFileFromUpload,
+    resolveFlowiseRequestTarget
 } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
 import { cloneDeep, omit } from 'lodash'
@@ -38,6 +39,7 @@ import { OMIT_QUEUE_JOB_DATA } from './constants'
 import { validateFileMimeTypeAndExtensionMatch } from './fileValidation'
 import { checkStorage, updateStorageUsage } from './quotaUsage'
 import { validateFlowAPIKey } from './validateKey'
+import { createWorkspaceOAuth2RefreshCapability } from '../services/oauth2CredentialRefresh'
 
 export const executeUpsert = async ({
     componentNodes,
@@ -54,6 +56,8 @@ export const executeUpsert = async ({
     subscriptionId,
     usageCacheManager
 }: IExecuteFlowParams) => {
+    const baseURL = resolveFlowiseRequestTarget().canonicalOrigin
+    const refreshOAuth2Credential = createWorkspaceOAuth2RefreshCapability(workspaceId)
     const question = incomingInput.question
     let overrideConfig = incomingInput.overrideConfig ?? {}
     let stopNodeId = incomingInput?.stopNodeId ?? ''
@@ -199,8 +203,10 @@ export const executeUpsert = async ({
         orgId,
         workspaceId,
         subscriptionId,
+        baseURL,
         updateStorageUsage,
-        checkStorage
+        checkStorage,
+        refreshOAuth2Credential
     })
 
     // Save to DB
@@ -249,8 +255,7 @@ export const upsertVector = async (req: Request, isInternal: boolean = false) =>
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Chatflow ${chatflowid} not found`)
         }
 
-        const httpProtocol = req.get('x-forwarded-proto') || req.protocol
-        const baseURL = `${httpProtocol}://${req.get('host')}`
+        const baseURL = resolveFlowiseRequestTarget().canonicalOrigin
         const incomingInput: IncomingInput = req.body
         const chatId = incomingInput.chatId ?? incomingInput.overrideConfig?.sessionId ?? uuidv4()
         const files = (req.files as Express.Multer.File[]) || []

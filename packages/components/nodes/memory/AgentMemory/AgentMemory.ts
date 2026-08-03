@@ -67,6 +67,7 @@ class AgentMemory_Memory implements INode {
                 placeholder: 'C:\\Users\\User\\.flowise\\database.sqlite',
                 description:
                     'If SQLite is selected, provide the path to the SQLite database file. Leave empty to use default application database',
+                workspaceExportPolicy: 'rebind',
                 additionalParams: true,
                 optional: true
             },
@@ -98,6 +99,7 @@ class AgentMemory_Memory implements INode {
                 label: 'Additional Connection Configuration',
                 name: 'additionalConfig',
                 type: 'json',
+                workspaceExportPolicy: 'rebind',
                 description:
                     'Optional TypeORM connection options (e.g. ssl, connectTimeout). entities, subscribers, migrations, and extra are not allowed.',
                 additionalParams: true,

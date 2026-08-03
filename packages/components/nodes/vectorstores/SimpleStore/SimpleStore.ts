@@ -55,6 +55,7 @@ class SimpleStoreUpsert_LlamaIndex_VectorStores implements INode {
                 description:
                     'Path to store persist embeddings indexes with persistence. If not specified, default to same path where database is stored',
                 type: 'string',
+                workspaceExportPolicy: 'rebind',
                 optional: true
             },
             {

@@ -38,7 +38,8 @@ import {
     IMessage,
     FlowiseMemory,
     IFileUpload,
-    StorageProviderFactory
+    StorageProviderFactory,
+    OAuth2CredentialRefreshCapability
 } from 'flowise-components'
 import { randomBytes } from 'crypto'
 import { AES, enc } from 'crypto-js'
@@ -55,6 +56,7 @@ import { Variable } from '../database/entities/Variable'
 import { DocumentStore } from '../database/entities/DocumentStore'
 import { DocumentStoreFileChunk } from '../database/entities/DocumentStoreFileChunk'
 import { CustomMcpServer } from '../database/entities/CustomMcpServer'
+import { WorkspaceShared } from '../enterprise/database/entities/EnterpriseEntities'
 import { InternalFlowiseError } from '../errors/internalFlowiseError'
 import { StatusCodes } from 'http-status-codes'
 import {
@@ -102,7 +104,8 @@ export const databaseEntities: IDatabaseEntity = {
     Variable: Variable,
     DocumentStore: DocumentStore,
     DocumentStoreFileChunk: DocumentStoreFileChunk,
-    CustomMcpServer: CustomMcpServer
+    CustomMcpServer: CustomMcpServer,
+    WorkspaceShared: WorkspaceShared
 }
 
 /**
@@ -507,6 +510,7 @@ type BuildFlowParams = {
     uploadedFilesContent?: string
     updateStorageUsage?: (orgId: string, workspaceId: string, totalSize: number, usageCacheManager?: any) => void
     checkStorage?: (orgId: string, subscriptionId: string, usageCacheManager: any) => Promise<any>
+    refreshOAuth2Credential?: OAuth2CredentialRefreshCapability
 }
 
 /**
@@ -543,7 +547,8 @@ export const buildFlow = async ({
     subscriptionId,
     usageCacheManager,
     updateStorageUsage,
-    checkStorage
+    checkStorage,
+    refreshOAuth2Credential
 }: BuildFlowParams) => {
     const flowNodes = cloneDeep(reactFlowNodes)
 
@@ -624,7 +629,8 @@ export const buildFlow = async ({
                     usageCacheManager,
                     dynamicVariables,
                     uploads,
-                    baseURL
+                    baseURL,
+                    refreshOAuth2Credential
                 })
                 if (indexResult) upsertHistory['result'] = indexResult
                 logger.debug(`[server]: [${orgId}]: Finished upserting ${reactFlowNode.data.label} (${reactFlowNode.data.id})`)
@@ -657,7 +663,8 @@ export const buildFlow = async ({
                     baseURL,
                     componentNodes,
                     updateStorageUsage,
-                    checkStorage
+                    checkStorage,
+                    refreshOAuth2Credential
                 })
 
                 // Save dynamic variables
@@ -763,7 +770,9 @@ export const buildFlow = async ({
  * @param {DataSource} appDataSource
  * @param {string} sessionId
  * @param {string} memoryType
- * @param {string} isClearFromViewMessageDialog
+ * @param {boolean} isClearFromViewMessageDialog
+ * @param {string} workspaceId
+ * @param {string} chatflowId
  */
 export const clearSessionMemory = async (
     reactFlowNodes: IReactFlowNode[],
@@ -773,7 +782,9 @@ export const clearSessionMemory = async (
     orgId?: string,
     sessionId?: string,
     memoryType?: string,
-    isClearFromViewMessageDialog?: string
+    isClearFromViewMessageDialog?: boolean,
+    workspaceId?: string,
+    chatflowId?: string
 ) => {
     for (const node of reactFlowNodes) {
         if (node.data.category !== 'Memory' && node.data.type !== 'OpenAIAssistant') continue
@@ -784,7 +795,7 @@ export const clearSessionMemory = async (
         const nodeInstanceFilePath = componentNodes[node.data.name].filePath as string
         const nodeModule = await import(nodeInstanceFilePath)
         const newNodeInstance = new nodeModule.nodeClass()
-        const options: ICommonObject = { orgId, chatId, appDataSource, databaseEntities, logger }
+        const options: ICommonObject = { orgId, workspaceId, chatflowid: chatflowId, chatId, appDataSource, databaseEntities, logger }
 
         // SessionId always take priority first because it is the sessionId used for 3rd party memory node
         if (sessionId && node.data.inputs) {
@@ -1632,8 +1643,7 @@ export const decryptCredentialData = async (
                 const decryptedData = AES.decrypt(encryptedData, encryptKey)
                 decryptedDataStr = decryptedData.toString(enc.Utf8)
             }
-        } catch (error) {
-            console.error(error)
+        } catch {
             throw new Error('Failed to decrypt credential data.')
         }
     } else {
@@ -1650,8 +1660,7 @@ export const decryptCredentialData = async (
             return redactCredentialWithPasswordType(componentCredentialName, plainDataObj, componentCredentials)
         }
         return JSON.parse(decryptedDataStr)
-    } catch (e) {
-        console.error(e)
+    } catch {
         return {}
     }
 }
@@ -1696,10 +1705,13 @@ export interface GetOrCreateStoredSecretOptions {
  */
 export const getOrCreateStoredSecret = async (options: GetOrCreateStoredSecretOptions): Promise<string> => {
     const { envKey, fileName, awsSecretIdSuffix, defaultValueForNew, weakDefault } = options
-    const envVal = process.env[envKey]
-    const useEnv = envVal && envVal.trim() !== '' && (weakDefault === undefined || envVal !== weakDefault)
+    if (!fileName || fileName !== path.basename(fileName) || fileName.includes('\0')) {
+        throw new Error('Invalid stored secret file name')
+    }
+    const normalizedEnvVal = process.env[envKey]?.trim()
+    const useEnv = normalizedEnvVal && (weakDefault === undefined || normalizedEnvVal !== weakDefault)
     if (useEnv) {
-        return envVal!.trim()
+        return normalizedEnvVal
     }
 
     if (USE_AWS_SECRETS_MANAGER && secretsManagerClient) {
@@ -1727,15 +1739,48 @@ export const getOrCreateStoredSecret = async (options: GetOrCreateStoredSecretOp
 
     const dir = getAuthSecretsDirectory()
     const filePath = path.join(dir, fileName)
-    try {
-        return await fs.promises.readFile(filePath, 'utf8')
-    } catch {
-        const value = defaultValueForNew !== undefined ? defaultValueForNew : generateAuthSecret()
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true })
+    const assertSecretDirectory = async (allowMissing: boolean): Promise<void> => {
+        try {
+            const stats = await fs.promises.lstat(dir)
+            if (!stats.isDirectory() || stats.isSymbolicLink()) throw new Error('Stored secret directory is invalid')
+            await fs.promises.chmod(dir, 0o700)
+        } catch (error: any) {
+            if (allowMissing && error?.code === 'ENOENT') return
+            throw error
         }
-        await fs.promises.writeFile(filePath, value)
+    }
+    const readStoredSecret = async (): Promise<string> => {
+        const noFollow = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0
+        const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | noFollow)
+        try {
+            const stats = await handle.stat()
+            if (!stats.isFile()) throw new Error('Stored secret path is not a regular file')
+            await handle.chmod(0o600)
+            const value = await handle.readFile('utf8')
+            if (!value) throw new Error('Stored secret is empty')
+            return value
+        } finally {
+            await handle.close()
+        }
+    }
+
+    await assertSecretDirectory(true)
+    try {
+        return await readStoredSecret()
+    } catch (error: any) {
+        if (error?.code !== 'ENOENT') throw error
+    }
+
+    await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 })
+    await assertSecretDirectory(false)
+
+    const value = defaultValueForNew !== undefined ? defaultValueForNew : generateAuthSecret()
+    try {
+        await fs.promises.writeFile(filePath, value, { flag: 'wx', mode: 0o600 })
         return value
+    } catch (error: any) {
+        if (error?.code !== 'EEXIST') throw error
+        return readStoredSecret()
     }
 }
 
@@ -1866,6 +1911,8 @@ export const getMemorySessionId = (
  * @param {DataSource} appDataSource
  * @param {IDatabaseEntity} databaseEntities
  * @param {any} logger
+ * @param {string} workspaceId
+ * @param {string} orgId
  * @returns {IMessage[]}
  */
 export const getSessionChatHistory = async (
@@ -1876,7 +1923,9 @@ export const getSessionChatHistory = async (
     appDataSource: DataSource,
     databaseEntities: IDatabaseEntity,
     logger: any,
-    prependMessages?: IMessage[]
+    prependMessages?: IMessage[],
+    workspaceId?: string,
+    orgId?: string
 ): Promise<IMessage[]> => {
     const nodeInstanceFilePath = componentNodes[memoryNode.data.name].filePath as string
     const nodeModule = await import(nodeInstanceFilePath)
@@ -1889,6 +1938,8 @@ export const getSessionChatHistory = async (
 
     const initializedInstance: FlowiseMemory = await newNodeInstance.init(memoryNode.data, '', {
         chatflowid,
+        workspaceId,
+        orgId,
         appDataSource,
         databaseEntities,
         logger

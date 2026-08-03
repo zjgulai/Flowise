@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useSelector } from 'react-redux'
 
 // material-ui
-import { Card, CardContent, Chip, Stack } from '@mui/material'
+import { Card, CardActionArea, CardContent, Chip, Stack } from '@mui/material'
 import { useTheme, styled } from '@mui/material/styles'
 
 // project imports
@@ -22,7 +22,8 @@ const cards = [
     },
     {
         title: 'OpenAI 助手',
-        description: '使用 OpenAI 助手 API 创建助手。此功能即将弃用，建议改用自定义助手。',
+        description:
+            'OpenAI 助手 API 将于 2026 年 8 月 26 日停止服务。已停用新建旧版 OpenAI 助手及新增 OpenAI 端资源；现有助手可查看、编辑、同步、解绑、删除与迁移，保存会同时更新 OpenAI 端助手和 Flowise 本地记录。',
         icon: <IconBrandOpenai />,
         iconText: 'OpenAI',
         gradient: 'linear-gradient(135deg, #c9ffd85f 0%, #a0f0b567 100%)',
@@ -91,19 +92,26 @@ const FeatureCards = () => {
                             boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)'
                         }
                     }}
-                    onClick={() => onCardClick(index)}
                 >
-                    <CardContent className='h-full relative z-10'>
-                        <Stack direction='row' alignItems='center' justifyContent='space-between' sx={{ mb: 1 }}>
-                            <FeatureIcon>
-                                {card.icon}
-                                <span className='text-xs uppercase'>{card.iconText}</span>
-                            </FeatureIcon>
-                            {card.deprecating && <Chip label='即将弃用' size='small' color='warning' sx={{ fontWeight: 600 }} />}
-                        </Stack>
-                        <h2 className='text-2xl font-bold mb-2'>{card.title}</h2>
-                        <p className='text-gray-600'>{card.description}</p>
-                    </CardContent>
+                    <CardActionArea
+                        aria-label={`打开${card.title}`}
+                        onClick={() => onCardClick(index)}
+                        sx={{ alignItems: 'stretch', height: '100%', textAlign: 'left' }}
+                    >
+                        <CardContent className='h-full relative z-10'>
+                            <Stack direction='row' alignItems='center' justifyContent='space-between' sx={{ mb: 1 }}>
+                                <FeatureIcon>
+                                    {card.icon}
+                                    <span className='text-xs uppercase'>{card.iconText}</span>
+                                </FeatureIcon>
+                                {card.deprecating && (
+                                    <Chip label='2026-08-26 停止服务' size='small' color='warning' sx={{ fontWeight: 600 }} />
+                                )}
+                            </Stack>
+                            <h2 className='text-2xl font-bold mb-2'>{card.title}</h2>
+                            <p className='text-gray-600'>{card.description}</p>
+                        </CardContent>
+                    </CardActionArea>
                 </StyledCard>
             ))}
         </Stack>

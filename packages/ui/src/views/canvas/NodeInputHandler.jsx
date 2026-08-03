@@ -65,6 +65,7 @@ import { WeekDaysPicker } from '@/ui-component/picker/WeekDaysPicker'
 import { MonthDaysPicker } from '@/ui-component/picker/MonthDaysPicker'
 import { DatePicker } from '@/ui-component/picker/DatePicker'
 import { SafeHTML } from '@/ui-component/safe/SafeHTML'
+import { Available } from '@/ui-component/rbac/available'
 
 import ToolDialog from '@/views/tools/ToolDialog'
 import AssistantDialog from '@/views/assistants/openai/AssistantDialog'
@@ -78,6 +79,7 @@ import CredentialInputHandler from './CredentialInputHandler'
 import InputHintDialog from '@/ui-component/dialog/InputHintDialog'
 import NvidiaNIMDialog from '@/ui-component/dialog/NvidiaNIMDialog'
 import PromptGeneratorDialog from '@/ui-component/dialog/PromptGeneratorDialog'
+import { getStateKeyOptions } from './stateKeyOptions'
 
 // API
 import assistantsApi from '@/api/assistants'
@@ -106,6 +108,7 @@ import { baseURL, FLOWISE_CREDENTIAL_ID } from '@/store/constant'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction, SET_CHATFLOW } from '@/store/actions'
 
 const EDITABLE_OPTIONS = ['selectedTool', 'selectedAssistant']
+const CREATEABLE_OPTIONS = ['selectedTool']
 
 const CustomWidthTooltip = styled(({ className, ...props }) => <Tooltip {...props} classes={{ popper: className }} />)({
     [`& .${tooltipClasses.tooltip}`]: {
@@ -342,9 +345,10 @@ const NodeInputHandler = ({
             const displayColumn = displayInputParam?.datagrid?.find((candidate) => candidate.field === column.field) ?? column
             const stateNode = reactFlowInstance ? reactFlowInstance.getNodes().find((node) => node.data.name === 'seqState') : null
             if (column.type === 'asyncSingleSelect' && column.loadMethod && column.loadMethod.includes('loadStateKeys')) {
+                let valueOptions = []
                 if (stateNode) {
-                    const tabParam = stateNode.data.inputParams.find((param) => param.tabIdentifier)
-                    if (tabParam && tabParam.tabs.length > 0) {
+                    const tabParam = stateNode.data.inputParams?.find((param) => param.tabIdentifier)
+                    if (tabParam?.tabs?.length > 0) {
                         const selectedTabIdentifier = tabParam.tabIdentifier
 
                         const selectedTab =
@@ -353,35 +357,17 @@ const NodeInputHandler = ({
                             tabParam.tabs[0].name
 
                         const datagridValues = stateNode.data.inputs[selectedTab]
-                        if (datagridValues) {
-                            try {
-                                const parsedDatagridValues = JSON.parse(datagridValues)
-                                const keys = Array.isArray(parsedDatagridValues)
-                                    ? parsedDatagridValues.map((item) => item.key)
-                                    : Object.keys(parsedDatagridValues)
-                                colDef.push({
-                                    ...column,
-                                    field: column.field,
-                                    headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName),
-                                    type: 'singleSelect',
-                                    editable: true,
-                                    valueOptions: keys
-                                })
-                            } catch {
-                                // Ignore invalid legacy state metadata and keep the field editable.
-                            }
-                        }
+                        valueOptions = getStateKeyOptions(datagridValues)
                     }
-                } else {
-                    colDef.push({
-                        ...column,
-                        field: column.field,
-                        headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName),
-                        type: 'singleSelect',
-                        editable: true,
-                        valueOptions: []
-                    })
                 }
+                colDef.push({
+                    ...column,
+                    field: column.field,
+                    headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName),
+                    type: 'singleSelect',
+                    editable: true,
+                    valueOptions
+                })
             } else if (column.type === 'freeSolo') {
                 const preLoadOptions = []
                 if (column.loadMethod && column.loadMethod.includes('getPreviousMessages')) {
@@ -410,21 +396,11 @@ const NodeInputHandler = ({
                                 tabParam.tabs[0].name
 
                             const datagridValues = stateNode.data.inputs[selectedTab]
-                            if (datagridValues) {
-                                try {
-                                    const parsedDatagridValues = JSON.parse(datagridValues)
-                                    const keys = Array.isArray(parsedDatagridValues)
-                                        ? parsedDatagridValues.map((item) => item.key)
-                                        : Object.keys(parsedDatagridValues)
-                                    for (const key of keys) {
-                                        preLoadOptions.push({
-                                            value: `$flow.state.${key}`,
-                                            label: `来自 ${key} 的值`
-                                        })
-                                    }
-                                } catch {
-                                    // Ignore invalid legacy state metadata and keep the field editable.
-                                }
+                            for (const key of getStateKeyOptions(datagridValues)) {
+                                preLoadOptions.push({
+                                    value: `$flow.state.${key}`,
+                                    label: `来自 ${key} 的值`
+                                })
                             }
                         }
                     }
@@ -585,21 +561,13 @@ const NodeInputHandler = ({
     }
 
     const addAsyncOption = (inputParamName) => {
-        if (inputParamName === 'selectedTool') {
-            setAsyncOptionEditDialogProps({
-                title: '添加新工具',
-                type: 'ADD',
-                cancelButtonName: '取消',
-                confirmButtonName: '添加'
-            })
-        } else if (inputParamName === 'selectedAssistant') {
-            setAsyncOptionEditDialogProps({
-                title: '添加新助手',
-                type: 'ADD',
-                cancelButtonName: '取消',
-                confirmButtonName: '添加'
-            })
-        }
+        if (!CREATEABLE_OPTIONS.includes(inputParamName)) return
+        setAsyncOptionEditDialogProps({
+            title: '添加新工具',
+            type: 'ADD',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加'
+        })
         setAsyncOptionEditDialog(inputParamName)
     }
 
@@ -1001,18 +969,20 @@ const NodeInputHandler = ({
                                 </Tooltip>
                             )}
                             {inputParam.generateDocStoreDescription && (
-                                <IconButton
-                                    title='生成知识库描述'
-                                    sx={{
-                                        height: 25,
-                                        width: 25
-                                    }}
-                                    size='small'
-                                    color='secondary'
-                                    onClick={() => generateDocStoreToolDesc(data.inputs['documentStore'])}
-                                >
-                                    <IconWand />
-                                </IconButton>
+                                <Available permission='documentStores:upsert-config'>
+                                    <IconButton
+                                        title='生成知识库描述'
+                                        sx={{
+                                            height: 25,
+                                            width: 25
+                                        }}
+                                        size='small'
+                                        color='secondary'
+                                        onClick={() => generateDocStoreToolDesc(data.inputs['documentStore'])}
+                                    >
+                                        <IconWand />
+                                    </IconButton>
+                                </Available>
                             )}
                             {inputParam.generateInstruction && (
                                 <IconButton
@@ -1424,12 +1394,14 @@ const NodeInputHandler = ({
                                         value={data.inputs[inputParam.name] ?? inputParam.default ?? 'choose an option'}
                                         freeSolo={inputParam.freeSolo}
                                         multiple={inputParam.type === 'asyncMultiOptions'}
-                                        isCreateNewOption={EDITABLE_OPTIONS.includes(inputParam.name)}
+                                        isCreateNewOption={CREATEABLE_OPTIONS.includes(inputParam.name)}
                                         onSelect={(newValue) => {
                                             if (inputParam.loadConfig) setReloadTimestamp(Date.now().toString())
                                             handleDataChange({ inputParam, newValue })
                                         }}
-                                        onCreateNew={() => addAsyncOption(inputParam.name)}
+                                        onCreateNew={
+                                            CREATEABLE_OPTIONS.includes(inputParam.name) ? () => addAsyncOption(inputParam.name) : undefined
+                                        }
                                     />
                                     {EDITABLE_OPTIONS.includes(inputParam.name) && data.inputs[inputParam.name] && (
                                         <IconButton

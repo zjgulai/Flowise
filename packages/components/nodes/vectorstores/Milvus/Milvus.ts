@@ -124,6 +124,7 @@ class Milvus_VectorStores implements INode {
                 label: 'Client PEM Path',
                 name: 'clientPemPath',
                 type: 'string',
+                workspaceExportPolicy: 'rebind',
                 optional: true,
                 description: 'Path to the client PEM file',
                 additionalParams: true
@@ -132,6 +133,7 @@ class Milvus_VectorStores implements INode {
                 label: 'Client Key Path',
                 name: 'clientKeyPath',
                 type: 'string',
+                workspaceExportPolicy: 'rebind',
                 optional: true,
                 description: 'Path to the client key file',
                 additionalParams: true
@@ -140,6 +142,7 @@ class Milvus_VectorStores implements INode {
                 label: 'CA PEM Path',
                 name: 'caPemPath',
                 type: 'string',
+                workspaceExportPolicy: 'rebind',
                 optional: true,
                 description: 'Path to the root PEM file',
                 additionalParams: true

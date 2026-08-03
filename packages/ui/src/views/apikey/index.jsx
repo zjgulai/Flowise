@@ -1,7 +1,7 @@
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
 import moment from 'moment/moment'
 import * as PropTypes from 'prop-types'
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 
 // material-ui
@@ -34,6 +34,7 @@ import ConfirmDialog from '@/ui-component/dialog/ConfirmDialog'
 import TablePagination, { DEFAULT_ITEMS_PER_PAGE } from '@/ui-component/pagination/TablePagination'
 import { Available } from '@/ui-component/rbac/available'
 import APIKeyDialog from './APIKeyDialog'
+import { getPermissionDisplayLabel } from './permissionLabels'
 
 // API
 import apiKeyApi from '@/api/apikey'
@@ -129,12 +130,7 @@ function APIKeyRow(props) {
                                 WebkitBoxOrient: 'vertical'
                             }}
                         >
-                            {permissions.map((d, key) => (
-                                <React.Fragment key={key}>
-                                    {d}
-                                    {', '}
-                                </React.Fragment>
-                            ))}
+                            {permissions.map(getPermissionDisplayLabel).join('，')}
                         </Typography>
                     </Stack>
                 </StyledTableCell>

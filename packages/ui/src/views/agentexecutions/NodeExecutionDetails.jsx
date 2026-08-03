@@ -38,6 +38,7 @@ import { CodeEditor } from '@/ui-component/editor/CodeEditor'
 import SourceDocDialog from '@/ui-component/dialog/SourceDocDialog'
 
 import predictionApi from '@/api/prediction'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, onProceedSuccess }) => {
     const [dataView, setDataView] = useState('rendered')
@@ -130,7 +131,7 @@ export const NodeExecutionDetails = ({ data, label, status, metadata, isPublic, 
                 if (onProceedSuccess) onProceedSuccess(response.data)
             }
         } catch (error) {
-            enqueueSnackbar('提交响应失败，请稍后重试', { variant: 'error' })
+            enqueueSnackbar(getErrorMessage(error, '提交响应失败，请稍后重试'), { variant: 'error' })
         } finally {
             setIsLoading(false)
             setLoadingMessage('')

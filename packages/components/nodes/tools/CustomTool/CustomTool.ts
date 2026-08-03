@@ -5,6 +5,9 @@ import { z } from 'zod/v3'
 import { DataSource } from 'typeorm'
 import { SecureZodSchemaParser } from '../../../src/secureZodParser'
 
+const CUSTOM_TOOL_SCOPE_ERROR = 'Custom tool workspace context is required'
+const CUSTOM_TOOL_UNAVAILABLE_ERROR = 'Custom tool is unavailable'
+
 class CustomTool_Tools implements INode {
     label: string
     name: string
@@ -94,7 +97,12 @@ class CustomTool_Tools implements INode {
     }
 
     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
-        const selectedToolId = nodeData.inputs?.selectedTool as string
+        const workspaceId = typeof options.workspaceId === 'string' ? options.workspaceId.trim() : ''
+        if (!workspaceId) throw new Error(CUSTOM_TOOL_SCOPE_ERROR)
+
+        const selectedToolId = typeof nodeData.inputs?.selectedTool === 'string' ? nodeData.inputs.selectedTool.trim() : ''
+        if (!selectedToolId) throw new Error(CUSTOM_TOOL_UNAVAILABLE_ERROR)
+
         const customToolFunc = nodeData.inputs?.customToolFunc as string
         const customToolName = nodeData.inputs?.customToolName as string
         const customToolDesc = nodeData.inputs?.customToolDesc as string
@@ -104,38 +112,37 @@ class CustomTool_Tools implements INode {
         const appDataSource = options.appDataSource as DataSource
         const databaseEntities = options.databaseEntities as IDatabaseEntity
 
+        let tool: any
         try {
-            const tool = await appDataSource.getRepository(databaseEntities['Tool']).findOneBy({
-                id: selectedToolId
-            })
-
-            if (!tool) throw new Error(`Tool ${selectedToolId} not found`)
-            const obj = {
-                name: tool.name,
-                description: tool.description,
-                schema: z.object(convertSchemaToZod(tool.schema)),
-                code: tool.func
-            }
-            if (customToolFunc) obj.code = customToolFunc
-            if (customToolName) obj.name = customToolName
-            if (customToolDesc) obj.description = customToolDesc
-            if (customToolSchema) {
-                obj.schema = SecureZodSchemaParser.parseZodSchema(customToolSchema) as z.ZodObject<ICommonObject, 'strip', z.ZodTypeAny>
-            }
-
-            const variables = await getVars(appDataSource, databaseEntities, nodeData, options)
-
-            const flow = { chatflowId: options.chatflowid }
-
-            let dynamicStructuredTool = new DynamicStructuredTool(obj)
-            dynamicStructuredTool.setVariables(variables)
-            dynamicStructuredTool.setFlowObject(flow)
-            dynamicStructuredTool.returnDirect = customToolReturnDirect
-
-            return dynamicStructuredTool
-        } catch (e) {
-            throw new Error(e)
+            tool = await appDataSource.getRepository(databaseEntities['Tool']).findOneBy({ id: selectedToolId, workspaceId })
+        } catch {
+            throw new Error(CUSTOM_TOOL_UNAVAILABLE_ERROR)
         }
+        if (!tool) throw new Error(CUSTOM_TOOL_UNAVAILABLE_ERROR)
+
+        const obj = {
+            name: tool.name,
+            description: tool.description,
+            schema: z.object(convertSchemaToZod(tool.schema)),
+            code: tool.func
+        }
+        if (customToolFunc) obj.code = customToolFunc
+        if (customToolName) obj.name = customToolName
+        if (customToolDesc) obj.description = customToolDesc
+        if (customToolSchema) {
+            obj.schema = SecureZodSchemaParser.parseZodSchema(customToolSchema) as z.ZodObject<ICommonObject, 'strip', z.ZodTypeAny>
+        }
+
+        const variables = await getVars(appDataSource, databaseEntities, nodeData, options)
+
+        const flow = { chatflowId: options.chatflowid }
+
+        const dynamicStructuredTool = new DynamicStructuredTool(obj)
+        dynamicStructuredTool.setVariables(variables)
+        dynamicStructuredTool.setFlowObject(flow)
+        dynamicStructuredTool.returnDirect = customToolReturnDirect
+
+        return dynamicStructuredTool
     }
 }
 

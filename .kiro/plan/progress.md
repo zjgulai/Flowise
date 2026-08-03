@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改执行日志
 date: 2026-07-10
-last_updated: 2026-08-02
+last_updated: 2026-08-03
 ---
 
 # 2026-07-10
@@ -239,3 +239,42 @@ last_updated: 2026-08-02
 -   PR 平台当前无 branch protection 或 ruleset，review、review request、review thread 均为 0；CodeRabbit 状态实际为 Draft skipped。门禁允许进入 Ready 以触发实质审查，但不允许 merge、发布或部署。
 -   production promotion 继续 NO-GO：历史 Provider 凭据关账 7 项仍未关闭；缺少 current main readiness 的持久化自绑定制品、备份 checksum／恢复演练、生产 secret/key continuity、cutover 与部署后双浏览器验收。
 -   本批边界：`provider_call=false`、`production_secrets_read=false`、`production_write=false`、`registry_write=false`、`merge=false`、`deploy=false`。
+
+# 2026-08-03 G1-H 对抗性加固候选检查点
+
+-   PR `#14` 在本地加固批次开始前为 `OPEN/Ready`，head 为 `48573043d5340c61c49553e97deff7141be577d5`；当前本地分支 HEAD 仍为该提交，新增实现尚未提交。
+-   状态文档同步前的 dirty 快照为 109 个 tracked changed paths（108 modified、1 deleted）、110 个 untracked paths、staged `0`，tracked diff 为 10,133 additions／4,805 deletions；该计数只绑定同步前时间点，最终身份以临时 index 冻结结果为准。
+-   本批实现覆盖 workspace／capability scoping、DocumentStore integer revision CAS 与 SQLite／PostgreSQL／MySQL／MariaDB 迁移、HTTP／OpenAI／MCP 资源有界生命周期、删除／计量修正，以及权限、确认、资源状态和画布保存等 UI 合同。
+-   独立审查先后识别并关闭：OpenAI 流式超时早退不可逆存储／记账、累计下载剩余额度、MCP cache close liveness、Axios transformRequest 重放计数、transformResponse 前原始字节计数、空状态底层流清理、UTF-16LE 解码后欠计及 lifecycle 初始化 listener 泄漏。最终 HTTP 与 OpenAI／MCP 定向终审均无剩余 MEDIUM+。
+-   稳定实现树自动化：components focused `227/227`、full `37/37` suites／`1314/1314` tests；server full `133/133` suites／`1815/1815` tests；components/server TypeScript 与 production build 通过；security `341/341`；release Node `77/77` ＋ Python `138/138`；metadata 311 节点、91 动态方法 unknown `0`；E2E runner `26/26`；production audit 为 high/critical `0`、moderate `64`、low `25`；全仓 lint `0` error、8 个既有 warning，变更文件 Prettier 与 `git diff --check` 通过。
+-   UI full Jest `45/45` suites／`574/574` tests 与 production build 已在本批 UI 稳定树通过；后续 HTTP-only 修复未修改 UI。隔离 Chrome 150 run `12566cdb-9c75-4cc1-8a87-b8d216318e4d` 与 Firefox ESR 140.13 run `2aa7c1bf-d888-4e6d-9d85-4a41abb75cd7` 均完成 5 specs／7 tests，runner cleanup 为 complete；首次用浏览器别名的 Firefox 发现失败也完成安全清理，不计为产品失败。最终候选哈希、原子提交、push 与新 exact-head CI 仍待完成。
+-   边界保持：`provider_call=false`、`production_secrets_read=false`、`production_write=false`、`registry_write=false`、`merge=false`、`deploy=false`；production promotion 继续 NO-GO。
+
+# 2026-08-03 G1-J DocumentStore 一致性与租户边界检查点
+
+-   当前分支仍为 `codex/flowise-g1-zh-20260801`，提交基线仍为 `48573043d5340c61c49553e97deff7141be577d5`；G1-H／G1-J 变更和本节文档尚未提交，真实 staged 为空，最终候选身份待临时 index 冻结。
+-   本批关闭 DocumentStore HMAC 代际指纹、Web／Worker 密钥初始化顺序、Loader／Vector 运行时租户边界、Chatflow 全量 Store 引用校验、完整 `whereUsed` 集合同步、通用字段越权、物化 `STALE` 失效及 Provider 元数据 getter／宽度攻击面。多 Store 定向回归为 2 suites／57 tests。
+-   全量自动化：server `140/140` suites／`1922/1922` tests，components `39/39` suites／`1328/1328` tests，UI `47/47` suites／`607/607` tests；components/server TypeScript 和 build、UI production build 21,212 modules、security `341/341`、release Node `77/77` ＋ Python `138/138`、E2E runner `26/26`、metadata validator（311 nodes／91 dynamic methods／unknown 0）均通过。
+-   `pnpm audit --prod --audit-level high` 为 high/critical `0`、moderate `64`、low `25`。同日全依赖在线审计因 registry 新增 advisory 报告 2 critical／24 high，均位于开发／构建依赖路径；该事实记录为独立工具链维护项，不扩大或误写为生产依赖门禁失败。
+-   全仓 lint exit `0`（0 error、8 个既有 warning），候选文件 Prettier 与 `git diff --check` 通过。隔离 Chrome 150 终态 run `7701fb94-dc3e-41be-b7f3-f9e7d5261959`、Firefox ESR 140.13 run `b79ecde7-cc97-4135-806d-5724391d59f8` 均为 5 specs／7 tests 和 cleanup complete。
+-   Chrome 首轮 run `98f9fbd3-a8e0-4d71-a7f0-e21082272dd4` 功能 7/7 后在 5 秒观察窗内报告 `cypress-process` cleanup failure；runner 正确 exit 1，事后临时目录、浏览器、Cypress、服务与端口残留为 0，同内容完整复跑未复现。该轮不计作通过证据，也不以无持续残留掩盖 fail-closed 事实。
+-   后续对抗批次关闭工作区导入 mass assignment／关系污染／资源预算、可恢复导出误含旧版 Assistant、Custom Assistant 与 DocumentStore 使用索引跨事务、ChatMessage／Execution 关系污染、Evaluation 批删越界、CustomTool workspace 越权、Chatflow 跨类型 BOLA／RBAC、MCP 配置泄漏与并发覆盖，以及认证 secret 文件竞争／symlink 和全局错误泄漏。
+-   最新稳定源代码树全量自动化为 server `153/153` suites／`2102/2102` tests、components `40/40` suites／`1338/1338` tests、UI `47/47` suites／`607/607` tests；server／components／UI production build、候选 ESLint／Prettier／diff-check、security `341/341`、release Node `77/77` ＋ Python `138/138`、metadata 311 nodes／91 dynamic methods unknown `0`、E2E runner `26/26` 均通过。生产依赖审计为 high/critical `0`、moderate `64`、low `25`。
+-   最新隔离浏览器证据：Chrome 150 run `1e4a257f-6fa3-47bb-991c-5f63c6b6ffc4` 与 Firefox ESR 140.13 run `8382b941-e56c-4fe2-9299-1989e60196e6` 均为 5 specs／7 tests、cleanup complete。Firefox DMG 对照 Mozilla 官方 SHA-512 清单，SHA-256 为 `0a7c51def21ab65d295d839c270405d0a2c2a04d589e8ce92c5e238eeb3f1827`，Apple 签名与 notarization 通过；临时 DMG／挂载／浏览器／runner／端口／目录残留为 0。
+-   生产阻断保持：durable provider/storage cleanup outbox、S3 partial delete reconciliation、Provider 成功／CAS 前故障恢复账本、workspace tombstone/outbox、Chatflow／DocumentStore 跨 aggregate 原子性，以及历史 Provider 凭据关账、main readiness、备份恢复、生产密钥连续性和 cutover。`provider_call=false`、`production_secrets_read=false`、`production_write=false`、`registry_write=false`、`merge=false`、`deploy=false`。
+
+# 2026-08-03 G1-K 工作区可移植性与 MCP 检查点
+
+-   当前本地 HEAD 仍为 `48573043d5340c61c49553e97deff7141be577d5`，真实 staged 为空；本节实现、测试和 Runbook 均属于未提交 mutable tree，旧 exact candidate／CI／浏览器结果不覆盖它。
+-   导入新增 pre-normalization rebinding scrub：不信任 manifest，按本地 component catalog 清洗 Flow、wrapper、Assistant 和 DocumentStore，变量值置空；关系预检只接受导入包内 Flow／Tool／Store／Execution／Message，数据库既有 UUID 不再作为合法依赖。
+-   导出新增 feedback tuple 精确取父消息、Execution ID ＋ workspace 精确取父执行和 10,000 行有界批次；行为回归证明即使全消息扫描会因超过 10,000 条失败，一条 feedback 的 record-closure 仍能成功构建。
+-   Meilisearch `BaseRetriever` 与 Vector Store provider 列表对齐；LlamaIndex 和内部 store 仍拒绝。Header 清洗从宽泛 suffix 改为精确危险输入名，保留 Google Sheets `includeHeaders` 与 Markdown splitter `splitByHeaders`。
+-   MCP 旧明文 Token 现在迁移为 disabled 且删除 bearer material；公开 endpoint 拒绝明文，Token 签发响应 no-store，描述 4,096 字符上限，MCP JSON parser 位于鉴权／限流之后。该行为会使旧客户端中断，必须在受控发布窗口由管理员重新启用并分发新 Token。
+-   组件 metadata 的 `workspaceExportPolicy: rebind` 现在覆盖本地文件／目录、数据库 URL、TLS 文件、TypeORM `additionalConfig` 和 Flow／Tool 任意 override；8 个 `loadConfig: true` 动态子配置递归清洗，受信端点／主机保留并要求复核。
+-   MCP endpoint 在整个 `/api/v1/mcp` 命名空间、canonical casing guard 和 parser 前建立一次性 finish／close 观察器；无 ID、混合大小写、401、404、429、413 等终态进入 allowlist 审计与 Prometheus／OpenTelemetry。audit 仅含随机 requestId、方法、固定 route、statusCode、durationMs 与 completion，不记录 chatflowId、Header、query、body、Token 或原始路径。
+-   首轮专项发现并修复 Assistant tool wrapper 外层 credential 残留、DocumentStore optional config 被写成 `undefined`、header suffix 误删、MCP 测试 mock 缺返回值、动态子配置孤儿和静态中间件顺序断言。首个 338-path temp-index freeze（patch SHA-256 `640cfe257af0ef5b6e30ff50baf027e277c4a756249b0ff6f2806624fd803cb8`）在复审发现问题后已明确作废，不能作为提交身份。
+-   冻结后复审发现并关闭 3 个 MEDIUM：旧版 OpenAI Assistant／Vector Store Provider 读取缺少 `credentials:view`、未知 MCP method／subpath 会落入全局 50 MiB parser、无 ID MCP root／trailing-slash 未进入观察器；同时关闭 audit 高基数 chatflowId 和 Provider 畸形分页误报空文件集 2 个 LOW。更新后聚焦 `6/6` suites／`77/77` tests、目标 ESLint、server TypeScript／build 及独立复核均通过，当前所有级别 finding 均为 0。
+-   更新后稳定树通过 server `162/162` suites／`2219/2219` tests、components `41/41` suites／`1339/1339` tests、UI `50/50` suites／`622/622` tests；server production build、release Node `77/77` ＋ Python `138/138`、security `341/341`、聚焦 ESLint 和独立复核均通过；根构建为 6/6 workspace，metadata 为 311 nodes／91 dynamic methods、unknown 0。最终 freeze、全局 lint／format／diff-check、冻结双审、提交与 push 仍待本门禁回执。
+-   隔离 Chrome 150 run `100b0677-1b71-44d1-aeb4-0f2ceeda475e` 与 Firefox ESR 140.13 run `fd0f645a-a91d-471f-b10d-809fc1580d3b` 均完成 5 specs／7 tests。Firefox 包对照 Mozilla 官方 SHA-512，SHA-256 为 `0a7c51def21ab65d295d839c270405d0a2c2a04d589e8ce92c5e238eeb3f1827`，Apple 签名与 notarization 通过；runner、挂载、浏览器、进程和临时目录清理完成。
+-   Firefox 首次编排在浏览器启动前因 shell 回落 Node 22 被 pnpm engine 门禁拒绝；切换项目锁定的 Node 24.18.0 后完整通过。该失败不计为产品失败，也没有被通过结果掩盖。
+-   新的 temp-index freeze、冻结后代码／安全双审、哈希复算、原子提交与 push 尚未完成，因此未提交、未 push、未 merge、未部署；`provider_call=false`、`production_secrets_read=false`、`production_write=false`、`registry_write=false`。

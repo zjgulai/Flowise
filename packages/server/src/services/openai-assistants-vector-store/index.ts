@@ -3,15 +3,94 @@ import { StatusCodes } from 'http-status-codes'
 import { Credential } from '../../database/entities/Credential'
 import { WorkspaceShared } from '../../enterprise/database/entities/EnterpriseEntities'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
-import { getErrorMessage } from '../../errors/utils'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { decryptCredentialData } from '../../utils'
 import { getFileFromUpload, removeSpecificFileFromUpload } from 'flowise-components'
+import logger from '../../utils/logger'
+import { assertOpenAIAssistantResourceCreationAllowed, assertOpenAIAssistantResourceDestructionAllowed } from '../assistants/legacyPolicy'
+
+const MAX_VECTOR_STORE_FILE_PAGES = 1000
+const MAX_VECTOR_STORE_FILES = 10_000
+const MAX_VECTOR_STORE_PAGES = 1000
+const MAX_VECTOR_STORES = 10_000
+const FILE_RETRIEVAL_BATCH_SIZE = 20
 
 const rethrowIfFlowiseError = (error: unknown): void => {
     if (error instanceof InternalFlowiseError) {
         throw error
     }
+}
+
+const logBatchFailure = (event: string, results: PromiseSettledResult<unknown>[], totalCount: number) => {
+    const failedCount = results.filter((result) => result.status === 'rejected').length
+    if (failedCount > 0) logger.error(event, { failedCount, totalCount })
+    return failedCount
+}
+
+const listAllVectorStores = async (firstPage: any): Promise<any[]> => {
+    const vectorStores: any[] = []
+    const seenIds = new Set<string>()
+    let page = firstPage
+
+    for (let pageCount = 0; pageCount < MAX_VECTOR_STORE_PAGES; pageCount += 1) {
+        if (!Array.isArray(page?.data)) {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to list OpenAI Assistant vector stores')
+        }
+
+        for (const vectorStore of page.data) {
+            if (!vectorStore || typeof vectorStore.id !== 'string' || vectorStore.id.length === 0 || seenIds.has(vectorStore.id)) {
+                throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to list OpenAI Assistant vector stores')
+            }
+            seenIds.add(vectorStore.id)
+            vectorStores.push(vectorStore)
+        }
+
+        if (vectorStores.length > MAX_VECTOR_STORES) {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to list OpenAI Assistant vector stores')
+        }
+
+        const hasNextPage = typeof page?.hasNextPage === 'function' ? page.hasNextPage() : page?.has_more === true
+        if (!hasNextPage) return vectorStores
+        if (typeof page?.getNextPage !== 'function') {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to list OpenAI Assistant vector stores')
+        }
+        page = await page.getNextPage()
+    }
+
+    throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to list OpenAI Assistant vector stores')
+}
+
+const listAllVectorStoreFileIds = async (openai: OpenAI, vectorStoreId: string): Promise<string[]> => {
+    const ids: string[] = []
+    let page: any = await openai.vectorStores.files.list(vectorStoreId)
+    for (let pageCount = 0; pageCount < MAX_VECTOR_STORE_FILE_PAGES; pageCount += 1) {
+        if (!Array.isArray(page?.data)) {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to load vector store files')
+        }
+        const pageIds = page.data.map((file: { id?: unknown }) => file.id)
+        if (pageIds.some((id: unknown) => typeof id !== 'string' || id.length === 0)) {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to load vector store files')
+        }
+        ids.push(...(pageIds as string[]))
+        if (ids.length > MAX_VECTOR_STORE_FILES || new Set(ids).size !== ids.length) {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to load vector store files')
+        }
+        const hasNextPage = typeof page?.hasNextPage === 'function' ? page.hasNextPage() : page?.has_more === true
+        if (!hasNextPage) return ids
+        if (typeof page?.getNextPage !== 'function') {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to load vector store files')
+        }
+        page = await page.getNextPage()
+    }
+    throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to load vector store files')
+}
+
+const retrieveFiles = async (openai: OpenAI, fileIds: string[]) => {
+    const files: OpenAI.Files.FileObject[] = []
+    for (let offset = 0; offset < fileIds.length; offset += FILE_RETRIEVAL_BATCH_SIZE) {
+        files.push(...(await Promise.all(fileIds.slice(offset, offset + FILE_RETRIEVAL_BATCH_SIZE).map((id) => openai.files.retrieve(id)))))
+    }
+    return files
 }
 
 const resolveCredentialForWorkspace = async (credentialId: string, workspaceId: string): Promise<Credential> => {
@@ -56,10 +135,7 @@ const getAssistantVectorStore = async (credentialId: string, vectorStoreId: stri
         return dbResponse
     } catch (error) {
         rethrowIfFlowiseError(error)
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: openaiAssistantsVectorStoreService.getAssistantVectorStore - ${getErrorMessage(error)}`
-        )
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to load OpenAI Assistant vector store')
     }
 }
 
@@ -74,18 +150,15 @@ const listAssistantVectorStore = async (credentialId: string, workspaceId: strin
         }
 
         const openai = new OpenAI({ apiKey: openAIApiKey })
-        const dbResponse = await openai.vectorStores.list()
-        return dbResponse.data
+        return await listAllVectorStores(await openai.vectorStores.list())
     } catch (error) {
         rethrowIfFlowiseError(error)
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: openaiAssistantsVectorStoreService.listAssistantVectorStore - ${getErrorMessage(error)}`
-        )
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to list OpenAI Assistant vector stores')
     }
 }
 
 const createAssistantVectorStore = async (credentialId: string, obj: OpenAI.VectorStores.VectorStoreCreateParams, workspaceId: string) => {
+    assertOpenAIAssistantResourceCreationAllowed()
     try {
         const credential = await resolveCredentialForWorkspace(credentialId, workspaceId)
         // Decrpyt credentialData
@@ -100,10 +173,7 @@ const createAssistantVectorStore = async (credentialId: string, obj: OpenAI.Vect
         return dbResponse
     } catch (error) {
         rethrowIfFlowiseError(error)
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: openaiAssistantsVectorStoreService.createAssistantVectorStore - ${getErrorMessage(error)}`
-        )
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to create OpenAI Assistant vector store')
     }
 }
 
@@ -124,27 +194,19 @@ const updateAssistantVectorStore = async (
 
         const openai = new OpenAI({ apiKey: openAIApiKey })
         const dbResponse = await openai.vectorStores.update(vectorStoreId, obj)
-        const vectorStoreFiles = await openai.vectorStores.files.list(vectorStoreId)
-        if (vectorStoreFiles.data?.length) {
-            const files = []
-            for (const file of vectorStoreFiles.data) {
-                const fileData = await openai.files.retrieve(file.id)
-                files.push(fileData)
-            }
-            ;(dbResponse as any).files = files
-        }
+        const fileIds = await listAllVectorStoreFileIds(openai, vectorStoreId)
+        const files = await retrieveFiles(openai, fileIds)
+        ;(dbResponse as any).files = files
         return dbResponse
     } catch (error) {
         rethrowIfFlowiseError(error)
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: openaiAssistantsVectorStoreService.updateAssistantVectorStore - ${getErrorMessage(error)}`
-        )
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to update OpenAI Assistant vector store')
     }
 }
 
 const deleteAssistantVectorStore = async (credentialId: string, vectorStoreId: string, workspaceId: string) => {
     try {
+        assertOpenAIAssistantResourceDestructionAllowed()
         const credential = await resolveCredentialForWorkspace(credentialId, workspaceId)
         // Decrpyt credentialData
         const decryptedCredentialData = await decryptCredentialData(credential.encryptedData)
@@ -158,10 +220,7 @@ const deleteAssistantVectorStore = async (credentialId: string, vectorStoreId: s
         return dbResponse
     } catch (error) {
         rethrowIfFlowiseError(error)
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: openaiAssistantsVectorStoreService.deleteAssistantVectorStore - ${getErrorMessage(error)}`
-        )
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to delete OpenAI Assistant vector store')
     }
 }
 
@@ -171,6 +230,10 @@ const uploadFilesToAssistantVectorStore = async (
     files: { filePath: string; fileName: string }[],
     workspaceId: string
 ): Promise<any> => {
+    assertOpenAIAssistantResourceCreationAllowed()
+    let openai: OpenAI | undefined
+    let operationError: unknown
+    const uploadedFiles: OpenAI.Files.FileObject[] = []
     try {
         const credential = await resolveCredentialForWorkspace(credentialId, workspaceId)
         // Decrpyt credentialData
@@ -180,8 +243,7 @@ const uploadFilesToAssistantVectorStore = async (
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `OpenAI ApiKey not found`)
         }
 
-        const openai = new OpenAI({ apiKey: openAIApiKey })
-        const uploadedFiles = []
+        openai = new OpenAI({ apiKey: openAIApiKey })
         for (const file of files) {
             const fileBuffer = await getFileFromUpload(file.filePath)
             const toFile = await OpenAI.toFile(fileBuffer, file.fileName)
@@ -190,7 +252,6 @@ const uploadFilesToAssistantVectorStore = async (
                 purpose: 'assistants'
             })
             uploadedFiles.push(createdFile)
-            await removeSpecificFileFromUpload(file.filePath)
         }
 
         const file_ids = [...uploadedFiles.map((file) => file.id)]
@@ -198,24 +259,49 @@ const uploadFilesToAssistantVectorStore = async (
         const res = await openai.vectorStores.fileBatches.createAndPoll(vectorStoreId, {
             file_ids
         })
-        if (res.status === 'completed' && res.file_counts.completed === uploadedFiles.length) return uploadedFiles
-        else if (res.status === 'failed')
-            throw new InternalFlowiseError(
-                StatusCodes.INTERNAL_SERVER_ERROR,
-                'Error: openaiAssistantsVectorStoreService.uploadFilesToAssistantVectorStore - Upload failed!'
-            )
-        else
-            throw new InternalFlowiseError(
-                StatusCodes.INTERNAL_SERVER_ERROR,
-                'Error: openaiAssistantsVectorStoreService.uploadFilesToAssistantVectorStore - Upload cancelled!'
-            )
+        if (res.status !== 'completed' || res.file_counts.completed !== uploadedFiles.length) {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to attach OpenAI Assistant vector store files')
+        }
     } catch (error) {
-        rethrowIfFlowiseError(error)
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: openaiAssistantsVectorStoreService.uploadFilesToAssistantVectorStore - ${getErrorMessage(error)}`
-        )
+        operationError = error
     }
+
+    const filePaths = [
+        ...new Set(
+            files.map((file) => file.filePath).filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0)
+        )
+    ]
+    const cleanupResults = await Promise.allSettled(filePaths.map((filePath) => removeSpecificFileFromUpload(filePath)))
+    const cleanupFailureCount = logBatchFailure('openai_vector_store_upload_local_cleanup_failed', cleanupResults, filePaths.length)
+    let compensationFailureCount = 0
+
+    if (operationError || cleanupFailureCount > 0) {
+        if (openai && uploadedFiles.length > 0) {
+            const compensationResults = await Promise.allSettled(
+                uploadedFiles.map(async (file) => {
+                    const result = await openai!.files.delete(file.id)
+                    if (!result.deleted) throw new Error('provider_compensation_not_confirmed')
+                })
+            )
+            compensationFailureCount = logBatchFailure(
+                'openai_vector_store_upload_remote_compensation_failed',
+                compensationResults,
+                uploadedFiles.length
+            )
+        }
+        if (cleanupFailureCount > 0 || compensationFailureCount > 0) {
+            throw new InternalFlowiseError(
+                StatusCodes.INTERNAL_SERVER_ERROR,
+                'Unable to finalize OpenAI Assistant vector store file upload'
+            )
+        }
+        if (operationError) {
+            rethrowIfFlowiseError(operationError)
+        }
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to finalize OpenAI Assistant vector store file upload')
+    }
+
+    return uploadedFiles
 }
 
 const deleteFilesFromAssistantVectorStore = async (
@@ -225,6 +311,7 @@ const deleteFilesFromAssistantVectorStore = async (
     workspaceId: string
 ) => {
     try {
+        assertOpenAIAssistantResourceDestructionAllowed()
         const credential = await resolveCredentialForWorkspace(credentialId, workspaceId)
         // Decrpyt credentialData
         const decryptedCredentialData = await decryptCredentialData(credential.encryptedData)
@@ -247,10 +334,7 @@ const deleteFilesFromAssistantVectorStore = async (
         return { deletedFileIds, count }
     } catch (error) {
         rethrowIfFlowiseError(error)
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: openaiAssistantsVectorStoreService.uploadFilesToAssistantVectorStore - ${getErrorMessage(error)}`
-        )
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to remove OpenAI Assistant vector store files')
     }
 }
 

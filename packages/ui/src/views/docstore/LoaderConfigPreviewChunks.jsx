@@ -26,8 +26,11 @@ import ExpandedChunkDialog from './ExpandedChunkDialog'
 
 // API
 import nodesApi from '@/api/nodes'
-import documentStoreApi from '@/api/documentstore'
-import documentsApi from '@/api/documentstore'
+import documentStoreApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 
 // Const
 import { baseURL, gridSpacing } from '@/store/constant'
@@ -65,12 +68,12 @@ const LoaderConfigPreviewChunks = () => {
     const customization = useSelector((state) => state.customization)
     const navigate = useNavigate()
     const theme = useTheme()
-    const { error } = useError()
+    const { error, setError } = useError()
     const { hasAssignedWorkspace } = useAuth()
 
     const getNodeDetailsApi = useApi(nodesApi.getSpecificNode)
     const getNodesByCategoryApi = useApi(nodesApi.getNodesByCategory)
-    const getSpecificDocumentStoreApi = useApi(documentsApi.getSpecificDocumentStore)
+    const getSpecificDocumentStoreApi = useApi(documentStoreApi.getSpecificDocumentStore)
 
     const { storeId, name: docLoaderNodeName } = useParams()
 
@@ -89,6 +92,7 @@ const LoaderConfigPreviewChunks = () => {
     const [currentPreviewCount, setCurrentPreviewCount] = useState(0)
     const [previewChunkCount, setPreviewChunkCount] = useState(20)
     const [existingLoaderFromDocStoreTable, setExistingLoaderFromDocStoreTable] = useState()
+    const [versionToken, setVersionToken] = useState()
 
     const [showExpandedChunkDialog, setShowExpandedChunkDialog] = useState(false)
     const [expandedChunkDialogProps, setExpandedChunkDialogProps] = useState({})
@@ -212,9 +216,14 @@ const LoaderConfigPreviewChunks = () => {
             setLoading(true)
             const config = prepareConfig()
             try {
-                const saveResp = await documentStoreApi.saveProcessingLoader(config)
-                setLoading(false)
+                const saveResp = await documentStoreApi.saveProcessingLoader(config, requireDocumentStoreVersionToken(versionToken))
                 if (saveResp.data) {
+                    const savedVersionToken = requireDocumentStoreVersionToken(saveResp.data)
+                    setVersionToken(savedVersionToken)
+                    setExistingLoaderFromDocStoreTable((current) => ({ ...current, ...saveResp.data }))
+                    // Queue mode returns only an acceptance receipt. Do not treat the
+                    // save token (or job id) as the process result's advanced token.
+                    await documentStoreApi.processLoader(config, saveResp.data.id, savedVersionToken)
                     enqueueSnackbar({
                         message: '文件已提交处理，即将返回文档库…',
                         options: {
@@ -227,12 +236,25 @@ const LoaderConfigPreviewChunks = () => {
                             )
                         }
                     })
-                    // don't wait for the process to complete, redirect to document store
-                    documentStoreApi.processLoader(config, saveResp.data?.id)
                     navigate('/document-stores/' + storeId)
                 }
+                setLoading(false)
             } catch (error) {
                 setLoading(false)
+                if (isDocumentStoreVersionConflict(error)) {
+                    setVersionToken(undefined)
+                    try {
+                        const latestResponse = await documentStoreApi.getSpecificDocumentStore(storeId)
+                        setVersionToken(requireDocumentStoreVersionToken(latestResponse.data))
+                    } catch {
+                        setVersionToken(undefined)
+                    }
+                    enqueueSnackbar({
+                        message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                        options: { variant: 'warning' }
+                    })
+                    return
+                }
                 enqueueSnackbar({
                     message: `处理分块失败：${getErrorMessage(error)}`,
                     options: {
@@ -292,10 +314,8 @@ const LoaderConfigPreviewChunks = () => {
     }
 
     useEffect(() => {
-        if (uuidValidate(docLoaderNodeName)) {
-            // this is a document store edit config
-            getSpecificDocumentStoreApi.request(storeId)
-        } else {
+        getSpecificDocumentStoreApi.request(storeId)
+        if (!uuidValidate(docLoaderNodeName)) {
             getNodeDetailsApi.request(docLoaderNodeName)
         }
 
@@ -363,6 +383,13 @@ const LoaderConfigPreviewChunks = () => {
             const workspaceId = getSpecificDocumentStoreApi.data.workspaceId
             if (!hasAssignedWorkspace(workspaceId)) {
                 navigate('/unauthorized')
+                return
+            }
+            try {
+                setVersionToken(requireDocumentStoreVersionToken(getSpecificDocumentStoreApi.data))
+            } catch (versionError) {
+                setVersionToken(undefined)
+                setError(versionError)
                 return
             }
             if (getSpecificDocumentStoreApi.data?.loaders.length > 0) {

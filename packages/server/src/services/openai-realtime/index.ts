@@ -14,13 +14,14 @@ import { checkStorage, updateStorageUsage } from '../../utils/quotaUsage'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import chatflowsService from '../chatflows'
 import { IDepthQueue, IReactFlowNode } from '../../Interface'
-import { ICommonObject, INodeData } from 'flowise-components'
+import { ICommonObject, INodeData, resolveFlowiseRequestTarget } from 'flowise-components'
 import { convertToOpenAIFunction } from '@langchain/core/utils/function_calling'
 import { v4 as uuidv4 } from 'uuid'
 import { Variable } from '../../database/entities/Variable'
 import { getWorkspaceSearchOptions } from '../../enterprise/utils/ControllerServiceUtils'
 import { Workspace } from '../../enterprise/database/entities/workspace.entity'
 import { Organization } from '../../enterprise/database/entities/organization.entity'
+import { createWorkspaceOAuth2RefreshCapability } from '../oauth2CredentialRefresh'
 
 const SOURCE_DOCUMENTS_PREFIX = '\n\n----FLOWISE_SOURCE_DOCUMENTS----\n\n'
 const ARTIFACTS_PREFIX = '\n\n----FLOWISE_ARTIFACTS----\n\n'
@@ -83,6 +84,8 @@ const buildAndInitTool = async (chatflowid: string, reqWorkspaceId?: string, _ch
 
     const orgId = org.id
     const subscriptionId = org.subscriptionId
+    const baseURL = resolveFlowiseRequestTarget().canonicalOrigin
+    const refreshOAuth2Credential = createWorkspaceOAuth2RefreshCapability(workspaceId)
 
     const reactFlowNodes = await buildFlow({
         startingNodeIds,
@@ -107,8 +110,10 @@ const buildAndInitTool = async (chatflowid: string, reqWorkspaceId?: string, _ch
         orgId,
         workspaceId,
         subscriptionId,
+        baseURL,
         updateStorageUsage,
-        checkStorage
+        checkStorage,
+        refreshOAuth2Credential
     })
 
     const nodeToExecute =
@@ -145,7 +150,9 @@ const buildAndInitTool = async (chatflowid: string, reqWorkspaceId?: string, _ch
         workspaceId,
         appDataSource: appServer.AppDataSource,
         databaseEntities,
-        analytic: chatflow.analytic
+        analytic: chatflow.analytic,
+        baseURL,
+        refreshOAuth2Credential
     })
 
     return agent

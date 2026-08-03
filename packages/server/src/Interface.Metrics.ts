@@ -3,6 +3,14 @@ export interface IMetricsProvider {
     initializeCounters(): void
     setupMetricsEndpoint(): void
     incrementCounter(counter: FLOWISE_METRIC_COUNTERS, payload: any): void
+    observeHttpRequest?(observation: IHttpRequestMetricObservation): void
+}
+
+export interface IHttpRequestMetricObservation {
+    method: string
+    route: string
+    statusCode: number
+    durationMs: number
 }
 
 export enum FLOWISE_COUNTER_STATUS {

@@ -376,15 +376,15 @@ try {
     assertBaselineValue('agentflow records', agentflowCatalog.map.size, 910)
     assertBaselineValue('credential records', credentialCatalog.map.size, 487)
     assertBaselineValue('node overrides', nodeOverrideTuples.length, 4)
-    assertBaselineValue('node source translations', nodeSourceCatalog.map.size, 2884)
+    assertBaselineValue('node source translations', nodeSourceCatalog.map.size, 2882)
     assertBaselineValue('value option records', nodeRecords.filter((record) => record.field === 'valueOption').length, 48)
     assertBaselineValue('dynamic descriptions', dynamicDescriptionCatalog.map.size, 137)
-    assertBaselineValue('combined source translations', combinedSourceCatalog.map.size, 3021)
+    assertBaselineValue('combined source translations', combinedSourceCatalog.map.size, 3019)
     assertBaselineValue('combined source duplicate tuples', combinedSourceCatalog.identicalDuplicateCount, 0)
     assertBaselineDigest(
         'record keys',
         allReport.records.map((record) => record.key),
-        '1449fbb8d534f9e6b9d2600998a93062541cd3fbd1bc7b0674ecc4590ae088ba'
+        '5c5cd2cdd198ef2089714448e3124bb84298dd645a1fb2ecdcafd8b8a6a6a063'
     )
     assertBaselineDigest('node names', allReport.source.nodeNames, '21c4ac4890a2bf98b27d362ca49af184602e0a3503ec856051ed3dfd89f2eed3')
     assertBaselineDigest(

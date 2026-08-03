@@ -5,7 +5,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import { useNavigate } from 'react-router-dom'
 
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction, REMOVE_DIRTY } from '@/store/actions'
-import { exportData, stringify } from '@/utils/exportImport'
+import { exportData, getWorkspaceImportConfirmation, stringify } from '@/utils/exportImport'
 import useNotifier from '@/utils/useNotifier'
 
 // material-ui
@@ -49,17 +49,17 @@ import './index.css'
 
 // API
 import exportImportApi from '@/api/exportimport'
+import { WORKSPACE_EXPORT_DEFAULT_SELECTION, updateWorkspaceExportSelection } from './workspaceExportSelection'
 
 // Hooks
 import useApi from '@/hooks/useApi'
+import useConfirm from '@/hooks/useConfirm'
 import { getErrorMessage } from '@/utils/getErrorMessage'
 
 const exportOptions = [
     { value: 'Agentflows', label: '智能体流程' },
     { value: 'Agentflows V2', label: '智能体流程 V2' },
     { value: 'Assistants Custom', label: '自定义助手' },
-    { value: 'Assistants OpenAI', label: 'OpenAI 助手' },
-    { value: 'Assistants Azure', label: 'Azure 助手' },
     { value: 'Chatflows', label: '对话流程' },
     { value: 'Chat Messages', label: '聊天消息' },
     { value: 'Chat Feedbacks', label: '聊天反馈' },
@@ -73,7 +73,7 @@ const exportOptions = [
 const ExportDialog = ({ show, onCancel, onExport }) => {
     const portalElement = document.getElementById('portal')
 
-    const [selectedData, setSelectedData] = useState(exportOptions.map(({ value }) => value))
+    const [selectedData, setSelectedData] = useState(WORKSPACE_EXPORT_DEFAULT_SELECTION)
     const [isExporting, setIsExporting] = useState(false)
 
     useEffect(() => {
@@ -117,10 +117,8 @@ const ExportDialog = ({ show, onCancel, onExport }) => {
                                         color='success'
                                         checked={selectedData.includes(value)}
                                         onChange={(event) => {
-                                            setSelectedData(
-                                                event.target.checked
-                                                    ? [...selectedData, value]
-                                                    : selectedData.filter((item) => item !== value)
+                                            setSelectedData((current) =>
+                                                updateWorkspaceExportSelection(current, value, event.target.checked)
                                             )
                                         }}
                                     />
@@ -128,6 +126,12 @@ const ExportDialog = ({ show, onCancel, onExport }) => {
                                 label={label}
                             />
                         ))}
+                        <Typography variant='caption' color='text.secondary' sx={{ gridColumn: '1 / -1', mt: 1 }}>
+                            系统会自动加入所选记录实际引用的流程、工具和文档库；直接勾选某类别会导出该类别全部数据。系统只移除凭据记录和已知凭据引用，不保证自由文本不含秘密。变量值、MCP
+                            连接、API 密钥访问控制、限流策略及模型服务商／HTTP
+                            敏感选项（包括基础选项、请求头及文件／目录输入）不会恢复；为保持结构可移植性，端点与主机地址可能保留，绑定新凭据或重新部署前必须逐项核验。聊天内容、文档片段、执行历史（节点输入输出与错误文本）、提示词和自定义代码可能包含敏感数据或硬编码秘密，下载、存储和传输前必须人工审查。
+                            {'旧版 OpenAI／Azure 助手仅供归档，不属于可恢复的工作区备份。'}
+                        </Typography>
                     </Stack>
                 )}
                 {isExporting && (
@@ -230,6 +234,7 @@ const ProfileSection = ({ handleLogout }) => {
 
     const importAllApi = useApi(exportImportApi.importData)
     const exportAllApi = useApi(exportImportApi.exportData)
+    const { confirm } = useConfirm()
     const prevOpen = useRef(open)
 
     // ==============================|| Snackbar ||============================== //
@@ -270,15 +275,33 @@ const ProfileSection = ({ handleLogout }) => {
         if (!e.target.files) return
 
         const file = e.target.files[0]
-        setImportDialogOpen(true)
+        if (!file) return
 
         const reader = new FileReader()
-        reader.onload = (evt) => {
-            if (!evt?.target?.result) {
-                return
+        reader.onload = async (evt) => {
+            try {
+                if (typeof evt?.target?.result !== 'string') throw new Error('无法读取导入文件')
+                const body = JSON.parse(evt.target.result)
+                const confirmation = getWorkspaceImportConfirmation(body)
+                const isConfirmed = await confirm({
+                    ...confirmation,
+                    confirmButtonName: '继续导入',
+                    cancelButtonName: '取消'
+                })
+                if (!isConfirmed) return
+                setImportDialogOpen(true)
+                importAllApi.request(body)
+            } catch (error) {
+                setImportDialogOpen(false)
+                errorFailed(`导入失败：${getErrorMessage(error, '导入文件无效')}`)
+            } finally {
+                if (inputRef.current) inputRef.current.value = ''
             }
-            const body = JSON.parse(evt.target.result)
-            importAllApi.request(body)
+        }
+        reader.onerror = () => {
+            setImportDialogOpen(false)
+            if (inputRef.current) inputRef.current.value = ''
+            errorFailed('导入失败：无法读取导入文件')
         }
         reader.readAsText(file)
     }
@@ -287,7 +310,7 @@ const ProfileSection = ({ handleLogout }) => {
         setImportDialogOpen(false)
         dispatch({ type: REMOVE_DIRTY })
         enqueueSnackbar({
-            message: '全部数据导入成功',
+            message: '结构数据导入完成；请按导入提示重新绑定凭据和环境依赖',
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'success',
@@ -309,8 +332,6 @@ const ProfileSection = ({ handleLogout }) => {
         if (data.includes('Agentflows')) body.agentflow = true
         if (data.includes('Agentflows V2')) body.agentflowv2 = true
         if (data.includes('Assistants Custom')) body.assistantCustom = true
-        if (data.includes('Assistants OpenAI')) body.assistantOpenAI = true
-        if (data.includes('Assistants Azure')) body.assistantAzure = true
         if (data.includes('Chatflows')) body.chatflow = true
         if (data.includes('Chat Messages')) body.chat_message = true
         if (data.includes('Chat Feedbacks')) body.chat_feedback = true

@@ -3,6 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 // material-ui
 import { Box, Stack, ButtonGroup, Skeleton, ToggleButtonGroup, ToggleButton, Tabs, Tab } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
+import { useSnackbar } from 'notistack'
 
 // project imports
 import MainCard from '@/ui-component/cards/MainCard'
@@ -37,6 +38,7 @@ const Tools = () => {
     const getAllToolsApi = useApi(toolsApi.getAllTools)
     const getAllCustomMcpServersApi = useApi(customMcpServersApi.getAllCustomMcpServers)
     const { error, setError } = useError()
+    const { enqueueSnackbar } = useSnackbar()
 
     const [tabValue, setTabValue] = useState(0)
 
@@ -108,6 +110,7 @@ const Tools = () => {
         } catch {
             setDialogProps({})
             setShowDialog(false)
+            enqueueSnackbar('无法导入工具：文件不是有效的 JSON。', { variant: 'error' })
         }
     }
 

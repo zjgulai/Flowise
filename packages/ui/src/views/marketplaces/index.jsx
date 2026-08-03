@@ -401,6 +401,9 @@ const Marketplace = () => {
             } catch {
                 setImages({})
                 setIcons({})
+                setUsecases([])
+                setEligibleUsecases([])
+                setSelectedUsecases([])
             }
         }
     }, [getAllTemplatesMarketplacesApi.data])
@@ -457,6 +460,9 @@ const Marketplace = () => {
             } catch {
                 setTemplateImages({})
                 setTemplateIcons({})
+                setTemplateUsecases([])
+                setEligibleTemplateUsecases([])
+                setSelectedTemplateUsecases([])
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps

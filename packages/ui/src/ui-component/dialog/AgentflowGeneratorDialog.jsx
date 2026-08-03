@@ -378,7 +378,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                                             }
                                         }
                                     }}
-                                    value={selectedChatModel ? selectedChatModel?.name : '请选择'}
+                                    value={selectedChatModel?.name || '请选择'}
                                 />
                             </Box>
                             {selectedChatModel && Object.keys(selectedChatModel).length > 0 && (

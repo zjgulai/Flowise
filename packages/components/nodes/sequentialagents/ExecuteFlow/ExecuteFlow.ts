@@ -1,6 +1,7 @@
 import { DataSource } from 'typeorm'
-import { getCredentialData, getCredentialParam, getVars, executeJavaScriptCode, createCodeExecutionSandbox } from '../../../src/utils'
-import { isValidUUID, isValidURL } from '../../../src/validator'
+import { FLOWISE_REQUEST_ERROR, requestFlowisePrediction } from '../../../src/internalFlowRequest'
+import { getCredentialData, getCredentialParam } from '../../../src/utils'
+import { isValidUUID } from '../../../src/validator'
 import {
     ICommonObject,
     IDatabaseEntity,
@@ -82,6 +83,7 @@ class ExecuteFlow_SeqAgents implements INode {
                 name: 'overrideConfig',
                 description: 'Override the config passed to the flow.',
                 type: 'json',
+                workspaceExportPolicy: 'rebind',
                 optional: true,
                 additionalParams: true
             },
@@ -90,8 +92,8 @@ class ExecuteFlow_SeqAgents implements INode {
                 name: 'baseURL',
                 type: 'string',
                 description:
-                    'Base URL to Flowise. By default, it is the URL of the incoming request. Useful when you need to execute flow through an alternative route.',
-                placeholder: 'http://localhost:3000',
+                    'Base URL to Flowise. By default, the server canonical APP_URL is used. Explicit external targets never receive a Flow API credential.',
+                placeholder: 'https://flowise.example.com',
                 optional: true,
                 additionalParams: true
             },
@@ -154,8 +156,6 @@ class ExecuteFlow_SeqAgents implements INode {
         if (!_seqExecuteFlowName) throw new Error('Execute Flow node name is required!')
         const seqExecuteFlowName = _seqExecuteFlowName.toLowerCase().replace(/\s/g, '_').trim()
         const startNewSession = nodeData.inputs?.startNewSession as boolean
-        const appDataSource = options.appDataSource as DataSource
-        const databaseEntities = options.databaseEntities as IDatabaseEntity
         const sequentialNodes = nodeData.inputs?.sequentialNode as ISeqAgentNode[]
         const seqExecuteFlowInput = nodeData.inputs?.seqExecuteFlowInput as string
         const overrideConfig =
@@ -167,7 +167,7 @@ class ExecuteFlow_SeqAgents implements INode {
 
         if (!sequentialNodes || !sequentialNodes.length) throw new Error('Execute Flow must have a predecessor!')
 
-        const baseURL = (nodeData.inputs?.baseURL as string) || (options.baseURL as string)
+        const configuredBaseUrl = nodeData.inputs?.baseURL
         const returnValueAs = nodeData.inputs?.returnValueAs as string
 
         // Validate selectedFlowId is a valid UUID
@@ -175,26 +175,15 @@ class ExecuteFlow_SeqAgents implements INode {
             throw new Error('Invalid flow ID: must be a valid UUID')
         }
 
-        // Validate baseURL is a valid URL
-        if (!baseURL || !isValidURL(baseURL)) {
-            throw new Error('Invalid base URL: must be a valid URL')
-        }
-
         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
         const chatflowApiKey = getCredentialParam('chatflowApiKey', credentialData, nodeData)
 
         if (selectedFlowId === options.chatflowid) throw new Error('Cannot call the same agentflow!')
 
-        let headers = {}
-        if (chatflowApiKey) headers = { Authorization: `Bearer ${chatflowApiKey}` }
-
-        const chatflowId = options.chatflowid
         const sessionId = options.sessionId
         const chatId = options.chatId
 
         const executeFunc = async (state: ISeqAgentsState) => {
-            const variables = await getVars(appDataSource, databaseEntities, nodeData, options)
-
             let flowInput = ''
             if (seqExecuteFlowInput === 'userQuestion') {
                 flowInput = input
@@ -210,14 +199,6 @@ class ExecuteFlow_SeqAgents implements INode {
                 }
             }
 
-            const flow = {
-                chatflowId,
-                sessionId,
-                chatId,
-                input: flowInput,
-                state
-            }
-
             const body = {
                 question: flowInput,
                 chatId: startNewSession ? uuidv4() : chatId,
@@ -227,46 +208,14 @@ class ExecuteFlow_SeqAgents implements INode {
                 }
             }
 
-            const callOptions = {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...headers
-                },
-                body: JSON.stringify(body)
-            }
-
-            // Create additional sandbox variables
-            const additionalSandbox: ICommonObject = {
-                $callOptions: callOptions,
-                $callBody: body,
-                $apiURL: `${baseURL}/api/v1/prediction/${selectedFlowId}`
-            }
-
-            const sandbox = createCodeExecutionSandbox(flowInput, variables, flow, additionalSandbox)
-
-            const code = `
-    const fetch = require('node-fetch');
-    const url = $apiURL;
-
-    const body = $callBody;
-
-    const options = $callOptions;
-
-    try {
-        const response = await fetch(url, options);
-        const resp = await response.json();
-        return resp.text;
-    } catch (error) {
-        console.error(error);
-        return '';
-    }
-`
-
             try {
-                let response = await executeJavaScriptCode(code, sandbox, {
-                    useSandbox: false
+                const responseData = await requestFlowisePrediction({
+                    configuredBaseUrl,
+                    flowId: selectedFlowId,
+                    apiKey: chatflowApiKey,
+                    body
                 })
+                let response = responseData?.text ?? ''
 
                 if (typeof response === 'object') {
                     response = JSON.stringify(response)
@@ -295,8 +244,8 @@ class ExecuteFlow_SeqAgents implements INode {
                         })
                     ]
                 }
-            } catch (e) {
-                throw new Error(e)
+            } catch {
+                throw new Error(FLOWISE_REQUEST_ERROR)
             }
         }
 

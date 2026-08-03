@@ -14,6 +14,7 @@ jest.mock(
             PrimaryGeneratedColumn: () => noop(),
             CreateDateColumn: () => noop(),
             UpdateDateColumn: () => noop(),
+            VersionColumn: () => noop(),
             ManyToOne: () => noop(),
             OneToMany: () => noop(),
             JoinColumn: () => noop(),

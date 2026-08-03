@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改发现记录
 date: 2026-07-10
-last_updated: 2026-08-02
+last_updated: 2026-08-03
 ---
 
 # 当前证据矩阵
@@ -28,7 +28,7 @@ last_updated: 2026-08-02
 
 # 已确认工程事实
 
--   实际 git root 是 `/Users/pray/project/FlowAgentic/flowise`；当前分支 `codex/flowise-release-foundation-20260712`，base `bb773ffa710bd22639c4ba2643413a0ea2b679d3`，Task 1-6 source/config HEAD `699b59b1c08413e0785a9732c2dfe4c020b4a331`。
+-   当前执行工作树是 `/Users/pray/project/FlowAgentic/flowise-g1-zh`；分支 `codex/flowise-g1-zh-20260801`，base `70d8040e5ead30a7a51e2231a6a156d5632e6e25`，G1-H dirty batch 的提交基线为 `48573043d5340c61c49553e97deff7141be577d5`。原 `/Users/pray/project/FlowAgentic/flowise` 工作树不在本批变更边界内。
 -   工作区存在大量非本轮产生的修改与未跟踪文件，禁止使用 `git add .` 或全仓格式化。
 -   既有生产构建失败点是远端 Alpine `apk add` 长时间停滞；旧镜像与新 compose/env 组合曾导致 `502` 和 auth secret 初始化错误，已回滚。
 -   生产端口的 firewall 修复与镜像/compose 修复是不同层级：前者是当前缓解，后者才是根因闭环。
@@ -280,3 +280,48 @@ last_updated: 2026-08-02
 -   正式 Codex helper 在有界窗口内没有产生终态或结构化 finding；中途探索性推理不能登记为缺陷，actionable finding 0 也不能被反向包装成 clean。Ready 后仍需依赖 substantive CodeRabbit 与独立 GitHub reviewer 收口。
 -   PR 描述与三份 `.kiro/plan` 文件曾仍把 Firefox 和 exact CI 写为待完成；状态漂移如果不先修正，会让 reviewer 在过期前提下判断。同步事实本身会生成新的 docs-only PR head，因此该新 SHA 的 CI 与审查仍必须重新绑定。
 -   历史 Provider 凭据事件、当前 main readiness 制品、备份 checksum／恢复演练、生产 key continuity 和 cutover 均未关闭；Ready 只是“可以开始审查”，不是 merge 或 production promotion。
+
+# 2026-08-03 G1-H 对抗性加固发现
+
+-   PR 的 `OPEN/Ready` 状态只绑定已提交 head `48573043`；其上的 dirty worktree 是新的候选身份，既有 CI、审查和可合并性不能覆盖该批次。
+-   数据库实体的通用更新时间戳不足以承担跨数据库 compare-and-swap。DocumentStore 改用 non-null integer `revision` 后，SQLite／PostgreSQL／MySQL／MariaDB 的精确相等语义一致，删除和写入可对陈旧快照 fail closed；导入路径必须剥离外部 revision。
+-   revision CAS 关闭的是已覆盖写入／删除竞态，不等同于完整恢复语义。仍存在没有 durable cleanup outbox、S3 批量删除部分成功只记录日志、陈旧保存可能重建已删除 DocumentStore，以及 child insert 与父版本之间的结构性窗口；这些是 production promotion 阻断，不得用本地 CAS 测试掩盖。
+-   HTTP 预算必须在真实传输语义上计数：请求体要在 `transformRequest` 后累计，响应要在 Axios 字符解码和 `transformResponse` 前按解压 Buffer 计数。仅在 transform 链首对字符串使用 UTF-8 `byteLength` 会被 `responseEncoding=utf16le` 欠计；生命周期初始化也必须处于统一 cleanup／固定错误边界内。
+-   外层超时不能让不可逆存储与用量记账在后台继续而请求先行失败。OpenAI Assistant 现在跟踪已开始的 commit，在结算完成后才返回固定失败，并以累计剩余额度约束每个文件读取；底层存储／记账若永久不返回仍会等待确定结果，这是已知可用性边界。
+-   MCP cache 必须先逐出 stale entry 再做有界 best-effort close，避免挂起 close 长期占锁；204／205／304 在桥接为空 Web Response 前仍需显式关闭隐藏的 node-fetch body。已开始的 SDK 调用无法被缓存逐出追溯撤销，web-style cancel 仍为 best effort。
+-   本批同时跨越 components、server、UI 与数据库 migration 边界；局部绿测不能替代同一 exact candidate 的全量测试、哈希、秘密扫描、独立复审、双浏览器与远端 CI。
+-   本批没有 Provider、生产或 secret 操作；历史 Provider 凭据关账、main readiness 制品、备份／恢复、生产 key continuity、cutover 与部署后验收仍未关闭，因此 production promotion 保持 NO-GO。
+-   Firefox ESR 缓存不是系统注册浏览器，直接传 `--browser firefox` 只产生一次可清理的 discovery failure；以已验证的 ESR 140.13 binary 绝对路径运行后 5 specs／7 tests 全绿。浏览器可发现性与产品功能结果必须分开记录。
+
+# 2026-08-03 G1-J DocumentStore 对抗性发现
+
+-   公开的 generation/revision 字段不能承担不可伪造的代际 claim。版本指纹必须使用服务端强密钥和用途分离 HMAC，并让所有 Web／Worker 实例共享同一 `TOKEN_HASH_SECRET`；缺失、弱密钥或进程内不一致必须在队列初始化前失败。上线还需协调排空队列、滚动重启和密钥轮换，不能只看单进程测试。
+-   保存时验证一个主 DocumentStore 不足以保护可执行 Flow：Loader、Vector、Agent 和 Retriever 可以同时引用多个 Store。当前解析器先验证全部去重引用，再把 `whereUsed` 规范为完整目标集合；目标缺失或任一旧索引畸形时在首个 CAS 前失败，避免把跨租户引用或半更新索引带入后续执行。
+-   `whereUsed` 事务只保证 DocumentStore 一侧多行 CAS 原子；Chatflow 已保存后才同步该索引，因此两个 aggregate 之间仍有提交窗口。正确生产级闭环需要同库事务边界或 durable outbox／reconciliation，而不是继续增加 best-effort 回调。
+-   状态 `UPSERTED` 是物化有效性声明，不是 UI 标签。Loader、chunk、embedding、vector store 或 record manager 配置发生实质变化后必须转为 `STALE`；相同配置则不得制造无意义失效。运行时还必须在 Provider 动态导入前同时确认 workspace 与期望状态。
+-   外部 Provider 返回对象不能用无界 `Object.getOwnPropertyDescriptors` 做“安全拷贝”；该调用本身会对超宽对象分配和遍历。先以 own-property-name 数量、深度、节点和字符串预算拒绝，再只读取 data descriptor，才能对 Proxy/getter 和宽度攻击 fail closed。
+-   工作区导入是新对象创建协议，不是实体反序列化。仅改 ID 仍会保留服务端状态、跨租户关系和 mass-assignment 面；必须逐实体 allowlist、重建全部 ID、按 discriminator 做 typed remap、在首写前完成关系预检，并对外层与嵌入 JSON 共享深度／节点／字节／集合／危险键预算。写入还必须 insert-only，避免预检后的唯一键竞态变成覆盖。
+-   ORM `select:false` 是敏感列的默认拒绝边界，不是完整授权。`mcpServerConfig` 只能在按 workspace、实际 flow type 与 `config` 权限验证后的专用路径显式 `addSelect`；Token 校验是第二条最小路径。普通 list、by-id、API key、public 和 execution 查询都不能顺带装载该列，所有更新还需旧值 CAS 与 `affected=1`。
+-   路由层 `checkAnyPermission(chatflows:*,agentflows:*)` 只证明调用者拥有某一种权限，不能证明目标实际类型匹配。list 必须过滤允许类型，by-id／update／webhook／schedule／private-public fallback 必须先读取最小 workspace/type，再按真实类型授权；ASSISTANT 的创建、读取、更新和 capability 必须走专用 API。
+-   批量删除不能把字符串 boolean、未归属 UUID 或 all-version 扩展当作方便输入。边界需在任何写入前完成数组形状、UUID、去重、500 项上限、精确 boolean、工作区归属和扩展后数量验证；子记录与父记录删除应在单事务内校验 affected，任何漂移固定 409 并整体回滚。
+-   认证 secret 的“存在即读取／不存在即写入”在多实例启动时会竞态，且普通路径读取可跟随 symlink。安全文件后端需要真实目录、`O_NOFOLLOW`、regular-file／非空检查、原子 no-overwrite、竞争者读取胜者，以及 `0700/0600` 权限；跨实例滚动还应以不泄密的用途分离 fingerprint 在启动时 fail closed。
+-   测试安全断言本身也需要对抗验证。原迁移测试用跨字段贪婪正则禁止 `generationId=id`，却把参数化 `SET generationId=? WHERE id=?` 误报；收紧为赋值 RHS 边界并加入正反例后，四数据库迁移仍证明每行使用新 UUID，而不是弱化该门禁。
+-   integer revision／generation HMAC 关闭了陈旧写入和同 ID 重建混淆，但没有让文件系统、S3、Vector Provider 与数据库事务原子化。Provider／存储副作用在最终 CAS 前后发生时，进程崩溃、网络分区或并发失败仍可留下孤儿对象或状态分叉；durable outbox、幂等 operation ID、dead-letter 与 reconciliation 仍是 production promotion 的 HIGH 级设计阻断。
+-   工作空间级删除绕过单 Store fencing 时需要 tombstone 和 outbox；S3 `DeleteObjects` 部分成功只记录日志也缺少可重放恢复证据。历史 Provider 凭据事件、main readiness、备份恢复、生产 key continuity 与部署后验收同样未关闭，因此当前全绿本地测试只支持精确源码候选继续审查，不支持生产发布。
+
+# 2026-08-03 G1-K 可移植性与 MCP 对抗性发现
+
+-   ExportManifest 是内容声明，不是授权凭证。只在 canonical export 路径清洗会让 legacy 文件、删掉 manifest 的文件和直接 API 请求重新引入 credential UUID、inline MCP、Provider options 与变量值；安全边界必须位于所有 import 的最前端。
+-   “同 workspace 存在”不足以授权导入关系。若 preflight 自动解析目标 workspace 的既有 Flow、Tool、DocumentStore、Execution 或 Message，掌握 UUID 的 `workspace:import` 用户即可把新对象挂到既有资源。record-closure 导入应只接受包内依赖，旧 partial-link 行为必须显式退出。
+-   feedback-only 与 message-only 的选择根不同。先扫描所有消息再筛 feedback 父记录，会让大量无关消息触发 10,000 行门禁并误拒一个很小的合法导出；先取有界反馈、再按 `(messageId, chatflowid)` tuple 精确取父记录才符合闭包语义。
+-   组件边界不能只检查单一 base class，也不能与 UI provider list 漂移。Meilisearch 合法使用 `BaseRetriever`，而内部 `documentStoreVS`／`memoryVectorStore` 和 LlamaIndex provider 仍需排除；运行时与导出 sanitizer 必须共用同一语义并以真实 metadata 回归约束。
+-   以 `/headers$/i` 判定秘密会误删 `includeHeaders` 和 `splitByHeaders`，造成“可导入但语义变化”的假可移植性。秘密识别应使用已盘点的精确 Header 输入名，并由敏感输入 type 和递归 key denylist 补充。
+-   MCP 明文 Token 不能在迁移时转成继续有效的摘要，否则数据库泄露后的旧 bearer 仍长期有效。安全迁移是删除 bearer material、禁用配置、要求管理员显式重新启用和一次性领取新 Token；这是有意的客户端兼容性破坏，必须在 Runbook 中提前通知。
+-   可移植性不能靠字段名黑名单猜测。路径、数据库 URL、TLS 文件、任意 override 和 TypeORM 配置需要由组件 metadata 显式声明 `rebind`；动态 `loadConfig` 必须递归跟随实际选择，空值或未知选择不得留下孤儿子配置。端点／主机与本地绑定的风险不同，可以保留结构但必须在导入后复核。
+-   MCP casing guard 若先于观察器，混合大小写的未授权探测会绕过审计；全局 parser 若先于鉴权，又会扩大未授权解析面。正确顺序是低数据观察器、canonical guard、MCP route 鉴权／限流、route-local parser，并让 finish／close 共享去重标记。可观测字段必须低基数且不含原始路径、Header、query、body 或 bearer。
+-   仅把早期 MCP router 放在全局 parser 前还不充分：未匹配的 method 或 subpath 会从 router fall through，再被 50 MiB 全局 parser 解析。MCP router 必须在 route-local handlers 后提供固定 404／405 catch-all，并用大 body 负例证明 `req.body` 未初始化、全局 parser 未触达。
+-   观察器挂载在 `/:chatflowId` 无法覆盖无 ID 的 `/api/v1/mcp` 与尾斜杠请求；这些请求仍属于公开 MCP 攻击面。观察器应挂在整个命名空间，并只记录固定 route 类别。即使 chatflowId 通过 UUID／字符正则，把它写入 audit 仍会造成攻击者可控高基数和文档合同漂移，因此字段应完全移除。
+-   `assistants:view` 只授权 Assistant 业务对象读取，不隐含 Provider 凭据使用权。仍可读的旧版 OpenAI Assistant 和 Vector Store 路由会解密任意可访问 credential 并发起 Provider 请求，必须与 `credentials:view` 合取；否则 Assistant 查看者可把已知 credential ID 变成间接 Provider 读取能力。
+-   Provider 分页对象的 `data` 缺失或类型错误不是“空结果”。若把畸形页降级为 `[]`，已成功更新的 Vector Store 会被误报为没有关联文件，Assistant 详情也会掩盖 Provider 合同漂移。列表和详情路径必须统一固定失败，并在任何后续文件 retrieve 前停止。
+-   `workspace:import` 会创建未部署 Flow、Template 和 Custom Tool 可执行代码，因此它是高信任内容引入能力，不应被误解为普通文件上传权限。凭据 scrub 关闭了 credential 使用链，但权限授予仍需管理员治理和代码审查。
+-   本批没有关闭全局 parser、公开 multipart、公开 flow/file/feedback/leads BOLA、API Key 明文／URL、Redis／SMTP／用户节点 TLS、durable outbox 或历史 Provider 凭据事件；这些是独立 production blockers，专项绿测不能替代。

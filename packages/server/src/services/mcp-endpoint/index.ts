@@ -250,7 +250,13 @@ function handleServiceError(error: unknown, res: Response): boolean {
  * Uses the MCP SDK in stateless mode (no session management).
  * The token is verified against the stored config (constant-time comparison).
  */
-const handleMcpRequest = async (chatflowId: string, token: string, req: Request, res: Response): Promise<void> => {
+const handleMcpRequest = async (
+    chatflowId: string,
+    token: string,
+    req: Request,
+    res: Response,
+    verifiedChatflow?: ChatFlow
+): Promise<void> => {
     const requestAbortController = new AbortController()
     const abortRequest = () => requestAbortController.abort()
     let activeMcpServer: McpServer | undefined
@@ -273,7 +279,10 @@ const handleMcpRequest = async (chatflowId: string, token: string, req: Request,
     let config: IMcpServerConfig | null
 
     try {
-        chatflow = await mcpServerService.getChatflowByIdAndVerifyToken(chatflowId, token)
+        if (verifiedChatflow && verifiedChatflow.id !== chatflowId) {
+            throw new InternalFlowiseError(StatusCodes.UNAUTHORIZED, 'Invalid MCP authentication context')
+        }
+        chatflow = verifiedChatflow ?? (await mcpServerService.getChatflowByIdAndVerifyToken(chatflowId, token))
         if (requestAbortController.signal.aborted) return
         config = mcpServerService.parseMcpConfig(chatflow)
     } catch (error) {
@@ -320,8 +329,10 @@ const handleMcpRequest = async (chatflowId: string, token: string, req: Request,
             const chatId = uuidv4() // Generate a unique chat ID for this execution
             return await chatflowCallback(chatflow, chatId, req, args, requestAbortController.signal)
         } catch (error) {
-            const errorMessage = getErrorMessage(error)
-            logger.error(`[MCP] Error executing tool ${toolName} for chatflow ${chatflow.id}: ${errorMessage}`)
+            logger.error('mcp_tool_execution_failed', {
+                flowType: chatflow.type,
+                errorClass: error instanceof Error ? error.name : 'UnknownError'
+            })
             return {
                 content: [{ type: 'text' as const, text: 'An error occurred while executing the tool. Please try again later.' }],
                 isError: true

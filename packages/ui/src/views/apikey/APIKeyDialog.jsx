@@ -38,53 +38,9 @@ import useNotifier from '@/utils/useNotifier'
 
 // const
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
+import { permissionCategoryLabels, permissionValueLabels } from './permissionLabels'
 
 import './APIKeyDialog.css'
-
-const permissionCategoryLabels = {
-    chatflows: '聊天流',
-    agentflows: '智能体流',
-    tools: '工具',
-    assistants: '助手',
-    credentials: '凭据',
-    variables: '变量',
-    apikeys: 'API 密钥',
-    documentStores: '文档库',
-    datasets: '数据集',
-    executions: '执行记录',
-    evaluators: '评估器',
-    evaluations: '评估',
-    templates: '模板',
-    logs: '日志',
-    loginActivity: '登录活动'
-}
-
-const permissionValueLabels = {
-    View: '查看',
-    Create: '创建',
-    Update: '更新',
-    Duplicate: '复制',
-    Delete: '删除',
-    Export: '导出',
-    Import: '导入',
-    'Edit Configuration': '编辑配置',
-    'Allowed Domains': '允许的域名',
-    Share: '分享',
-    'Delete Document Store': '删除文档库',
-    'Add Document Loader': '添加文档加载器',
-    'Delete Document Loader': '删除文档加载器',
-    'Preview & Process Document Chunks': '预览并处理文档分块',
-    'Upsert Config': '更新配置',
-    'Run Again': '再次运行',
-    'View Marketplace Templates': '查看市场模板',
-    'View Custom Templates': '查看自定义模板',
-    'Delete Custom Template': '删除自定义模板',
-    'Export Tool as Template': '将工具导出为模板',
-    'Export Flow as Template': '将流程导出为模板',
-    'Share Custom Templates': '分享自定义模板',
-    'View Logs': '查看日志',
-    'View Login Activity': '查看登录活动'
-}
 
 const APIKeyDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
     const portalElement = document.getElementById('portal')

@@ -61,7 +61,7 @@ export class ChatFlow implements IChatFlow {
     @UpdateDateColumn()
     updatedDate: Date
 
-    @Column({ nullable: true, type: 'text' })
+    @Column({ nullable: true, type: 'text', select: false })
     mcpServerConfig?: string
 
     @Column({ nullable: true, type: 'text', select: false })

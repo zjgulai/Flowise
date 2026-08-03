@@ -90,7 +90,7 @@ const UpsertHistorySideDrawer = ({ show, dialogProps, onClickFunction, onSelectH
                                     <img
                                         style={{ objectFit: 'cover', height: '10vh', width: 'auto' }}
                                         src={HistoryEmptySVG}
-                                        alt='暂无更新插入历史'
+                                        alt='暂无更新历史'
                                     />
                                 </Box>
                                 <div>暂无更新历史</div>

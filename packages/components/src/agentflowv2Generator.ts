@@ -6,6 +6,68 @@ import { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { extractResponseContent } from './utils'
 
 const ToolType = z.array(z.string()).describe('List of tools')
+const FLOWISE_CREDENTIAL_ID = 'FLOWISE_CREDENTIAL_ID'
+
+const isRecord = (value: unknown): value is Record<string, any> => typeof value === 'object' && value !== null && !Array.isArray(value)
+
+export const resolveSafeChatModelSelection = (
+    componentNodes: Record<string, any>,
+    selectedChatModel: unknown
+): { component: Record<string, any>; nodeData: Record<string, any>; credentialId?: string } => {
+    if (!isRecord(selectedChatModel) || typeof selectedChatModel.name !== 'string' || !selectedChatModel.name.trim()) {
+        throw new Error('Invalid chat model selection')
+    }
+    if (!isRecord(selectedChatModel.inputs)) throw new Error('Invalid chat model selection')
+
+    const name = selectedChatModel.name.trim()
+    const component = componentNodes?.[name]
+    if (
+        !isRecord(component) ||
+        component.name !== name ||
+        component.category !== 'Chat Models' ||
+        !Array.isArray(component.baseClasses) ||
+        !component.baseClasses.includes('BaseChatModel') ||
+        typeof component.filePath !== 'string' ||
+        !component.filePath.trim() ||
+        !Array.isArray(component.inputs)
+    ) {
+        throw new Error('Invalid chat model selection')
+    }
+
+    const allowedInputs = new Set<string>([FLOWISE_CREDENTIAL_ID])
+    for (const input of component.inputs) {
+        if (isRecord(input) && typeof input.name === 'string' && input.name) allowedInputs.add(input.name)
+    }
+    const safeInputs: Record<string, any> = {}
+    for (const [key, value] of Object.entries(selectedChatModel.inputs)) {
+        if (!allowedInputs.has(key)) throw new Error('Invalid chat model selection')
+        safeInputs[key] = value
+    }
+
+    const directCredential = selectedChatModel.credential
+    const inputCredential = safeInputs[FLOWISE_CREDENTIAL_ID]
+    if (directCredential !== undefined && (typeof directCredential !== 'string' || !directCredential.trim())) {
+        throw new Error('Invalid chat model selection')
+    }
+    if (inputCredential !== undefined && (typeof inputCredential !== 'string' || !inputCredential.trim())) {
+        throw new Error('Invalid chat model selection')
+    }
+    if (directCredential && inputCredential && directCredential !== inputCredential) {
+        throw new Error('Invalid chat model selection')
+    }
+    const credentialId = (directCredential || inputCredential) as string | undefined
+
+    return {
+        component,
+        nodeData: {
+            id: `${name}_0`,
+            name,
+            inputs: safeInputs,
+            ...(credentialId ? { credential: credentialId } : {})
+        },
+        credentialId
+    }
+}
 
 // Define a more specific NodePosition schema
 const NodePositionType = z.object({
@@ -160,8 +222,8 @@ export const generateAgentflowv2 = async (config: Record<string, any>, question:
 
         return { nodes: updatedNodes, edges: updatedEdges }
     } catch (error) {
-        console.error('Error generating AgentflowV2:', error)
-        return { error: error.message || 'Unknown error occurred' }
+        console.error('Agentflow generation failed')
+        return { error: 'Agentflow generation failed' }
     }
 }
 
@@ -299,14 +361,11 @@ Now, select the ONLY tool that is needed to achieve the given task. You must onl
 
 const _generateSelectedTools = async (config: Record<string, any>, question: string, options: ICommonObject) => {
     try {
-        const chatModelComponent = config.componentNodes[config.selectedChatModel?.name]
-        if (!chatModelComponent) {
-            throw new Error('Chat model component not found')
-        }
-        const nodeInstanceFilePath = chatModelComponent.filePath as string
+        const selection = resolveSafeChatModelSelection(config.componentNodes, config.selectedChatModel)
+        const nodeInstanceFilePath = selection.component.filePath as string
         const nodeModule = await import(nodeInstanceFilePath)
         const newToolNodeInstance = new nodeModule.nodeClass()
-        const model = (await newToolNodeInstance.init(config.selectedChatModel, '', options)) as BaseChatModel
+        const model = (await newToolNodeInstance.init(selection.nodeData, '', { ...options, skipVariables: true })) as BaseChatModel
 
         // Create a parser to validate the output
         const parser = StructuredOutputParser.fromZodSchema(ToolType as any)
@@ -340,29 +399,26 @@ const _generateSelectedTools = async (config: Record<string, any>, question: str
                 // Validate with our schema
                 return ToolType.parse(parsedJSON)
             } catch (parseError) {
-                console.error('Error parsing JSON from response:', parseError)
+                console.error('Agentflow tool response validation failed')
                 return { error: 'Failed to parse JSON from response', content: responseContent }
             }
         } else {
-            console.error('No JSON found in response:', responseContent)
+            console.error('Agentflow tool response validation failed')
             return { error: 'No JSON found in response', content: responseContent }
         }
     } catch (error) {
-        console.error('Error generating AgentflowV2:', error)
-        return { error: error.message || 'Unknown error occurred' }
+        console.error('Agentflow generation failed')
+        return { error: 'Agentflow generation failed' }
     }
 }
 
 const generateNodesEdges = async (config: Record<string, any>, question: string, options?: ICommonObject) => {
     try {
-        const chatModelComponent = config.componentNodes[config.selectedChatModel?.name]
-        if (!chatModelComponent) {
-            throw new Error('Chat model component not found')
-        }
-        const nodeInstanceFilePath = chatModelComponent.filePath as string
+        const selection = resolveSafeChatModelSelection(config.componentNodes, config.selectedChatModel)
+        const nodeInstanceFilePath = selection.component.filePath as string
         const nodeModule = await import(nodeInstanceFilePath)
         const newToolNodeInstance = new nodeModule.nodeClass()
-        const model = (await newToolNodeInstance.init(config.selectedChatModel, '', options)) as BaseChatModel
+        const model = (await newToolNodeInstance.init(selection.nodeData, '', { ...options, skipVariables: true })) as BaseChatModel
 
         // Create a parser to validate the output
         const parser = StructuredOutputParser.fromZodSchema(NodesEdgesType as any)
@@ -396,16 +452,16 @@ const generateNodesEdges = async (config: Record<string, any>, question: string,
                 // Validate with our schema
                 return NodesEdgesType.parse(parsedJSON)
             } catch (parseError) {
-                console.error('Error parsing JSON from response:', parseError)
+                console.error('Agentflow response validation failed')
                 return { error: 'Failed to parse JSON from response', content: responseContent }
             }
         } else {
-            console.error('No JSON found in response:', responseContent)
+            console.error('Agentflow response validation failed')
             return { error: 'No JSON found in response', content: responseContent }
         }
     } catch (error) {
-        console.error('Error generating AgentflowV2:', error)
-        return { error: error.message || 'Unknown error occurred' }
+        console.error('Agentflow generation failed')
+        return { error: 'Agentflow generation failed' }
     }
 }
 

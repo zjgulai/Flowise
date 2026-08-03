@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 // material-ui
 import { IconButton } from '@mui/material'
 import { IconEdit } from '@tabler/icons-react'
+import { useSnackbar } from 'notistack'
 
 // project import
 import { AsyncDropdown } from '@/ui-component/dropdown/AsyncDropdown'
@@ -26,6 +27,7 @@ const CredentialInputHandler = ({ inputParam, data, onSelect, disabled = false }
     const [specificCredentialDialogProps, setSpecificCredentialDialogProps] = useState({})
     const [reloadTimestamp, setReloadTimestamp] = useState(Date.now().toString())
     const { hasPermission } = useAuth()
+    const { enqueueSnackbar } = useSnackbar()
 
     const editCredential = (credentialId) => {
         const dialogProp = {
@@ -69,6 +71,7 @@ const CredentialInputHandler = ({ inputParam, data, onSelect, disabled = false }
         } catch {
             setSpecificCredentialDialogProps({})
             setShowSpecificCredentialDialog(false)
+            enqueueSnackbar('加载凭据配置失败，请稍后重试', { variant: 'error' })
         }
     }
 

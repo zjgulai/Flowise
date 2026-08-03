@@ -12,7 +12,9 @@ import {
     IServerSideEventStreamer,
     convertChatHistoryToText,
     generateFollowUpPrompts,
-    tracingEnvEnabled
+    tracingEnvEnabled,
+    OAuth2CredentialRefreshCapability,
+    resolveFlowiseRequestTarget
 } from 'flowise-components'
 import {
     IncomingAgentflowInput,
@@ -63,6 +65,8 @@ import { UsageCacheManager } from '../UsageCacheManager'
 import { generateTTSForResponseStream, shouldAutoPlayTTS } from './buildChatflow'
 import { InternalFlowiseError } from '../errors/internalFlowiseError'
 import { StatusCodes } from 'http-status-codes'
+import { clearScopedChatMessageAction } from './scopedChatMessageAction'
+import { createWorkspaceOAuth2RefreshCapability } from '../services/oauth2CredentialRefresh'
 
 interface IWaitingNode {
     nodeId: string
@@ -165,10 +169,12 @@ interface IExecuteNodeParams {
     workspaceId: string
     subscriptionId: string
     productId: string
+    refreshOAuth2Credential: OAuth2CredentialRefreshCapability
 }
 
 interface IExecuteAgentFlowParams extends Omit<IExecuteFlowParams, 'incomingInput'> {
     incomingInput: IncomingAgentflowInput
+    refreshOAuth2Credential?: OAuth2CredentialRefreshCapability
 }
 
 const MAX_LOOP_COUNT = process.env.MAX_LOOP_COUNT ? parseInt(process.env.MAX_LOOP_COUNT) : 10
@@ -1090,7 +1096,8 @@ const executeNode = async ({
     orgId,
     workspaceId,
     subscriptionId,
-    productId
+    productId,
+    refreshOAuth2Credential
 }: IExecuteNodeParams): Promise<{
     result: any
     shouldStop?: boolean
@@ -1252,7 +1259,8 @@ const executeNode = async ({
             parentTraceIds,
             humanInputAction,
             iterationContext,
-            evaluationRunId
+            evaluationRunId,
+            refreshOAuth2Credential
         }
 
         // Execute node
@@ -1333,7 +1341,8 @@ const executeNode = async ({
                             orgId,
                             workspaceId,
                             subscriptionId,
-                            productId
+                            productId,
+                            refreshOAuth2Credential
                         })
 
                         // Store the result
@@ -1549,7 +1558,6 @@ export const executeAgentFlow = async ({
     usageCacheManager,
     cachePool,
     sseStreamer,
-    baseURL,
     isInternal,
     uploadedFilesContent,
     fileUploads,
@@ -1562,9 +1570,12 @@ export const executeAgentFlow = async ({
     orgId,
     workspaceId,
     subscriptionId,
-    productId
+    productId,
+    refreshOAuth2Credential: providedRefreshOAuth2Credential
 }: IExecuteAgentFlowParams) => {
     logger.debug('\n🚀 Starting flow execution')
+    const baseURL = resolveFlowiseRequestTarget().canonicalOrigin
+    const refreshOAuth2Credential = providedRefreshOAuth2Credential ?? createWorkspaceOAuth2RefreshCapability(workspaceId)
 
     const question = incomingInput.question
     const form = incomingInput.form
@@ -2087,7 +2098,8 @@ export const executeAgentFlow = async ({
                 orgId,
                 workspaceId,
                 subscriptionId,
-                productId
+                productId,
+                refreshOAuth2Credential
             })
 
             if (executionResult.agentFlowExecutedData) {
@@ -2280,7 +2292,8 @@ export const executeAgentFlow = async ({
                 databaseEntities,
                 workspaceId,
                 orgId,
-                logger
+                logger,
+                refreshOAuth2Credential
             }
             const customFuncNodeInstance = new nodeModule.nodeClass()
             const customFunctionResponse = await customFuncNodeInstance.run(nodeData, question || form, options)
@@ -2313,30 +2326,14 @@ export const executeAgentFlow = async ({
         }
     }
 
-    // Find the previous chat message with the same session/chat id and remove the action
-    if (humanInput && Object.keys(humanInput).length) {
-        let query = await appDataSource
-            .getRepository(ChatMessage)
-            .createQueryBuilder('chat_message')
-            .where('chat_message.chatId = :chatId', { chatId })
-            .orWhere('chat_message.sessionId = :sessionId', { sessionId })
-            .orderBy('chat_message.createdDate', 'DESC')
-            .getMany()
-
-        for (const result of query) {
-            if (result.action) {
-                try {
-                    const newChatMessage = new ChatMessage()
-                    Object.assign(newChatMessage, result)
-                    newChatMessage.action = null
-                    const cm = await appDataSource.getRepository(ChatMessage).create(newChatMessage)
-                    await appDataSource.getRepository(ChatMessage).save(cm)
-                    break
-                } catch (e) {
-                    // error converting action to JSON
-                }
-            }
-        }
+    // Clear only the action bound to this flow and the exact execution being resumed.
+    if (humanInput && Object.keys(humanInput).length && previousExecution) {
+        await clearScopedChatMessageAction(appDataSource.getRepository(ChatMessage), {
+            chatflowId: chatflow.id,
+            executionId: previousExecution.id,
+            chatId,
+            sessionId
+        })
     }
 
     let finalUserInput = incomingInput.question || ' '
@@ -2397,7 +2394,8 @@ export const executeAgentFlow = async ({
             chatId,
             chatflowid,
             appDataSource,
-            databaseEntities
+            databaseEntities,
+            refreshOAuth2Credential
         })
         if (followUpPrompts?.questions) {
             apiMessage.followUpPrompts = JSON.stringify(followUpPrompts.questions)
@@ -2443,8 +2441,10 @@ export const executeAgentFlow = async ({
             orgId,
             chatflowid,
             chatId,
+            workspaceId,
             appDataSource,
-            databaseEntities
+            databaseEntities,
+            refreshOAuth2Credential
         }
 
         if (sseStreamer) {

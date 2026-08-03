@@ -1,47 +1,65 @@
 import client from './client'
 
-// OpenAI Assistant
-const getAssistantObj = (id, credentialId) => client.get(`/openai-assistants/${id}?credential=${credentialId}`)
+const pathSegment = (value) => encodeURIComponent(String(value))
+const queryString = (params) => new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)])).toString()
 
-const getAllAvailableAssistants = (credentialId) => client.get(`/openai-assistants?credential=${credentialId}`)
+// OpenAI Assistant
+const getAssistantObj = (id, credentialId, config = {}) =>
+    client.get(`/openai-assistants/${pathSegment(id)}?${queryString({ credential: credentialId })}`, config)
+
+const getAllAvailableAssistants = (credentialId) => client.get(`/openai-assistants?${queryString({ credential: credentialId })}`)
 
 // Assistant
-const createNewAssistant = (body) => client.post(`/assistants`, body)
+const createNewAssistant = (body, config = {}) => client.post(`/assistants`, body, config)
 
-const getAllAssistants = (type) => client.get('/assistants?type=' + type)
+const getAllAssistants = (type, config = {}) => client.get(`/assistants?${queryString({ type })}`, config)
 
-const getSpecificAssistant = (id) => client.get(`/assistants/${id}`)
+const getSpecificAssistant = (id, config = {}) => client.get(`/assistants/${pathSegment(id)}`, config)
 
-const updateAssistant = (id, body) => client.put(`/assistants/${id}`, body)
+const getCustomAssistantFlow = (id, config = {}) => client.get(`/assistants/${pathSegment(id)}/custom-flow`, config)
 
-const deleteAssistant = (id, isDeleteBoth) =>
-    isDeleteBoth ? client.delete(`/assistants/${id}?isDeleteBoth=true`) : client.delete(`/assistants/${id}`)
+const updateAssistant = (id, body, config = {}) => client.put(`/assistants/${pathSegment(id)}`, body, config)
+
+const saveCustomAssistant = (id, body, config = {}) => client.put(`/assistants/${pathSegment(id)}/custom-save`, body, config)
+
+const deleteCustomAssistant = (id, body, config = {}) => client.post(`/assistants/${pathSegment(id)}/custom-delete`, body, config)
+
+const deleteAssistant = (id, isDeleteBoth, config = {}) =>
+    isDeleteBoth
+        ? client.delete(`/assistants/${pathSegment(id)}?${queryString({ isDeleteBoth: true })}`, config)
+        : client.delete(`/assistants/${pathSegment(id)}`, config)
 
 // Vector Store
-const getAssistantVectorStore = (id, credentialId) => client.get(`/openai-assistants-vector-store/${id}?credential=${credentialId}`)
+const getAssistantVectorStore = (id, credentialId, config = {}) =>
+    client.get(`/openai-assistants-vector-store/${pathSegment(id)}?${queryString({ credential: credentialId })}`, config)
 
-const listAssistantVectorStore = (credentialId) => client.get(`/openai-assistants-vector-store?credential=${credentialId}`)
+const listAssistantVectorStore = (credentialId, config = {}) =>
+    client.get(`/openai-assistants-vector-store?${queryString({ credential: credentialId })}`, config)
 
-const createAssistantVectorStore = (credentialId, body) => client.post(`/openai-assistants-vector-store?credential=${credentialId}`, body)
+const createAssistantVectorStore = (credentialId, body, config = {}) =>
+    client.post(`/openai-assistants-vector-store?${queryString({ credential: credentialId })}`, body, config)
 
-const updateAssistantVectorStore = (id, credentialId, body) =>
-    client.put(`/openai-assistants-vector-store/${id}?credential=${credentialId}`, body)
+const updateAssistantVectorStore = (id, credentialId, body, config = {}) =>
+    client.put(`/openai-assistants-vector-store/${pathSegment(id)}?${queryString({ credential: credentialId })}`, body, config)
 
-const deleteAssistantVectorStore = (id, credentialId) => client.delete(`/openai-assistants-vector-store/${id}?credential=${credentialId}`)
+const deleteAssistantVectorStore = (id, credentialId, config = {}) =>
+    client.delete(`/openai-assistants-vector-store/${pathSegment(id)}?${queryString({ credential: credentialId })}`, config)
 
 // Vector Store Files
-const uploadFilesToAssistantVectorStore = (id, credentialId, formData) =>
-    client.post(`/openai-assistants-vector-store/${id}?credential=${credentialId}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+const uploadFilesToAssistantVectorStore = (id, credentialId, formData, config = {}) =>
+    client.post(`/openai-assistants-vector-store/${pathSegment(id)}?${queryString({ credential: credentialId })}`, formData, {
+        ...config,
+        headers: { ...config.headers, 'Content-Type': 'multipart/form-data' }
     })
 
-const deleteFilesFromAssistantVectorStore = (id, credentialId, body) =>
-    client.patch(`/openai-assistants-vector-store/${id}?credential=${credentialId}`, body)
+const deleteFilesFromAssistantVectorStore = (id, credentialId, body, config = {}) =>
+    client.patch(`/openai-assistants-vector-store/${pathSegment(id)}?${queryString({ credential: credentialId })}`, body, config)
 
 // Files
-const uploadFilesToAssistant = (credentialId, formData) =>
-    client.post(`/openai-assistants-file/upload?credential=${credentialId}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+const uploadFilesToAssistant = (credentialId, formData, config = {}) =>
+    client.post(`/openai-assistants-file/upload?${queryString({ credential: credentialId })}`, formData, {
+        ...config,
+        headers: { ...config.headers, 'Content-Type': 'multipart/form-data' }
     })
 
 const getChatModels = () => client.get('/assistants/components/chatmodels')
@@ -53,10 +71,13 @@ const generateAssistantInstruction = (body) => client.post(`/assistants/generate
 export default {
     getAllAssistants,
     getSpecificAssistant,
+    getCustomAssistantFlow,
     getAssistantObj,
     getAllAvailableAssistants,
     createNewAssistant,
     updateAssistant,
+    saveCustomAssistant,
+    deleteCustomAssistant,
     deleteAssistant,
     getAssistantVectorStore,
     listAssistantVectorStore,

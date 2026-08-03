@@ -5,16 +5,18 @@ import {
     extractResponseContent,
     getFileFromStorage,
     getFileFromUpload,
+    getStorageSize,
     ICommonObject,
     IDocument,
     mapExtToInputField,
     mapMimeTypeToInputField,
     removeFilesFromStorage,
     removeSpecificFileFromStorage,
-    removeSpecificFileFromUpload
+    removeSpecificFileFromUpload,
+    resolveSafeChatModelSelection
 } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
-import { cloneDeep, omit } from 'lodash'
+import { cloneDeep, isEqual, omit } from 'lodash'
 import * as path from 'path'
 import { DataSource, In } from 'typeorm'
 import { v4 as uuidv4 } from 'uuid'
@@ -28,6 +30,7 @@ import {
     IDocumentStoreLoader,
     IDocumentStoreLoaderFile,
     IDocumentStoreLoaderForPreview,
+    IDocumentStoreLoaderResponse,
     IDocumentStoreRefreshData,
     IDocumentStoreUpsertData,
     IDocumentStoreWhereUsed,
@@ -44,7 +47,6 @@ import { ChatFlow } from '../../database/entities/ChatFlow'
 import { DocumentStore } from '../../database/entities/DocumentStore'
 import { DocumentStoreFileChunk } from '../../database/entities/DocumentStoreFileChunk'
 import { UpsertHistory } from '../../database/entities/UpsertHistory'
-import { getWorkspaceSearchOptions } from '../../enterprise/utils/ControllerServiceUtils'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { getErrorMessage } from '../../errors/utils'
 import { validateFileMimeTypeAndExtensionMatch } from '../../utils/fileValidation'
@@ -56,26 +58,579 @@ import { DOCUMENTSTORE_TOOL_DESCRIPTION_PROMPT_GENERATOR } from '../../utils/pro
 import { checkStorage, updateStorageUsage } from '../../utils/quotaUsage'
 import { Telemetry } from '../../utils/telemetry'
 import nodesService from '../nodes'
+import credentialsService from '../credentials'
+import { createWorkspaceOAuth2RefreshCapability } from '../oauth2CredentialRefresh'
+import {
+    createDocumentStoreRevisionPredicate,
+    type DocumentStoreRevisionIdentity,
+    getDocumentStoreMutablePatch,
+    updateExistingDocumentStore
+} from './documentStoreRevision'
+import {
+    createDocumentStoreGenerationFingerprint,
+    createDocumentStoreGenerationId,
+    createDocumentStoreVersionToken,
+    createDocumentStoreVersionTokenFromClaim,
+    matchesDocumentStoreVersionClaim,
+    type DocumentStoreOperationIdentity
+} from './documentStoreVersion'
+import { waitForDocumentStoreQueueResult } from '../../queue/documentStoreQueueError'
+import { updateDocumentStoreUsageWithManager } from './documentStoreUsage'
+
+const BYTES_PER_MEBIBYTE = 1024 * 1024
+const MAX_COMPONENT_NAME_LENGTH = 256
+const DOCUMENT_STORE_COMPONENT_BASE_CLASSES = {
+    'Document Loaders': ['Document'],
+    'Text Splitters': ['TextSplitter'],
+    Embeddings: ['Embeddings'],
+    'Vector Stores': ['VectorStoreRetriever', 'BaseRetriever'],
+    'Record Manager': ['RecordManager']
+} as const
+export const DOCUMENT_STORE_DENIED_LOADERS = new Set(['documentStore', 'vectorStoreToDocument', 'unstructuredFolderLoader', 'folderFiles'])
+const DOCUMENT_STORE_DENIED_VECTOR_STORES = new Set(['documentStoreVS', 'memoryVectorStore'])
+
+type DocumentStoreComponentCategory = keyof typeof DOCUMENT_STORE_COMPONENT_BASE_CLASSES
+
+const isDisallowedDocumentStoreComponent = (component: any, componentName: string, category: DocumentStoreComponentCategory): boolean => {
+    if (category === 'Document Loaders') return DOCUMENT_STORE_DENIED_LOADERS.has(componentName)
+    if (category === 'Vector Stores' && DOCUMENT_STORE_DENIED_VECTOR_STORES.has(componentName)) return true
+    return (
+        (category === 'Embeddings' || category === 'Vector Stores' || category === 'Record Manager') &&
+        Array.isArray(component?.tags) &&
+        component.tags.includes('LlamaIndex')
+    )
+}
+
+const createDocumentStoreOperationRevision = (entity: DocumentStoreRevisionIdentity): DocumentStoreOperationIdentity => ({
+    id: entity.id,
+    workspaceId: entity.workspaceId,
+    generationFingerprint: createDocumentStoreGenerationFingerprint(entity),
+    revision: entity.revision
+})
+
+const assertDocumentStoreOperationRevision = (
+    entity: DocumentStoreRevisionIdentity,
+    operationRevision: DocumentStoreOperationIdentity | undefined,
+    conflictMessage: string
+): void => {
+    if (!operationRevision) {
+        throw new InternalFlowiseError(StatusCodes.CONFLICT, conflictMessage)
+    }
+    if (
+        entity.id !== operationRevision.id ||
+        entity.workspaceId !== operationRevision.workspaceId ||
+        !matchesDocumentStoreVersionClaim(entity, operationRevision)
+    ) {
+        throw new InternalFlowiseError(StatusCodes.CONFLICT, conflictMessage)
+    }
+}
+
+const advanceDocumentStoreOperationRevision = (
+    operationRevision: DocumentStoreOperationIdentity | undefined,
+    entity: DocumentStoreRevisionIdentity
+): void => {
+    if (!operationRevision) return
+    if (
+        entity.id !== operationRevision.id ||
+        entity.workspaceId !== operationRevision.workspaceId ||
+        !matchesDocumentStoreVersionClaim(
+            {
+                id: entity.id,
+                workspaceId: entity.workspaceId,
+                generationId: entity.generationId,
+                revision: operationRevision.revision
+            },
+            operationRevision
+        )
+    ) {
+        throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Document store operation ownership changed concurrently')
+    }
+    operationRevision.revision = entity.revision
+    operationRevision.generationFingerprint = createDocumentStoreGenerationFingerprint(entity)
+}
+
+const isPlainRecord = (value: unknown): value is Record<string, any> => typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const getDocumentStoreUploadPaths = (files: Express.Multer.File[]): string[] => [
+    ...new Set(
+        files
+            .map((file) => file.path ?? file.key)
+            .filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0)
+    )
+]
+
+const cleanupDocumentStoreUploads = async (files: Express.Multer.File[]): Promise<void> => {
+    const uploadPaths = getDocumentStoreUploadPaths(files)
+    const cleanupResults = await Promise.allSettled(uploadPaths.map((uploadPath) => removeSpecificFileFromUpload(uploadPath)))
+    const failedCount = cleanupResults.filter((result) => result.status === 'rejected').length
+    if (failedCount > 0) {
+        logger.error('document_store_upload_cleanup_failed', { failedCount, totalCount: uploadPaths.length })
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store upload cleanup failed')
+    }
+}
+
+export const resolveDocumentStoreFileInputField = (mimeType: string, originalName: string, loaderId: string): string => {
+    if (loaderId === 'unstructuredFileLoader') return 'fileObject'
+    const fileInputFieldFromExt = mapExtToInputField(path.extname(originalName))
+    if (fileInputFieldFromExt !== 'txtFile') return fileInputFieldFromExt
+    const fileInputFieldFromMimeType = mapMimeTypeToInputField(mimeType)
+    return fileInputFieldFromMimeType !== 'txtFile' ? fileInputFieldFromMimeType : 'txtFile'
+}
+
+export const resolveSafeDocumentStoreComponent = (
+    componentNodes: IComponentNodes,
+    componentName: unknown,
+    config: unknown,
+    expectedCategory: DocumentStoreComponentCategory
+): any => {
+    if (
+        typeof componentName !== 'string' ||
+        !componentName.trim() ||
+        componentName !== componentName.trim() ||
+        componentName.length > MAX_COMPONENT_NAME_LENGTH ||
+        !isPlainRecord(config)
+    ) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component selection')
+    }
+
+    const component = componentNodes[componentName]
+    const allowedBaseClasses = DOCUMENT_STORE_COMPONENT_BASE_CLASSES[expectedCategory]
+    if (
+        !component ||
+        component.name !== componentName ||
+        component.category !== expectedCategory ||
+        !Array.isArray(component.baseClasses) ||
+        !allowedBaseClasses.some((baseClass) => component.baseClasses.includes(baseClass)) ||
+        typeof component.filePath !== 'string' ||
+        !component.filePath ||
+        !Array.isArray(component.inputs) ||
+        isDisallowedDocumentStoreComponent(component, componentName, expectedCategory)
+    ) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component selection')
+    }
+
+    const allowedInputs = new Set(component.inputs.map((input: any) => input?.name).filter((name: unknown) => typeof name === 'string'))
+    const credentialInputName = isPlainRecord(component.credential) ? component.credential.name : undefined
+    if (typeof credentialInputName === 'string') allowedInputs.add(credentialInputName)
+    allowedInputs.add('FLOWISE_CREDENTIAL_ID')
+    if (expectedCategory === 'Vector Stores') {
+        for (const retrievalInput of ['topK', 'searchType', 'fetchK', 'lambda']) allowedInputs.add(retrievalInput)
+    }
+    for (const key of Object.keys(config)) {
+        if (key === 'customFunction' || !allowedInputs.has(key)) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component selection')
+        }
+    }
+    return component
+}
+
+const assertDocumentStoreComponentCredential = async (
+    component: any,
+    config: Record<string, any>,
+    workspaceId: string,
+    explicitCredential?: unknown
+): Promise<void> => {
+    const credentialInputName = isPlainRecord(component.credential) ? component.credential.name : undefined
+    const candidates = [
+        explicitCredential,
+        config.FLOWISE_CREDENTIAL_ID,
+        typeof credentialInputName === 'string' ? config[credentialInputName] : undefined
+    ].filter((candidate) => candidate !== undefined && candidate !== null && candidate !== '')
+    const credentialIds = [...new Set(candidates)]
+    if (credentialIds.length > 1 || credentialIds.some((id) => typeof id !== 'string' || !id.trim() || id.length > 256)) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component credential')
+    }
+    if (credentialIds.length === 1) {
+        try {
+            await credentialsService.assertCredentialInWorkspace(credentialIds[0] as string, workspaceId)
+        } catch {
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store component credential not found')
+        }
+    }
+}
+
+const validateDocumentProcessingComponents = async (
+    componentNodes: IComponentNodes,
+    data: IDocumentStoreLoaderForPreview,
+    workspaceId: string
+): Promise<void> => {
+    const loaderConfig = isPlainRecord(data.loaderConfig) ? data.loaderConfig : undefined
+    if (!loaderConfig) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component selection')
+    const loader = resolveSafeDocumentStoreComponent(componentNodes, data.loaderId, loaderConfig, 'Document Loaders')
+    await assertDocumentStoreComponentCredential(loader, loaderConfig, workspaceId, data.credential)
+
+    if (data.splitterId) {
+        const splitterConfig = isPlainRecord(data.splitterConfig) ? data.splitterConfig : undefined
+        if (!splitterConfig) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component selection')
+        const splitter = resolveSafeDocumentStoreComponent(componentNodes, data.splitterId, splitterConfig, 'Text Splitters')
+        await assertDocumentStoreComponentCredential(splitter, splitterConfig, workspaceId)
+    }
+}
+
+const validateDocumentVectorComponents = async (
+    componentNodes: IComponentNodes,
+    data: ICommonObject,
+    workspaceId: string,
+    requireCoreComponents = true
+): Promise<void> => {
+    const validateOne = async (
+        name: unknown,
+        config: unknown,
+        category: DocumentStoreComponentCategory,
+        required: boolean
+    ): Promise<void> => {
+        if (!name && !required && (!config || (isPlainRecord(config) && Object.keys(config).length === 0))) return
+        const safeConfig = isPlainRecord(config) ? config : undefined
+        if (!safeConfig) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component selection')
+        const component = resolveSafeDocumentStoreComponent(componentNodes, name, safeConfig, category)
+        await assertDocumentStoreComponentCredential(component, safeConfig, workspaceId)
+    }
+
+    await validateOne(data.embeddingName, data.embeddingConfig, 'Embeddings', requireCoreComponents)
+    await validateOne(data.vectorStoreName, data.vectorStoreConfig, 'Vector Stores', requireCoreComponents)
+    await validateOne(data.recordManagerName, data.recordManagerConfig, 'Record Manager', false)
+}
+
+const parsePersistedComponentConfig = (value: string | null | undefined): ICommonObject => {
+    if (!value) return {}
+    try {
+        const parsed = JSON.parse(value)
+        if (!isPlainRecord(parsed) || typeof parsed.name !== 'string' || !isPlainRecord(parsed.config)) {
+            throw new Error('invalid')
+        }
+        return parsed
+    } catch {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid persisted document store component configuration')
+    }
+}
+
+const arePersistedComponentConfigsEquivalent = (
+    previousValue: string | null | undefined,
+    nextValue: string | null | undefined
+): boolean => {
+    if (previousValue === nextValue) return true
+    return isEqual(parsePersistedComponentConfig(previousValue), parsePersistedComponentConfig(nextValue))
+}
+
+const validateResolvedDocumentVectorComponents = async (
+    appDataSource: DataSource,
+    componentNodes: IComponentNodes,
+    storeId: string,
+    data: ICommonObject,
+    workspaceId: string,
+    requireCoreComponents: boolean,
+    operationRevision?: DocumentStoreOperationIdentity
+): Promise<{ entity: DocumentStore; resolved: ICommonObject }> => {
+    const entity = await appDataSource.getRepository(DocumentStore).findOneBy({ id: storeId, workspaceId })
+    if (!entity) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
+    assertDocumentStoreOperationRevision(entity, operationRevision, 'Document store vector configuration changed concurrently')
+    const persistedEmbedding = parsePersistedComponentConfig(entity.embeddingConfig)
+    const persistedVectorStore = parsePersistedComponentConfig(entity.vectorStoreConfig)
+    const persistedRecordManager = parsePersistedComponentConfig(entity.recordManagerConfig)
+    const resolved = {
+        ...data,
+        embeddingName: data.embeddingName || persistedEmbedding.name,
+        embeddingConfig: data.embeddingConfig || persistedEmbedding.config,
+        vectorStoreName: data.vectorStoreName || persistedVectorStore.name,
+        vectorStoreConfig: data.vectorStoreConfig || persistedVectorStore.config,
+        recordManagerName: data.recordManagerName || persistedRecordManager.name,
+        recordManagerConfig: data.recordManagerConfig || persistedRecordManager.config
+    }
+    await validateDocumentVectorComponents(componentNodes, resolved, workspaceId, requireCoreComponents)
+    return { entity, resolved }
+}
+
+const isConfirmedMissingStorageError = (error: unknown): boolean => {
+    if (!error || typeof error !== 'object') return false
+    const candidate = error as {
+        code?: unknown
+        status?: unknown
+        statusCode?: unknown
+        response?: { status?: unknown }
+        $metadata?: { httpStatusCode?: unknown }
+    }
+    return (
+        candidate.code === 'ENOENT' ||
+        candidate.status === StatusCodes.NOT_FOUND ||
+        candidate.statusCode === StatusCodes.NOT_FOUND ||
+        candidate.response?.status === StatusCodes.NOT_FOUND ||
+        candidate.$metadata?.httpStatusCode === StatusCodes.NOT_FOUND
+    )
+}
+
+const reconcileDocumentStoreStorageUsage = async (
+    orgId: string,
+    workspaceId: string,
+    usageCacheManager: UsageCacheManager
+): Promise<void> => {
+    const totalBytes = await getStorageSize(orgId)
+    await updateStorageUsage(orgId, workspaceId, totalBytes / BYTES_PER_MEBIBYTE, usageCacheManager)
+}
+
+const failDocumentStoreStorageCleanup = (event: string): never => {
+    logger.error(event, { failedCount: 1, phase: 'storage' })
+    throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store storage cleanup failed')
+}
+
+const removeDocumentStoreLoaderFiles = async (
+    files: IDocumentStoreLoaderFile[],
+    orgId: string,
+    workspaceId: string,
+    storeId: string,
+    usageCacheManager: UsageCacheManager,
+    event: string
+): Promise<void> => {
+    let idempotentMissingCount = 0
+    let accountingFailureCount = 0
+    for (const file of files) {
+        if (!file.name) failDocumentStoreStorageCleanup(event)
+        let totalSize: number
+        try {
+            ;({ totalSize } = await removeSpecificFileFromStorage(orgId, DOCUMENT_STORE_BASE_FOLDER, storeId, file.name))
+        } catch (error) {
+            if (!isConfirmedMissingStorageError(error)) failDocumentStoreStorageCleanup(event)
+            idempotentMissingCount += 1
+            try {
+                await reconcileDocumentStoreStorageUsage(orgId, workspaceId, usageCacheManager)
+            } catch {
+                accountingFailureCount += 1
+            }
+            continue
+        }
+        try {
+            await updateStorageUsage(orgId, workspaceId, totalSize, usageCacheManager)
+        } catch {
+            accountingFailureCount += 1
+        }
+    }
+    if (accountingFailureCount > 0) {
+        logger.error(event, { failedCount: accountingFailureCount, phase: 'accounting' })
+    }
+    if (idempotentMissingCount > 0) {
+        logger.warn(`${event}_idempotent_missing`, { idempotentMissingCount, totalCount: files.length })
+    }
+}
+
+const removeDocumentStoreFolder = async (
+    orgId: string,
+    workspaceId: string,
+    storeId: string,
+    usageCacheManager: UsageCacheManager
+): Promise<void> => {
+    const event = 'document_store_delete_storage_cleanup_failed'
+    let totalSize: number
+    try {
+        ;({ totalSize } = await removeFilesFromStorage(orgId, DOCUMENT_STORE_BASE_FOLDER, storeId))
+    } catch (error) {
+        if (!isConfirmedMissingStorageError(error)) failDocumentStoreStorageCleanup(event)
+        try {
+            await reconcileDocumentStoreStorageUsage(orgId, workspaceId, usageCacheManager)
+        } catch {
+            logger.error(event, { failedCount: 1, phase: 'accounting' })
+        }
+        logger.warn('document_store_delete_storage_idempotent_missing', { idempotentMissingCount: 1, totalCount: 1 })
+        return
+    }
+    try {
+        await updateStorageUsage(orgId, workspaceId, totalSize, usageCacheManager)
+    } catch {
+        logger.error(event, { failedCount: 1, phase: 'accounting' })
+    }
+}
+
+const compensateCreatedDocumentStore = async (
+    appDataSource: DataSource,
+    orgId: string,
+    workspaceId: string,
+    createdDocumentStore: DocumentStoreRevisionIdentity,
+    usageCacheManager: UsageCacheManager
+): Promise<void> => {
+    const storeId = createdDocumentStore.id
+    if (createdDocumentStore.workspaceId !== workspaceId) {
+        throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Document store creation compensation changed concurrently')
+    }
+
+    try {
+        await appDataSource.transaction(async (transactionManager) => {
+            await transactionManager.getRepository(DocumentStoreFileChunk).delete({ storeId })
+            await transactionManager.getRepository(UpsertHistory).delete({ chatflowid: storeId })
+            const deleteResult = await transactionManager
+                .getRepository(DocumentStore)
+                .delete(createDocumentStoreRevisionPredicate(createdDocumentStore))
+            if (deleteResult?.affected !== 1) {
+                throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Document store creation compensation changed concurrently')
+            }
+        })
+    } catch (error) {
+        logger.error('document_store_create_compensation_failed', { failedCount: 1, phase: 'database' })
+        if (error instanceof InternalFlowiseError) throw error
+        await markCreatedDocumentStoreForRecovery(appDataSource, createdDocumentStore, 'compensation')
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store creation compensation requires recovery')
+    }
+
+    // The database deletion is authoritative. Provider cleanup is deliberately
+    // post-commit and best effort; a durable cleanup outbox remains necessary
+    // to guarantee retries for provider or accounting failures.
+    let totalSize: number
+    try {
+        ;({ totalSize } = await removeFilesFromStorage(orgId, DOCUMENT_STORE_BASE_FOLDER, storeId))
+    } catch (error) {
+        if (!isConfirmedMissingStorageError(error)) {
+            logger.error('document_store_create_compensation_cleanup_failed', { failedCount: 1, phase: 'storage' })
+            return
+        }
+        try {
+            await reconcileDocumentStoreStorageUsage(orgId, workspaceId, usageCacheManager)
+        } catch {
+            logger.error('document_store_create_compensation_cleanup_failed', { failedCount: 1, phase: 'accounting' })
+        }
+        return
+    }
+    try {
+        await updateStorageUsage(orgId, workspaceId, totalSize, usageCacheManager)
+    } catch {
+        logger.error('document_store_create_compensation_cleanup_failed', { failedCount: 1, phase: 'accounting' })
+    }
+}
+
+const markCreatedDocumentStoreForRecovery = async (
+    appDataSource: DataSource,
+    operationIdentity: DocumentStoreRevisionIdentity,
+    phase: 'provider' | 'compensation'
+): Promise<void> => {
+    try {
+        const repository = appDataSource.getRepository(DocumentStore)
+        await updateExistingDocumentStore(
+            repository,
+            operationIdentity as DocumentStore,
+            { status: DocumentStoreStatus.STALE },
+            'Document store recovery state changed concurrently'
+        )
+        logger.error('document_store_create_recovery_required', { failedCount: 1, phase })
+    } catch (error) {
+        logger.error('document_store_create_recovery_mark_failed', { failedCount: 1, phase })
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store recovery state update failed')
+    }
+}
+
+export const handleCreatedDocumentStoreFailure = async (
+    appDataSource: DataSource,
+    orgId: string,
+    workspaceId: string,
+    createdDocumentStore: DocumentStoreRevisionIdentity,
+    usageCacheManager: UsageCacheManager,
+    providerSideEffectPossible: boolean
+): Promise<void> => {
+    if (createdDocumentStore.workspaceId !== workspaceId) {
+        throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Document store recovery state changed concurrently')
+    }
+    if (providerSideEffectPossible) {
+        await markCreatedDocumentStoreForRecovery(appDataSource, createdDocumentStore, 'provider')
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store vector upsert requires recovery')
+    }
+    await compensateCreatedDocumentStore(appDataSource, orgId, workspaceId, createdDocumentStore, usageCacheManager)
+}
+
+const getScopedDocumentStore = async (storeId: string, workspaceId: string): Promise<DocumentStore> => {
+    if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store operation is not authorized')
+    const appServer = getRunningExpressApp()
+    const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({ id: storeId, workspaceId })
+    if (!entity) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
+    return entity
+}
+
+const resolveDocumentStoreChatModel = async (
+    selectedChatModel: unknown,
+    workspaceId: string
+): Promise<ReturnType<typeof resolveSafeChatModelSelection>> => {
+    const appServer = getRunningExpressApp()
+    let safeChatModel: ReturnType<typeof resolveSafeChatModelSelection>
+    try {
+        safeChatModel = resolveSafeChatModelSelection(appServer.nodesPool.componentNodes, selectedChatModel)
+    } catch {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid chat model selection')
+    }
+    if (safeChatModel.credentialId) {
+        try {
+            await credentialsService.assertCredentialInWorkspace(safeChatModel.credentialId, workspaceId)
+        } catch {
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Chat model credential not found')
+        }
+    }
+    return safeChatModel
+}
+
+const parseRetrievalOverrides = (value: unknown, persistedConfig: ICommonObject): ICommonObject => {
+    if (value === undefined) return {}
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid vector store query overrides')
+    }
+    const overrides = value as Record<string, unknown>
+    const allowed = new Set(['topK', 'searchType', 'fetchK', 'lambda'])
+    for (const [key, candidate] of Object.entries(overrides)) {
+        if (allowed.has(key)) continue
+        if (Object.prototype.hasOwnProperty.call(persistedConfig, key) && isEqual(candidate, persistedConfig[key])) continue
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid vector store query overrides')
+    }
+
+    const parsed: ICommonObject = {}
+    const parseBoundedInteger = (candidate: unknown, min: number, max: number): number => {
+        const parsedValue = typeof candidate === 'string' && candidate.trim() ? Number(candidate) : candidate
+        if (typeof parsedValue !== 'number' || !Number.isInteger(parsedValue) || parsedValue < min || parsedValue > max) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid vector store query overrides')
+        }
+        return parsedValue
+    }
+    if (overrides.topK !== undefined) parsed.topK = parseBoundedInteger(overrides.topK, 1, 100)
+    if (overrides.fetchK !== undefined) parsed.fetchK = parseBoundedInteger(overrides.fetchK, 1, 500)
+    if (overrides.searchType !== undefined) {
+        if (overrides.searchType !== 'similarity' && overrides.searchType !== 'mmr') {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid vector store query overrides')
+        }
+        parsed.searchType = overrides.searchType
+    }
+    if (overrides.lambda !== undefined) {
+        const lambda = typeof overrides.lambda === 'string' && overrides.lambda.trim() ? Number(overrides.lambda) : overrides.lambda
+        if (typeof lambda !== 'number' || !Number.isFinite(lambda) || lambda < 0 || lambda > 1) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid vector store query overrides')
+        }
+        parsed.lambda = lambda
+    }
+    return parsed
+}
 
 const createDocumentStore = async (newDocumentStore: DocumentStore, orgId: string) => {
     try {
         const appServer = getRunningExpressApp()
 
-        const documentStore = appServer.AppDataSource.getRepository(DocumentStore).create(newDocumentStore)
-        const dbResponse = await appServer.AppDataSource.getRepository(DocumentStore).save(documentStore)
-        await appServer.telemetry.sendTelemetry(
-            'document_store_created',
-            {
-                version: await getAppVersion()
-            },
-            orgId
-        )
+        const repository = appServer.AppDataSource.getRepository(DocumentStore)
+        const documentStore = repository.create({
+            ...getDocumentStoreMutablePatch(newDocumentStore),
+            workspaceId: newDocumentStore.workspaceId,
+            generationId: createDocumentStoreGenerationId()
+        })
+        const dbResponse = await repository.save(documentStore)
+        const telemetryResults = await Promise.allSettled([
+            (async () =>
+                appServer.telemetry.sendTelemetry(
+                    'document_store_created',
+                    {
+                        version: await getAppVersion()
+                    },
+                    orgId
+                ))()
+        ])
+        const failedCount = telemetryResults.filter((result) => result.status === 'rejected').length
+        if (failedCount > 0) {
+            logger.error('document_store_create_observability_failed', {
+                failedCount,
+                totalCount: telemetryResults.length
+            })
+        }
         return dbResponse
-    } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.createDocumentStore - ${getErrorMessage(error)}`
-        )
+    } catch {
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to create document store')
     }
 }
 
@@ -122,9 +677,26 @@ const getAllDocumentStores = async (
     }
 }
 
+const MAX_EXPORT_RELATION_QUERY_IDS = 400
+const MAX_EXPORT_RELATION_ROWS = 10_000
+
 const getAllDocumentFileChunksByDocumentStoreIds = async (documentStoreIds: string[]) => {
     const appServer = getRunningExpressApp()
-    return await appServer.AppDataSource.getRepository(DocumentStoreFileChunk).find({ where: { storeId: In(documentStoreIds) } })
+    const repository = appServer.AppDataSource.getRepository(DocumentStoreFileChunk)
+    const chunks: DocumentStoreFileChunk[] = []
+    for (let index = 0; index < documentStoreIds.length; index += MAX_EXPORT_RELATION_QUERY_IDS) {
+        const batch = documentStoreIds.slice(index, index + MAX_EXPORT_RELATION_QUERY_IDS)
+        const rows = await repository.find({
+            where: { storeId: In(batch) },
+            order: { id: 'ASC' },
+            take: MAX_EXPORT_RELATION_ROWS - chunks.length + 1
+        })
+        if (rows.length > MAX_EXPORT_RELATION_ROWS - chunks.length) {
+            throw new InternalFlowiseError(StatusCodes.UNPROCESSABLE_ENTITY, '文档片段超过单次可恢复导出的安全上限')
+        }
+        chunks.push(...rows)
+    }
+    return chunks
 }
 
 const deleteLoaderFromDocumentStore = async (
@@ -132,60 +704,70 @@ const deleteLoaderFromDocumentStore = async (
     docId: string,
     orgId: string,
     workspaceId: string,
-    usageCacheManager: UsageCacheManager
+    usageCacheManager: UsageCacheManager,
+    operationIdentity: DocumentStoreOperationIdentity
 ) => {
     try {
         const appServer = getRunningExpressApp()
-
-        const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({
-            id: storeId
+        const documentStoreRepository = appServer.AppDataSource.getRepository(DocumentStore)
+        const entity = await documentStoreRepository.findOneBy({
+            id: storeId,
+            workspaceId
         })
         if (!entity) {
-            throw new InternalFlowiseError(
-                StatusCodes.NOT_FOUND,
-                `Error: documentStoreServices.deleteLoaderFromDocumentStore - Document store ${storeId} not found`
-            )
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
         }
+        assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document store loader changed concurrently')
 
-        if (workspaceId) {
-            if (entity?.workspaceId !== workspaceId) {
-                throw new Error('Unauthorized access')
-            }
-        }
-
-        const existingLoaders = JSON.parse(entity.loaders)
+        const originalLoaders = entity.loaders
+        const originalRevision = entity.revision
+        const existingLoaders = JSON.parse(originalLoaders)
+        if (!Array.isArray(existingLoaders)) throw new Error('invalid document store loaders')
         const found = existingLoaders.find((loader: IDocumentStoreLoader) => loader.id === docId)
         if (found) {
+            const remainingLoadersJson = JSON.stringify(existingLoaders.filter((loader: IDocumentStoreLoader) => loader.id !== docId))
+            const deletedEntity = await appServer.AppDataSource.transaction(async (transactionManager) => {
+                await transactionManager.getRepository(DocumentStoreFileChunk).delete({ storeId, docId: found.id })
+                const finalResult = await transactionManager
+                    .getRepository(DocumentStore)
+                    .update(createDocumentStoreRevisionPredicate(entity), {
+                        loaders: remainingLoadersJson,
+                        status: DocumentStoreStatus.STALE
+                    })
+                if (finalResult.affected !== 1) {
+                    throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Document store loader changed concurrently')
+                }
+
+                return {
+                    ...entity,
+                    loaders: remainingLoadersJson,
+                    status: DocumentStoreStatus.STALE,
+                    revision: originalRevision + 1
+                }
+            })
+
             if (found.files?.length) {
-                for (const file of found.files) {
-                    if (file.name) {
-                        try {
-                            const { totalSize } = await removeSpecificFileFromStorage(orgId, DOCUMENT_STORE_BASE_FOLDER, storeId, file.name)
-                            await updateStorageUsage(orgId, workspaceId, totalSize, usageCacheManager)
-                        } catch (error) {
-                            console.error(error)
-                        }
-                    }
+                try {
+                    await removeDocumentStoreLoaderFiles(
+                        found.files,
+                        orgId,
+                        workspaceId,
+                        storeId,
+                        usageCacheManager,
+                        'document_store_loader_delete_storage_cleanup_failed'
+                    )
+                } catch {
+                    // The database transaction is authoritative. A durable
+                    // cleanup outbox is required to retry provider orphans.
                 }
             }
-            const index = existingLoaders.indexOf(found)
-            if (index > -1) {
-                existingLoaders.splice(index, 1)
-            }
-            // remove the chunks
-            await appServer.AppDataSource.getRepository(DocumentStoreFileChunk).delete({ docId: found.id })
-
-            entity.loaders = JSON.stringify(existingLoaders)
-            const results = await appServer.AppDataSource.getRepository(DocumentStore).save(entity)
-            return results
+            return deletedEntity
         } else {
-            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Unable to locate loader in Document Store ${entity.name}`)
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store loader not found')
         }
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.deleteLoaderFromDocumentStore - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to delete document store loader')
     }
 }
 
@@ -291,7 +873,7 @@ const getDocumentStoreFileChunks = async (
         const PAGE_SIZE = 50
         const skip = (pageNo - 1) * PAGE_SIZE
         const take = PAGE_SIZE
-        let whereCondition: any = { docId: docId }
+        let whereCondition: any = { storeId, docId }
         if (docId === 'all') {
             whereCondition = { storeId: storeId }
         }
@@ -319,6 +901,7 @@ const getDocumentStoreFileChunks = async (
             storeName: entity.name,
             description: entity.description,
             workspaceId: entity.workspaceId,
+            versionToken: createDocumentStoreVersionToken(entity),
             docId: docId,
             characters
         }
@@ -332,51 +915,56 @@ const getDocumentStoreFileChunks = async (
     }
 }
 
-const deleteDocumentStore = async (storeId: string, orgId: string, workspaceId: string, usageCacheManager: UsageCacheManager) => {
+const deleteDocumentStore = async (
+    storeId: string,
+    orgId: string,
+    workspaceId: string,
+    usageCacheManager: UsageCacheManager,
+    operationIdentity: DocumentStoreOperationIdentity
+) => {
     try {
         const appServer = getRunningExpressApp()
-
-        const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({
+        const documentStoreRepository = appServer.AppDataSource.getRepository(DocumentStore)
+        const entity = await documentStoreRepository.findOneBy({
             id: storeId,
             workspaceId: workspaceId
         })
         if (!entity) {
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${storeId} not found`)
         }
+        assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document store changed concurrently')
 
-        // delete all the chunks associated with the store
-        await appServer.AppDataSource.getRepository(DocumentStoreFileChunk).delete({
-            storeId: storeId
+        const deletedResult = await appServer.AppDataSource.transaction(async (transactionManager) => {
+            await transactionManager.getRepository(DocumentStoreFileChunk).delete({ storeId })
+            await transactionManager.getRepository(UpsertHistory).delete({ chatflowid: storeId })
+            const deletedStore = await transactionManager.getRepository(DocumentStore).delete(createDocumentStoreRevisionPredicate(entity))
+            if (deletedStore.affected !== 1) {
+                throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Document store changed concurrently')
+            }
+
+            return { deleted: deletedStore.affected }
         })
 
-        // now delete the files associated with the store
         try {
-            const { totalSize } = await removeFilesFromStorage(orgId, DOCUMENT_STORE_BASE_FOLDER, entity.id)
-            await updateStorageUsage(orgId, workspaceId, totalSize, usageCacheManager)
-        } catch (error) {
-            logger.error(`[server]: Error deleting file storage for documentStore ${storeId}`)
+            await removeDocumentStoreFolder(orgId, workspaceId, entity.id, usageCacheManager)
+        } catch {
+            // The database transaction is authoritative. A durable cleanup
+            // outbox is required to retry provider orphans.
         }
-
-        // delete upsert history
-        await appServer.AppDataSource.getRepository(UpsertHistory).delete({
-            chatflowid: storeId
-        })
-
-        // now delete the store
-        const tbd = await appServer.AppDataSource.getRepository(DocumentStore).delete({
-            id: storeId
-        })
-
-        return { deleted: tbd.affected }
+        return deletedResult
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.deleteDocumentStore - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to delete document store')
     }
 }
 
-const deleteDocumentStoreFileChunk = async (storeId: string, docId: string, chunkId: string, workspaceId: string) => {
+const deleteDocumentStoreFileChunk = async (
+    storeId: string,
+    docId: string,
+    chunkId: string,
+    workspaceId: string,
+    operationIdentity: DocumentStoreOperationIdentity
+) => {
     try {
         const appServer = getRunningExpressApp()
         const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({
@@ -386,6 +974,7 @@ const deleteDocumentStoreFileChunk = async (storeId: string, docId: string, chun
         if (!entity) {
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${storeId} not found`)
         }
+        assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document chunk changed concurrently')
         const loaders = JSON.parse(entity.loaders)
         const found = loaders.find((ldr: IDocumentStoreLoader) => ldr.id === docId)
         if (!found) {
@@ -393,36 +982,53 @@ const deleteDocumentStoreFileChunk = async (storeId: string, docId: string, chun
         }
 
         const tbdChunk = await appServer.AppDataSource.getRepository(DocumentStoreFileChunk).findOneBy({
-            id: chunkId
+            id: chunkId,
+            storeId,
+            docId
         })
         if (!tbdChunk) {
-            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document Chunk ${chunkId} not found`)
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document chunk not found')
         }
-        await appServer.AppDataSource.getRepository(DocumentStoreFileChunk).delete(chunkId)
-        found.totalChunks--
-        found.totalChars -= tbdChunk.pageContent.length
-        entity.loaders = JSON.stringify(loaders)
-        await appServer.AppDataSource.getRepository(DocumentStore).save(entity)
+        found.totalChunks = Math.max(0, (found.totalChunks ?? 0) - 1)
+        found.totalChars = Math.max(0, (found.totalChars ?? 0) - tbdChunk.pageContent.length)
+        const loadersJson = JSON.stringify(loaders)
+        await appServer.AppDataSource.transaction(async (transactionManager) => {
+            const deletion = await transactionManager.getRepository(DocumentStoreFileChunk).delete({ id: chunkId, storeId, docId })
+            if (deletion.affected !== 1) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document chunk not found')
+            await updateExistingDocumentStore(
+                transactionManager.getRepository(DocumentStore),
+                entity,
+                { loaders: loadersJson, status: DocumentStoreStatus.STALE },
+                'Document chunk changed concurrently'
+            )
+        })
         return getDocumentStoreFileChunks(appServer.AppDataSource, storeId, docId, workspaceId)
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.deleteDocumentStoreFileChunk - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to delete document chunk')
     }
 }
 
-const deleteVectorStoreFromStore = async (storeId: string, workspaceId: string, docId?: string) => {
+const deleteVectorStoreFromStore = async (
+    storeId: string,
+    workspaceId: string,
+    docId: string | undefined,
+    operationIdentity: DocumentStoreOperationIdentity
+) => {
     try {
         const appServer = getRunningExpressApp()
         const componentNodes = appServer.nodesPool.componentNodes
-
-        const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({
+        const repository = appServer.AppDataSource.getRepository(DocumentStore)
+        const entity = await repository.findOneBy({
             id: storeId,
             workspaceId: workspaceId
         })
         if (!entity) {
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${storeId} not found`)
+        }
+        assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document store vector state changed concurrently')
+        if (entity.status !== DocumentStoreStatus.UPSERTED) {
+            throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Document store vector index is not available')
         }
 
         if (!entity.embeddingConfig) {
@@ -440,55 +1046,86 @@ const deleteVectorStoreFromStore = async (storeId: string, workspaceId: string, 
             )
         }
 
-        const options: ICommonObject = {
-            chatflowid: storeId,
-            appDataSource: appServer.AppDataSource,
-            databaseEntities,
-            logger
+        const embeddingConfig = parsePersistedComponentConfig(entity.embeddingConfig)
+        const vectorStoreConfig = parsePersistedComponentConfig(entity.vectorStoreConfig)
+        const recordManagerConfig = parsePersistedComponentConfig(entity.recordManagerConfig)
+        const resolvedDeleteConfiguration = {
+            storeId: entity.id,
+            embeddingName: embeddingConfig.name,
+            embeddingConfig: embeddingConfig.config,
+            vectorStoreName: vectorStoreConfig.name,
+            vectorStoreConfig: vectorStoreConfig.config,
+            recordManagerName: recordManagerConfig.name,
+            recordManagerConfig: recordManagerConfig.config
+        }
+        await validateDocumentVectorComponents(componentNodes, resolvedDeleteConfiguration, workspaceId, true)
+
+        await updateExistingDocumentStore(
+            repository,
+            entity,
+            { status: DocumentStoreStatus.UPSERTING },
+            'Document store vector state changed concurrently'
+        )
+        const claimedIdentity: DocumentStoreRevisionIdentity = {
+            id: entity.id,
+            workspaceId: entity.workspaceId,
+            generationId: entity.generationId,
+            revision: entity.revision
         }
 
-        // Get Record Manager Instance
-        const recordManagerConfig = JSON.parse(entity.recordManagerConfig)
-        const recordManagerObj = await _createRecordManagerObject(
-            componentNodes,
-            { recordManagerName: recordManagerConfig.name, recordManagerConfig: recordManagerConfig.config },
-            options
-        )
+        try {
+            const options: ICommonObject = {
+                chatflowid: storeId,
+                appDataSource: appServer.AppDataSource,
+                databaseEntities,
+                workspaceId,
+                logger,
+                refreshOAuth2Credential: createWorkspaceOAuth2RefreshCapability(workspaceId)
+            }
 
-        // Get Embeddings Instance
-        const embeddingConfig = JSON.parse(entity.embeddingConfig)
-        const embeddingObj = await _createEmbeddingsObject(
-            componentNodes,
-            { embeddingName: embeddingConfig.name, embeddingConfig: embeddingConfig.config },
-            options
-        )
+            // Get Record Manager Instance
+            const recordManagerObj = await _createRecordManagerObject(componentNodes, resolvedDeleteConfiguration, options)
 
-        // Get Vector Store Node Data
-        const vectorStoreConfig = JSON.parse(entity.vectorStoreConfig)
-        const vStoreNodeData = _createVectorStoreNodeData(
-            componentNodes,
-            { vectorStoreName: vectorStoreConfig.name, vectorStoreConfig: vectorStoreConfig.config },
-            embeddingObj,
-            recordManagerObj
-        )
+            // Get Embeddings Instance
+            const embeddingObj = await _createEmbeddingsObject(componentNodes, resolvedDeleteConfiguration, options)
 
-        // Get Vector Store Instance
-        const vectorStoreObj = await _createVectorStoreObject(
-            componentNodes,
-            { vectorStoreName: vectorStoreConfig.name, vectorStoreConfig: vectorStoreConfig.config },
-            vStoreNodeData
-        )
-        const idsToDelete: string[] = [] // empty ids because we get it dynamically from the record manager
+            // Get Vector Store Node Data
+            const vStoreNodeData = _createVectorStoreNodeData(componentNodes, resolvedDeleteConfiguration, embeddingObj, recordManagerObj)
 
-        // Call the delete method of the vector store
-        if (vectorStoreObj.vectorStoreMethods.delete) {
-            await vectorStoreObj.vectorStoreMethods.delete(vStoreNodeData, idsToDelete, { ...options, docId })
+            // Get Vector Store Instance
+            const vectorStoreObj = await _createVectorStoreObject(componentNodes, resolvedDeleteConfiguration, vStoreNodeData)
+            const idsToDelete: string[] = [] // empty ids because we get it dynamically from the record manager
+
+            // Call the delete method of the vector store
+            if (vectorStoreObj.vectorStoreMethods.delete) {
+                await vectorStoreObj.vectorStoreMethods.delete(vStoreNodeData, idsToDelete, { ...options, docId })
+            }
+        } catch (error) {
+            try {
+                await updateExistingDocumentStore(
+                    repository,
+                    claimedIdentity as DocumentStore,
+                    { status: DocumentStoreStatus.STALE },
+                    'Document store vector state changed concurrently'
+                )
+            } catch (recoveryError) {
+                if (recoveryError instanceof InternalFlowiseError) throw recoveryError
+                throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store vector delete recovery failed')
+            }
+            if (error instanceof InternalFlowiseError && error.statusCode === StatusCodes.CONFLICT) throw error
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store vector deletion failed')
         }
+
+        await updateExistingDocumentStore(
+            repository,
+            entity,
+            { status: DocumentStoreStatus.SYNC },
+            'Document store vector state changed concurrently'
+        )
+        return { deleted: true, versionToken: createDocumentStoreVersionToken(entity) }
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.deleteVectorStoreFromStore - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store vector deletion failed')
     }
 }
 
@@ -498,7 +1135,8 @@ const editDocumentStoreFileChunk = async (
     chunkId: string,
     content: string,
     metadata: ICommonObject,
-    workspaceId: string
+    workspaceId: string,
+    operationIdentity: DocumentStoreOperationIdentity
 ) => {
     try {
         const appServer = getRunningExpressApp()
@@ -509,6 +1147,7 @@ const editDocumentStoreFileChunk = async (
         if (!entity) {
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${storeId} not found`)
         }
+        assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document chunk changed concurrently')
         const loaders = JSON.parse(entity.loaders)
         const found = loaders.find((ldr: IDocumentStoreLoader) => ldr.id === docId)
         if (!found) {
@@ -516,38 +1155,55 @@ const editDocumentStoreFileChunk = async (
         }
 
         const editChunk = await appServer.AppDataSource.getRepository(DocumentStoreFileChunk).findOneBy({
-            id: chunkId
+            id: chunkId,
+            storeId,
+            docId
         })
         if (!editChunk) {
-            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document Chunk ${chunkId} not found`)
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document chunk not found')
         }
-        found.totalChars -= editChunk.pageContent.length
-        editChunk.pageContent = content
-        editChunk.metadata = JSON.stringify(metadata)
-        found.totalChars += content.length
-        await appServer.AppDataSource.getRepository(DocumentStoreFileChunk).save(editChunk)
-        entity.loaders = JSON.stringify(loaders)
-        await appServer.AppDataSource.getRepository(DocumentStore).save(entity)
+        found.totalChars = Math.max(0, (found.totalChars ?? 0) - editChunk.pageContent.length + content.length)
+        const loadersJson = JSON.stringify(loaders)
+        await appServer.AppDataSource.transaction(async (transactionManager) => {
+            const chunkUpdate = await transactionManager
+                .getRepository(DocumentStoreFileChunk)
+                .update({ id: chunkId, storeId, docId }, { pageContent: content, metadata: JSON.stringify(metadata) })
+            if (chunkUpdate.affected !== 1) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document chunk not found')
+            await updateExistingDocumentStore(
+                transactionManager.getRepository(DocumentStore),
+                entity,
+                { loaders: loadersJson, status: DocumentStoreStatus.STALE },
+                'Document chunk changed concurrently'
+            )
+        })
         return getDocumentStoreFileChunks(appServer.AppDataSource, storeId, docId, workspaceId)
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.editDocumentStoreFileChunk - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to edit document chunk')
     }
 }
 
-const updateDocumentStore = async (documentStore: DocumentStore, updatedDocumentStore: DocumentStore) => {
+const updateDocumentStore = async (
+    documentStore: DocumentStore,
+    updatedDocumentStore: DocumentStore,
+    operationIdentity: DocumentStoreOperationIdentity
+) => {
     try {
         const appServer = getRunningExpressApp()
-        const tmpUpdatedDocumentStore = appServer.AppDataSource.getRepository(DocumentStore).merge(documentStore, updatedDocumentStore)
-        const dbResponse = await appServer.AppDataSource.getRepository(DocumentStore).save(tmpUpdatedDocumentStore)
-        return dbResponse
-    } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.updateDocumentStore - ${getErrorMessage(error)}`
+        assertDocumentStoreOperationRevision(documentStore, operationIdentity, 'Document store changed concurrently')
+        const metadataPatch = {
+            ...(updatedDocumentStore.name !== undefined ? { name: updatedDocumentStore.name } : {}),
+            ...(updatedDocumentStore.description !== undefined ? { description: updatedDocumentStore.description } : {})
+        }
+        return await updateExistingDocumentStore(
+            appServer.AppDataSource.getRepository(DocumentStore),
+            documentStore,
+            metadataPatch,
+            'Document store changed concurrently'
         )
+    } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to update document store')
     }
 }
 
@@ -589,6 +1245,16 @@ const _splitIntoChunks = async (
     workspaceId?: string
 ) => {
     try {
+        if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store operation is not authorized')
+        await validateDocumentProcessingComponents(componentNodes, data, workspaceId)
+        const componentOptions: ICommonObject = {
+            appDataSource,
+            databaseEntities,
+            logger,
+            workspaceId,
+            skipVariables: true,
+            refreshOAuth2Credential: createWorkspaceOAuth2RefreshCapability(workspaceId)
+        }
         let splitterInstance = null
         if (data.splitterId && data.splitterConfig && Object.keys(data.splitterConfig).length > 0) {
             const nodeInstanceFilePath = componentNodes[data.splitterId].filePath as string
@@ -598,7 +1264,7 @@ const _splitIntoChunks = async (
                 inputs: { ...data.splitterConfig },
                 id: 'splitter_0'
             }
-            splitterInstance = await newNodeInstance.init(nodeData)
+            splitterInstance = await newNodeInstance.init(nodeData, '', componentOptions)
         }
         if (!data.loaderId) return []
         const nodeInstanceFilePath = componentNodes[data.loaderId].filePath as string
@@ -615,16 +1281,16 @@ const _splitIntoChunks = async (
             databaseEntities,
             logger,
             processRaw: true,
-            workspaceId
+            workspaceId,
+            skipVariables: true,
+            refreshOAuth2Credential: createWorkspaceOAuth2RefreshCapability(workspaceId)
         }
         const docNodeInstance = new nodeModule.nodeClass()
         let docs: IDocument[] = await docNodeInstance.init(nodeData, '', options)
         return docs
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.splitIntoChunks - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to split document store content')
     }
 }
 
@@ -700,6 +1366,7 @@ const previewChunksMiddleware = async (
         const appServer = getRunningExpressApp()
         const appDataSource = appServer.AppDataSource
         const componentNodes = appServer.nodesPool.componentNodes
+        await validateDocumentProcessingComponents(componentNodes, data, workspaceId)
 
         const executeData: IExecutePreviewLoader = {
             appDataSource,
@@ -718,7 +1385,7 @@ const previewChunksMiddleware = async (
             logger.debug(`[server]: [${orgId}]: Job added to queue: ${job.id}`)
 
             const queueEvents = upsertQueue.getQueueEvents()
-            const result = await job.waitUntilFinished(queueEvents)
+            const result = await waitForDocumentStoreQueueResult<any>(job, queueEvents)
 
             if (!result) {
                 throw new Error('Job execution failed')
@@ -740,6 +1407,7 @@ const previewChunksMiddleware = async (
 
 export const previewChunks = async ({ appDataSource, componentNodes, data, orgId, workspaceId }: IExecutePreviewLoader) => {
     try {
+        await validateDocumentProcessingComponents(componentNodes, data, workspaceId)
         if (data.preview) {
             if (
                 data.loaderId === 'cheerioWebScraper' ||
@@ -776,8 +1444,9 @@ export const previewChunks = async ({ appDataSource, componentNodes, data, orgId
 const saveProcessingLoader = async (
     appDataSource: DataSource,
     data: IDocumentStoreLoaderForPreview,
-    workspaceId: string
-): Promise<IDocumentStoreLoader> => {
+    workspaceId: string,
+    operationRevision?: DocumentStoreOperationIdentity
+): Promise<IDocumentStoreLoaderResponse> => {
     try {
         const entity = await appDataSource.getRepository(DocumentStore).findOneBy({
             id: data.storeId,
@@ -789,9 +1458,23 @@ const saveProcessingLoader = async (
                 `Error: documentStoreServices.saveProcessingLoader - Document store ${data.storeId} not found`
             )
         }
+        assertDocumentStoreOperationRevision(entity, operationRevision, 'Document store loader changed concurrently')
         const existingLoaders = JSON.parse(entity.loaders)
-        const newDocLoaderId = data.id ?? uuidv4()
+        const newDocLoaderId = data.id || uuidv4()
         const found = existingLoaders.find((ldr: IDocumentStoreLoader) => ldr.id === newDocLoaderId)
+        if (data.id && !found) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Document store loader update is invalid')
+        }
+        if (found) {
+            if (!data.loaderId) data.loaderId = found.loaderId
+            if (!data.loaderName) data.loaderName = found.loaderName
+            if (!data.loaderConfig) data.loaderConfig = found.loaderConfig
+            if (!data.splitterId) data.splitterId = found.splitterId
+            if (!data.splitterName) data.splitterName = found.splitterName
+            if (!data.splitterConfig) data.splitterConfig = found.splitterConfig
+            if (found.credential) data.credential = found.credential
+        }
+        await validateDocumentProcessingComponents(getRunningExpressApp().nodesPool.componentNodes, data, workspaceId)
         if (found) {
             const foundIndex = existingLoaders.findIndex((ldr: IDocumentStoreLoader) => ldr.id === newDocLoaderId)
 
@@ -842,20 +1525,40 @@ const saveProcessingLoader = async (
             existingLoaders.push(loader)
             entity.loaders = JSON.stringify(existingLoaders)
         }
-        await appDataSource.getRepository(DocumentStore).save(entity)
+        await updateExistingDocumentStore(
+            appDataSource.getRepository(DocumentStore),
+            entity,
+            { loaders: entity.loaders, status: DocumentStoreStatus.STALE },
+            'Document store loader changed concurrently'
+        )
+        advanceDocumentStoreOperationRevision(operationRevision, entity)
         const newLoaders = JSON.parse(entity.loaders)
         const newLoader = newLoaders.find((ldr: IDocumentStoreLoader) => ldr.id === newDocLoaderId)
         if (!newLoader) {
             throw new Error(`Loader ${newDocLoaderId} not found`)
         }
         newLoader.source = addLoaderSource(newLoader, true)
+        newLoader.versionToken = createDocumentStoreVersionToken(entity)
         return newLoader
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.saveProcessingLoader - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to save document store loader')
     }
+}
+
+const markDocumentStoreMaterializationStale = async (
+    appDataSource: DataSource,
+    entity: DocumentStore,
+    operationIdentity?: DocumentStoreOperationIdentity
+): Promise<void> => {
+    if (entity.status === DocumentStoreStatus.STALE) return
+    await updateExistingDocumentStore(
+        appDataSource.getRepository(DocumentStore),
+        entity,
+        { status: DocumentStoreStatus.STALE },
+        'Document store loader changed concurrently'
+    )
+    advanceDocumentStoreOperationRevision(operationIdentity, entity)
 }
 
 export const processLoader = async ({
@@ -866,7 +1569,8 @@ export const processLoader = async ({
     orgId,
     workspaceId,
     subscriptionId,
-    usageCacheManager
+    usageCacheManager,
+    operationIdentity
 }: IExecuteProcessLoader) => {
     const entity = await appDataSource.getRepository(DocumentStore).findOneBy({
         id: data.storeId,
@@ -878,6 +1582,9 @@ export const processLoader = async ({
             `Error: documentStoreServices.processLoader - Document store ${data.storeId} not found`
         )
     }
+    assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document store loader changed concurrently')
+    await validateDocumentProcessingComponents(componentNodes, data, workspaceId)
+    await markDocumentStoreMaterializationStale(appDataSource, entity, operationIdentity)
     await _saveChunksToStorage(
         appDataSource,
         componentNodes,
@@ -887,7 +1594,8 @@ export const processLoader = async ({
         orgId,
         workspaceId,
         subscriptionId,
-        usageCacheManager
+        usageCacheManager,
+        operationIdentity
     )
     return getDocumentStoreFileChunks(appDataSource, data.storeId as string, docLoaderId, workspaceId)
 }
@@ -899,13 +1607,19 @@ const processLoaderMiddleware = async (
     workspaceId: string,
     subscriptionId: string,
     usageCacheManager: UsageCacheManager,
-    isInternalRequest = false
+    isInternalRequest: boolean,
+    operationIdentity: DocumentStoreOperationIdentity
 ) => {
     try {
         const appServer = getRunningExpressApp()
         const appDataSource = appServer.AppDataSource
         const componentNodes = appServer.nodesPool.componentNodes
         const telemetry = appServer.telemetry
+        const entity = await appDataSource.getRepository(DocumentStore).findOneBy({ id: data.storeId, workspaceId })
+        if (!entity) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
+        assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document store loader changed concurrently')
+        await validateDocumentProcessingComponents(componentNodes, data, workspaceId)
+        await markDocumentStoreMaterializationStale(appDataSource, entity, operationIdentity)
 
         const executeData: IExecuteProcessLoader = {
             appDataSource,
@@ -917,7 +1631,8 @@ const processLoaderMiddleware = async (
             orgId,
             workspaceId,
             subscriptionId,
-            usageCacheManager
+            usageCacheManager,
+            operationIdentity
         }
 
         if (process.env.MODE === MODE.QUEUE) {
@@ -927,12 +1642,13 @@ const processLoaderMiddleware = async (
 
             if (isInternalRequest) {
                 return {
-                    jobId: job.id
+                    jobId: job.id,
+                    acceptedVersionToken: createDocumentStoreVersionTokenFromClaim(operationIdentity)
                 }
             }
 
             const queueEvents = upsertQueue.getQueueEvents()
-            const result = await job.waitUntilFinished(queueEvents)
+            const result = await waitForDocumentStoreQueueResult<any>(job, queueEvents)
 
             if (!result) {
                 throw new Error('Job execution failed')
@@ -942,10 +1658,8 @@ const processLoaderMiddleware = async (
 
         return await processLoader(executeData)
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.processLoader - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to process document store loader')
     }
 }
 
@@ -958,7 +1672,8 @@ const _saveChunksToStorage = async (
     orgId: string,
     workspaceId: string,
     subscriptionId: string,
-    usageCacheManager: UsageCacheManager
+    usageCacheManager: UsageCacheManager,
+    operationRevision?: DocumentStoreOperationIdentity
 ) => {
     const re = new RegExp('^data.*;base64', 'i')
 
@@ -984,24 +1699,17 @@ const _saveChunksToStorage = async (
         if (data.id) {
             const index = existingLoaders.indexOf(loader)
             if (index > -1) {
-                existingLoaders.splice(index, 1)
-                if (!data.rehydrated) {
-                    if (loader.files) {
-                        loader.files.map(async (file: IDocumentStoreLoaderFile) => {
-                            try {
-                                const { totalSize } = await removeSpecificFileFromStorage(
-                                    orgId,
-                                    DOCUMENT_STORE_BASE_FOLDER,
-                                    entity.id,
-                                    file.name
-                                )
-                                await updateStorageUsage(orgId, workspaceId, totalSize, usageCacheManager)
-                            } catch (error) {
-                                console.error(error)
-                            }
-                        })
-                    }
+                if (!data.rehydrated && loader.files?.length) {
+                    await removeDocumentStoreLoaderFiles(
+                        loader.files,
+                        orgId,
+                        workspaceId,
+                        entity.id,
+                        usageCacheManager,
+                        'document_store_loader_replace_storage_cleanup_failed'
+                    )
                 }
+                existingLoaders.splice(index, 1)
             }
         }
 
@@ -1050,36 +1758,23 @@ const _saveChunksToStorage = async (
             existingLoaders.push(loader)
         }
 
-        //step 7: remove all previous chunks
-        await appDataSource.getRepository(DocumentStoreFileChunk).delete({ docId: newLoaderId })
+        const replacementChunks: DocumentStoreFileChunk[] = []
         if (response.chunks) {
-            //step 8: now save the new chunks
             const totalChars = response.chunks.reduce((acc, chunk) => {
                 if (chunk.pageContent) {
                     return acc + chunk.pageContent.length
                 }
                 return acc
             }, 0)
-            await Promise.all(
-                response.chunks.map(async (chunk: IDocument, index: number) => {
-                    try {
-                        const docChunk: DocumentStoreFileChunk = {
-                            docId: newLoaderId,
-                            storeId: data.storeId || '',
-                            id: uuidv4(),
-                            chunkNo: index + 1,
-                            pageContent: sanitizeChunkContent(chunk.pageContent),
-                            metadata: JSON.stringify(chunk.metadata)
-                        }
-                        const dChunk = appDataSource.getRepository(DocumentStoreFileChunk).create(docChunk)
-                        await appDataSource.getRepository(DocumentStoreFileChunk).save(dChunk)
-                    } catch (chunkError) {
-                        throw new InternalFlowiseError(
-                            StatusCodes.INTERNAL_SERVER_ERROR,
-                            `Error: documentStoreServices._saveChunksToStorage - ${getErrorMessage(chunkError)}`
-                        )
-                    }
-                })
+            replacementChunks.push(
+                ...response.chunks.map((chunk: IDocument, index: number) => ({
+                    docId: newLoaderId,
+                    storeId: entity.id,
+                    id: uuidv4(),
+                    chunkNo: index + 1,
+                    pageContent: sanitizeChunkContent(chunk.pageContent),
+                    metadata: JSON.stringify(chunk.metadata)
+                }))
             )
             // update the loader with the new metrics
             loader.totalChunks = response.totalChunks
@@ -1088,18 +1783,30 @@ const _saveChunksToStorage = async (
         loader.status = 'SYNC'
         // have a flag and iterate over the loaders and update the entity status to SYNC
         const allSynced = existingLoaders.every((ldr: IDocumentStoreLoader) => ldr.status === 'SYNC')
-        entity.status = allSynced ? DocumentStoreStatus.SYNC : DocumentStoreStatus.STALE
-        entity.loaders = JSON.stringify(existingLoaders)
+        const status = allSynced ? DocumentStoreStatus.SYNC : DocumentStoreStatus.STALE
+        const loadersJson = JSON.stringify(existingLoaders)
 
-        //step 9: update the entity in the database
-        await appDataSource.getRepository(DocumentStore).save(entity)
+        // Replace all child chunks and advance the parent revision atomically.
+        // A stale parent rolls back both the delete and every inserted chunk.
+        await appDataSource.transaction(async (transactionManager) => {
+            const chunkRepository = transactionManager.getRepository(DocumentStoreFileChunk)
+            await chunkRepository.delete({ storeId: entity.id, docId: newLoaderId })
+            for (const chunk of replacementChunks) {
+                await chunkRepository.save(chunkRepository.create(chunk))
+            }
+            await updateExistingDocumentStore(
+                transactionManager.getRepository(DocumentStore),
+                entity,
+                { loaders: loadersJson, status },
+                'Document store loader changed concurrently'
+            )
+        })
+        advanceDocumentStoreOperationRevision(operationRevision, entity)
 
         return
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices._saveChunksToStorage - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to save document store chunks')
     }
 }
 
@@ -1111,11 +1818,9 @@ const sanitizeChunkContent = (content: string) => {
 
 // Get all component nodes
 const getDocumentLoaders = async () => {
-    const removeDocumentLoadersWithName = ['documentStore', 'vectorStoreToDocument', 'unstructuredFolderLoader', 'folderFiles']
-
     try {
         const dbResponse = await nodesService.getAllNodesForCategory('Document Loaders')
-        return dbResponse.filter((node) => !removeDocumentLoadersWithName.includes(node.name))
+        return dbResponse.filter((node) => !DOCUMENT_STORE_DENIED_LOADERS.has(node.name))
     } catch (error) {
         throw new InternalFlowiseError(
             StatusCodes.INTERNAL_SERVER_ERROR,
@@ -1124,53 +1829,21 @@ const getDocumentLoaders = async () => {
     }
 }
 
-const updateDocumentStoreUsage = async (chatId: string, storeId: string | undefined, workspaceId?: string) => {
+const updateDocumentStoreUsage = async (chatId: string, storeIds: string | string[] | undefined, workspaceId?: string) => {
     try {
-        // find the document store
+        if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store operation is not authorized')
         const appServer = getRunningExpressApp()
-        // find all entities that have the chatId in their whereUsed
-        const entities = await appServer.AppDataSource.getRepository(DocumentStore).findBy(getWorkspaceSearchOptions(workspaceId))
-        entities.map(async (entity: DocumentStore) => {
-            const whereUsed = JSON.parse(entity.whereUsed)
-            const found = whereUsed.find((w: string) => w === chatId)
-            if (found) {
-                if (!storeId) {
-                    // remove the chatId from the whereUsed, as the store is being deleted
-                    const index = whereUsed.indexOf(chatId)
-                    if (index > -1) {
-                        whereUsed.splice(index, 1)
-                        entity.whereUsed = JSON.stringify(whereUsed)
-                        await appServer.AppDataSource.getRepository(DocumentStore).save(entity)
-                    }
-                } else if (entity.id === storeId) {
-                    // do nothing, already found and updated
-                } else if (entity.id !== storeId) {
-                    // remove the chatId from the whereUsed, as a new store is being used
-                    const index = whereUsed.indexOf(chatId)
-                    if (index > -1) {
-                        whereUsed.splice(index, 1)
-                        entity.whereUsed = JSON.stringify(whereUsed)
-                        await appServer.AppDataSource.getRepository(DocumentStore).save(entity)
-                    }
-                }
-            } else {
-                if (entity.id === storeId) {
-                    // add the chatId to the whereUsed
-                    whereUsed.push(chatId)
-                    entity.whereUsed = JSON.stringify(whereUsed)
-                    await appServer.AppDataSource.getRepository(DocumentStore).save(entity)
-                }
-            }
-        })
-    } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.updateDocumentStoreUsage - ${getErrorMessage(error)}`
+        await appServer.AppDataSource.transaction((transactionManager) =>
+            updateDocumentStoreUsageWithManager(transactionManager, chatId, storeIds, workspaceId)
         )
+    } catch (error) {
+        logger.error('[server]: Document store usage update failed', { failedCount: 1 })
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Unable to update document store usage')
     }
 }
 
-const updateVectorStoreConfigOnly = async (data: ICommonObject, workspaceId: string) => {
+const updateVectorStoreConfigOnly = async (data: ICommonObject, workspaceId: string, operationIdentity: DocumentStoreOperationIdentity) => {
     try {
         const appServer = getRunningExpressApp()
         const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({
@@ -1180,22 +1853,30 @@ const updateVectorStoreConfigOnly = async (data: ICommonObject, workspaceId: str
         if (!entity) {
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${data.storeId} not found`)
         }
+        assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document store vector configuration changed concurrently')
+        if (data.vectorStoreName || data.vectorStoreConfig) {
+            await validateDocumentVectorComponents(appServer.nodesPool.componentNodes, data, workspaceId, false)
+        }
 
         if (data.vectorStoreName) {
-            entity.vectorStoreConfig = JSON.stringify({
+            const nextVectorStoreConfig = JSON.stringify({
                 config: data.vectorStoreConfig,
                 name: data.vectorStoreName
             })
+            if (arePersistedComponentConfigsEquivalent(entity.vectorStoreConfig, nextVectorStoreConfig)) return entity
 
-            const updatedEntity = await appServer.AppDataSource.getRepository(DocumentStore).save(entity)
-            return updatedEntity
+            return await updateExistingDocumentStore(
+                appServer.AppDataSource.getRepository(DocumentStore),
+                entity,
+                { vectorStoreConfig: nextVectorStoreConfig, status: DocumentStoreStatus.STALE },
+                'Document store vector configuration changed concurrently'
+            )
         }
-        return {}
+        return entity
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.updateVectorStoreConfig - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        logger.error('document_store_vector_configuration_update_failed', { failedCount: 1 })
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to update document store vector configuration')
     }
 }
 /**
@@ -1210,15 +1891,29 @@ const updateVectorStoreConfigOnly = async (data: ICommonObject, workspaceId: str
  * // Lenient mode: Reuse existing configs if not provided
  * await saveVectorStoreConfig(ds, { storeId, vectorStoreName, vectorStoreConfig }, false, wsId)
  */
-const saveVectorStoreConfig = async (appDataSource: DataSource, data: ICommonObject, isStrictSave = true, workspaceId: string) => {
+const saveVectorStoreConfig = async (
+    appDataSource: DataSource,
+    data: ICommonObject,
+    isStrictSave = true,
+    workspaceId: string,
+    requireCoreComponents = false,
+    operationRevision?: DocumentStoreOperationIdentity
+) => {
     try {
-        const entity = await appDataSource.getRepository(DocumentStore).findOneBy({
-            id: data.storeId,
-            workspaceId: workspaceId
-        })
-        if (!entity) {
-            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${data.storeId} not found`)
-        }
+        const componentNodes = getRunningExpressApp().nodesPool.componentNodes
+        const { entity } = await validateResolvedDocumentVectorComponents(
+            appDataSource,
+            componentNodes,
+            data.storeId,
+            data,
+            workspaceId,
+            requireCoreComponents,
+            operationRevision
+        )
+
+        const previousEmbeddingConfig = entity.embeddingConfig
+        const previousVectorStoreConfig = entity.vectorStoreConfig
+        const previousRecordManagerConfig = entity.recordManagerConfig
 
         if (data.embeddingName) {
             entity.embeddingConfig = JSON.stringify({
@@ -1259,19 +1954,220 @@ const saveVectorStoreConfig = async (appDataSource: DataSource, data: ICommonObj
             entity.recordManagerConfig = null
         }
 
-        if (entity.status !== DocumentStoreStatus.UPSERTED && (data.vectorStoreName || data.recordManagerName || data.embeddingName)) {
-            // if the store is not already in sync, mark it as sync
-            // this also means that the store is not yet sync'ed to vector store
-            entity.status = DocumentStoreStatus.SYNC
-        }
-        await appDataSource.getRepository(DocumentStore).save(entity)
-        return entity
-    } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.saveVectorStoreConfig - ${getErrorMessage(error)}`
+        const embeddingConfigurationChanged = !arePersistedComponentConfigsEquivalent(previousEmbeddingConfig, entity.embeddingConfig)
+        const vectorStoreConfigurationChanged = !arePersistedComponentConfigsEquivalent(previousVectorStoreConfig, entity.vectorStoreConfig)
+        const recordManagerConfigurationChanged = !arePersistedComponentConfigsEquivalent(
+            previousRecordManagerConfig,
+            entity.recordManagerConfig
         )
+        const vectorConfigurationChanged =
+            embeddingConfigurationChanged || vectorStoreConfigurationChanged || recordManagerConfigurationChanged
+        if (!embeddingConfigurationChanged) entity.embeddingConfig = previousEmbeddingConfig
+        if (!vectorStoreConfigurationChanged) entity.vectorStoreConfig = previousVectorStoreConfig
+        if (!recordManagerConfigurationChanged) entity.recordManagerConfig = previousRecordManagerConfig
+        if (!vectorConfigurationChanged) return entity
+
+        entity.status = DocumentStoreStatus.STALE
+        const updatedEntity = await updateExistingDocumentStore(
+            appDataSource.getRepository(DocumentStore),
+            entity,
+            {
+                embeddingConfig: entity.embeddingConfig,
+                vectorStoreConfig: entity.vectorStoreConfig,
+                recordManagerConfig: entity.recordManagerConfig,
+                status: entity.status
+            },
+            'Document store vector configuration changed concurrently'
+        )
+        advanceDocumentStoreOperationRevision(operationRevision, updatedEntity)
+        return updatedEntity
+    } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to save document store vector configuration')
     }
+}
+
+const SAFE_PROVIDER_MAX_DEPTH = 8
+const SAFE_PROVIDER_MAX_NODES = 4096
+const SAFE_PROVIDER_MAX_STRING_CHARS = 1024 * 1024
+const SAFE_PROVIDER_MAX_CONTAINER_ENTRIES = 512
+const SAFE_PROVIDER_MAX_DOCUMENTS = 1000
+const SAFE_PROVIDER_MAX_QUERY_DOCUMENTS = 100
+const SAFE_PROVIDER_MAX_KEY_LENGTH = 256
+
+interface SafeProviderCloneBudget {
+    nodesRemaining: number
+    stringCharsRemaining: number
+}
+
+const createSafeProviderCloneBudget = (): SafeProviderCloneBudget => ({
+    nodesRemaining: SAFE_PROVIDER_MAX_NODES,
+    stringCharsRemaining: SAFE_PROVIDER_MAX_STRING_CHARS
+})
+
+const getOwnDataDescriptor = (source: unknown, key: PropertyKey): PropertyDescriptor | undefined => {
+    if ((typeof source !== 'object' && typeof source !== 'function') || source === null) return undefined
+    try {
+        const descriptor = Object.getOwnPropertyDescriptor(source, key)
+        return descriptor && 'value' in descriptor ? descriptor : undefined
+    } catch {
+        return undefined
+    }
+}
+
+const isSafePlainProviderObject = (value: unknown): value is Record<string, unknown> => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+    try {
+        const prototype = Object.getPrototypeOf(value)
+        return prototype === Object.prototype || prototype === null
+    } catch {
+        return false
+    }
+}
+
+const cloneSafeProviderValue = (value: unknown, budget: SafeProviderCloneBudget, depth: number, ancestors: WeakSet<object>): unknown => {
+    if (budget.nodesRemaining <= 0 || depth > SAFE_PROVIDER_MAX_DEPTH) return undefined
+    budget.nodesRemaining -= 1
+
+    if (value === null || typeof value === 'boolean') return value
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+    if (typeof value === 'string') {
+        if (budget.stringCharsRemaining <= 0) return ''
+        const safeValue = value.slice(0, budget.stringCharsRemaining)
+        budget.stringCharsRemaining -= safeValue.length
+        return safeValue
+    }
+    if (typeof value !== 'object' || value === null) return undefined
+    if (ancestors.has(value)) return undefined
+
+    if (Array.isArray(value)) {
+        const lengthDescriptor = getOwnDataDescriptor(value, 'length')
+        const length = lengthDescriptor?.value
+        if (!Number.isSafeInteger(length) || length < 0) return []
+        const result: unknown[] = []
+        ancestors.add(value)
+        const limit = Math.min(length, SAFE_PROVIDER_MAX_CONTAINER_ENTRIES)
+        for (let index = 0; index < limit && budget.nodesRemaining > 0; index += 1) {
+            const descriptor = getOwnDataDescriptor(value, String(index))
+            const cloned = descriptor ? cloneSafeProviderValue(descriptor.value, budget, depth + 1, ancestors) : undefined
+            result.push(cloned === undefined ? null : cloned)
+        }
+        ancestors.delete(value)
+        return result
+    }
+
+    if (!isSafePlainProviderObject(value)) return undefined
+    let keys: string[]
+    try {
+        keys = Object.getOwnPropertyNames(value)
+    } catch {
+        return undefined
+    }
+    if (keys.length > SAFE_PROVIDER_MAX_CONTAINER_ENTRIES) return {}
+    const result: Record<string, unknown> = {}
+    ancestors.add(value)
+    let acceptedEntries = 0
+    for (const key of keys) {
+        if (acceptedEntries >= SAFE_PROVIDER_MAX_CONTAINER_ENTRIES || budget.nodesRemaining <= 0) break
+        if (key.length > SAFE_PROVIDER_MAX_KEY_LENGTH || key === '__proto__' || key === 'prototype' || key === 'constructor') {
+            continue
+        }
+        const descriptor = getOwnDataDescriptor(value, key)
+        if (!descriptor?.enumerable) continue
+        const cloned = cloneSafeProviderValue(descriptor.value, budget, depth + 1, ancestors)
+        if (cloned === undefined) continue
+        Object.defineProperty(result, key, { value: cloned, enumerable: true, configurable: true, writable: true })
+        acceptedEntries += 1
+    }
+    ancestors.delete(value)
+    return result
+}
+
+const createSafeVectorStoreStats = (value: unknown): Record<string, number> => {
+    const stats: Record<string, number> = {}
+    for (const field of ['numAdded', 'numUpdated', 'numSkipped', 'numDeleted'] as const) {
+        const descriptor = getOwnDataDescriptor(value, field)
+        const count = descriptor?.value
+        if (typeof count === 'number' && Number.isSafeInteger(count) && count >= 0) stats[field] = count
+    }
+    return stats
+}
+
+export const createSafeVectorStoreResult = (indexResult: unknown): ICommonObject => {
+    const fallback = { result: 'Successfully Upserted' }
+    try {
+        if ((typeof indexResult !== 'object' && typeof indexResult !== 'function') || indexResult === null) return fallback
+        const safeResult: ICommonObject = createSafeVectorStoreStats(indexResult)
+
+        const addedDocsDescriptor = getOwnDataDescriptor(indexResult, 'addedDocs')
+        if (addedDocsDescriptor && Array.isArray(addedDocsDescriptor.value)) {
+            const documents = addedDocsDescriptor.value
+            const lengthDescriptor = getOwnDataDescriptor(documents, 'length')
+            const length = lengthDescriptor?.value
+            const safeDocuments: Array<{ pageContent: string; metadata: Record<string, unknown> }> = []
+            const budget = createSafeProviderCloneBudget()
+            if (Number.isSafeInteger(length) && length >= 0) {
+                const limit = Math.min(length, SAFE_PROVIDER_MAX_DOCUMENTS)
+                for (let index = 0; index < limit && budget.nodesRemaining > 0; index += 1) {
+                    const documentDescriptor = getOwnDataDescriptor(documents, String(index))
+                    const document = documentDescriptor?.value
+                    if ((typeof document !== 'object' && typeof document !== 'function') || document === null) continue
+                    const pageContentDescriptor = getOwnDataDescriptor(document, 'pageContent')
+                    const metadataDescriptor = getOwnDataDescriptor(document, 'metadata')
+                    const pageContent = pageContentDescriptor
+                        ? cloneSafeProviderValue(pageContentDescriptor.value, budget, 0, new WeakSet())
+                        : undefined
+                    const metadata = metadataDescriptor
+                        ? cloneSafeProviderValue(metadataDescriptor.value, budget, 0, new WeakSet())
+                        : undefined
+                    safeDocuments.push({
+                        pageContent: typeof pageContent === 'string' ? pageContent : '',
+                        metadata: isSafePlainProviderObject(metadata) ? metadata : {}
+                    })
+                }
+            }
+            safeResult.addedDocs = safeDocuments
+        }
+        if (Object.keys(safeResult).length === 0) return fallback
+        return safeResult
+    } catch {
+        return fallback
+    }
+}
+
+export const createSafeVectorQueryDocuments = (
+    providerResults: unknown
+): Array<{ pageContent: string; metadata: Record<string, unknown> }> => {
+    const safeDocuments: Array<{ pageContent: string; metadata: Record<string, unknown> }> = []
+    try {
+        if (!Array.isArray(providerResults)) return safeDocuments
+        const lengthDescriptor = getOwnDataDescriptor(providerResults, 'length')
+        const length = lengthDescriptor?.value
+        if (!Number.isSafeInteger(length) || length < 0) return safeDocuments
+
+        const budget = createSafeProviderCloneBudget()
+        const limit = Math.min(length, SAFE_PROVIDER_MAX_QUERY_DOCUMENTS)
+        for (let index = 0; index < limit && budget.nodesRemaining > 0; index += 1) {
+            const documentDescriptor = getOwnDataDescriptor(providerResults, String(index))
+            const document = documentDescriptor?.value
+            if ((typeof document !== 'object' && typeof document !== 'function') || document === null) continue
+
+            const pageContentDescriptor = getOwnDataDescriptor(document, 'pageContent')
+            const metadataDescriptor = getOwnDataDescriptor(document, 'metadata')
+            const pageContent = pageContentDescriptor
+                ? cloneSafeProviderValue(pageContentDescriptor.value, budget, 0, new WeakSet())
+                : undefined
+            if (typeof pageContent !== 'string') continue
+            const metadata = metadataDescriptor ? cloneSafeProviderValue(metadataDescriptor.value, budget, 0, new WeakSet()) : undefined
+            safeDocuments.push({
+                pageContent,
+                metadata: isSafePlainProviderObject(metadata) ? metadata : {}
+            })
+        }
+    } catch {
+        return safeDocuments
+    }
+    return safeDocuments
 }
 
 /**
@@ -1283,32 +2179,39 @@ const saveVectorStoreConfig = async (appDataSource: DataSource, data: ICommonObj
  * 3. Performs the actual vector store upsert operation
  * 4. Updates status to UPSERTED upon completion
  */
-export const insertIntoVectorStore = async ({
-    appDataSource,
-    componentNodes,
-    telemetry,
-    data,
-    isStrictSave,
-    orgId,
-    workspaceId
-}: IExecuteVectorStoreInsert) => {
+export const insertIntoVectorStore = async (
+    { appDataSource, componentNodes, telemetry, data, isStrictSave, orgId, workspaceId, operationIdentity }: IExecuteVectorStoreInsert,
+    onProviderUpsertAttempt?: () => void
+): Promise<ICommonObject> => {
     try {
         // Step 1: Save configuration based on isStrictSave mode
-        const entity = await saveVectorStoreConfig(appDataSource, data, isStrictSave, workspaceId)
+        const entity = await saveVectorStoreConfig(appDataSource, data, isStrictSave, workspaceId, true, operationIdentity)
 
         // Step 2: Mark as UPSERTING before starting the operation
-        entity.status = DocumentStoreStatus.UPSERTING
-        await appDataSource.getRepository(DocumentStore).save(entity)
+        await updateExistingDocumentStore(
+            appDataSource.getRepository(DocumentStore),
+            entity,
+            { status: DocumentStoreStatus.UPSERTING },
+            'Document store vector state changed concurrently'
+        )
+        advanceDocumentStoreOperationRevision(operationIdentity, entity)
 
         // Step 3: Perform the actual vector store upsert
         // Note: Configuration already saved above, worker thread just retrieves and uses it
-        const indexResult = await _insertIntoVectorStoreWorkerThread(appDataSource, componentNodes, telemetry, data, orgId, workspaceId)
+        const indexResult = await _insertIntoVectorStoreWorkerThread(
+            appDataSource,
+            componentNodes,
+            telemetry,
+            data,
+            orgId,
+            workspaceId,
+            onProviderUpsertAttempt,
+            operationIdentity
+        )
         return indexResult
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.insertIntoVectorStore - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to insert document store vectors')
     }
 }
 
@@ -1318,13 +2221,23 @@ const insertIntoVectorStoreMiddleware = async (
     orgId: string,
     workspaceId: string,
     subscriptionId: string,
-    usageCacheManager: UsageCacheManager
+    usageCacheManager: UsageCacheManager,
+    operationIdentity: DocumentStoreOperationIdentity
 ) => {
     try {
         const appServer = getRunningExpressApp()
         const appDataSource = appServer.AppDataSource
         const componentNodes = appServer.nodesPool.componentNodes
         const telemetry = appServer.telemetry
+        await validateResolvedDocumentVectorComponents(
+            appDataSource,
+            componentNodes,
+            data.storeId,
+            data,
+            workspaceId,
+            true,
+            operationIdentity
+        )
 
         const executeData: IExecuteVectorStoreInsert = {
             appDataSource,
@@ -1336,7 +2249,8 @@ const insertIntoVectorStoreMiddleware = async (
             orgId,
             workspaceId,
             subscriptionId,
-            usageCacheManager
+            usageCacheManager,
+            operationIdentity
         }
 
         if (process.env.MODE === MODE.QUEUE) {
@@ -1345,7 +2259,7 @@ const insertIntoVectorStoreMiddleware = async (
             logger.debug(`[server]: [${orgId}]: Job added to queue: ${job.id}`)
 
             const queueEvents = upsertQueue.getQueueEvents()
-            const result = await job.waitUntilFinished(queueEvents)
+            const result = await waitForDocumentStoreQueueResult<any>(job, queueEvents)
 
             if (!result) {
                 throw new Error('Job execution failed')
@@ -1355,10 +2269,8 @@ const insertIntoVectorStoreMiddleware = async (
             return await insertIntoVectorStore(executeData)
         }
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.insertIntoVectorStoreMiddleware - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store vector insertion failed')
     }
 }
 
@@ -1368,17 +2280,11 @@ const _insertIntoVectorStoreWorkerThread = async (
     telemetry: Telemetry,
     data: ICommonObject,
     orgId: string,
-    workspaceId: string
+    workspaceId: string,
+    onProviderUpsertAttempt?: () => void,
+    operationRevision?: DocumentStoreOperationIdentity
 ) => {
     try {
-        // Configuration already saved by insertIntoVectorStore, just retrieve the entity
-        const entity = await appDataSource.getRepository(DocumentStore).findOneBy({
-            id: data.storeId,
-            workspaceId: workspaceId
-        })
-        if (!entity) {
-            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${data.storeId} not found`)
-        }
         let upsertHistory: Record<string, any> = {}
         const chatflowid = data.storeId // fake chatflowid because this is not tied to any chatflow
 
@@ -1386,8 +2292,23 @@ const _insertIntoVectorStoreWorkerThread = async (
             chatflowid,
             appDataSource,
             databaseEntities,
-            logger
+            workspaceId,
+            orgId,
+            logger,
+            skipVariables: true,
+            refreshOAuth2Credential: createWorkspaceOAuth2RefreshCapability(workspaceId)
         }
+
+        const { entity, resolved } = await validateResolvedDocumentVectorComponents(
+            appDataSource,
+            componentNodes,
+            data.storeId,
+            data,
+            workspaceId,
+            true,
+            operationRevision
+        )
+        Object.assign(data, resolved)
 
         let recordManagerObj = undefined
 
@@ -1423,42 +2344,62 @@ const _insertIntoVectorStoreWorkerThread = async (
         })
         vStoreNodeData.inputs.document = docs
 
-        // Get Vector Store Instance
+        onProviderUpsertAttempt?.()
+        // Vector-store initialization may create or connect external collections,
+        // so recovery semantics start before node initialization, not only upsert.
         const vectorStoreObj = await _createVectorStoreObject(componentNodes, data, vStoreNodeData, upsertHistory)
         const indexResult = await vectorStoreObj.vectorStoreMethods.upsert(vStoreNodeData, options)
 
-        // Save to DB
+        // Build the history row now, but commit it only with the parent CAS.
+        let upsertHistoryItem: UpsertHistory | undefined
         if (indexResult) {
             const result = cloneDeep(upsertHistory)
             result['flowData'] = JSON.stringify(result['flowData'])
-            result['result'] = JSON.stringify(omit(indexResult, ['totalKeys', 'addedDocs']))
+            result['result'] = JSON.stringify(createSafeVectorStoreStats(indexResult))
             result.chatflowid = chatflowid
             const newUpsertHistory = new UpsertHistory()
             Object.assign(newUpsertHistory, result)
-            const upsertHistoryItem = appDataSource.getRepository(UpsertHistory).create(newUpsertHistory)
-            await appDataSource.getRepository(UpsertHistory).save(upsertHistoryItem)
+            upsertHistoryItem = appDataSource.getRepository(UpsertHistory).create(newUpsertHistory)
         }
 
-        await telemetry.sendTelemetry(
-            'vector_upserted',
-            {
-                version: await getAppVersion(),
-                chatlowId: chatflowid,
-                type: ChatType.INTERNAL,
-                flowGraph: omit(indexResult['result'], ['totalKeys', 'addedDocs'])
-            },
-            orgId
-        )
+        try {
+            const telemetryResultDescriptor = getOwnDataDescriptor(indexResult, 'result')
+            const telemetryFlowGraph = telemetryResultDescriptor ? createSafeVectorStoreStats(telemetryResultDescriptor.value) : {}
+            await telemetry.sendTelemetry(
+                'vector_upserted',
+                {
+                    version: await getAppVersion(),
+                    chatlowId: chatflowid,
+                    type: ChatType.INTERNAL,
+                    flowGraph: telemetryFlowGraph
+                },
+                orgId
+            )
+        } catch {
+            logger.warn('document_store_vector_telemetry_failed', { failedCount: 1 })
+        }
 
-        entity.status = DocumentStoreStatus.UPSERTED
-        await appDataSource.getRepository(DocumentStore).save(entity)
+        await appDataSource.transaction(async (transactionManager) => {
+            if (upsertHistoryItem) {
+                await transactionManager.getRepository(UpsertHistory).save(upsertHistoryItem)
+            }
+            await updateExistingDocumentStore(
+                transactionManager.getRepository(DocumentStore),
+                entity,
+                { status: DocumentStoreStatus.UPSERTED },
+                'Document store vector state changed concurrently'
+            )
+        })
+        advanceDocumentStoreOperationRevision(operationRevision, entity)
 
-        return indexResult ?? { result: 'Successfully Upserted' }
+        return {
+            ...createSafeVectorStoreResult(indexResult),
+            versionToken: createDocumentStoreVersionToken(entity)
+        }
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices._insertIntoVectorStoreWorkerThread - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        logger.error('document_store_vector_insertion_failed', { failedCount: 1 })
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store vector insertion failed')
     }
 }
 
@@ -1502,22 +2443,33 @@ const getRecordManagerProviders = async () => {
     }
 }
 
-const queryVectorStore = async (data: ICommonObject) => {
+const queryVectorStore = async (data: ICommonObject, workspaceId: string) => {
     try {
+        if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store query is not authorized')
         const appServer = getRunningExpressApp()
         const componentNodes = appServer.nodesPool.componentNodes
 
         const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({
-            id: data.storeId
+            id: data.storeId,
+            workspaceId
         })
         if (!entity) {
-            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Document store ${data.storeId} not found`)
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
+        }
+        if (entity.status !== DocumentStoreStatus.UPSERTED) {
+            throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Document store vector index is not available')
+        }
+        if (typeof data.query !== 'string' || !data.query.trim() || data.query.length > 10_000) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store query')
         }
         const options: ICommonObject = {
             chatflowid: uuidv4(),
             appDataSource: appServer.AppDataSource,
             databaseEntities,
-            logger
+            workspaceId,
+            skipVariables: true,
+            logger,
+            refreshOAuth2Credential: createWorkspaceOAuth2RefreshCapability(workspaceId)
         }
 
         if (!entity.embeddingConfig) {
@@ -1528,44 +2480,39 @@ const queryVectorStore = async (data: ICommonObject) => {
             throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Vector Store for ${data.storeId} is not configured`)
         }
 
-        const embeddingConfig = JSON.parse(entity.embeddingConfig)
-        data.embeddingName = embeddingConfig.name
-        data.embeddingConfig = embeddingConfig.config
-        let embeddingObj = await _createEmbeddingsObject(componentNodes, data, options)
-
-        const vsConfig = JSON.parse(entity.vectorStoreConfig)
-        data.vectorStoreName = vsConfig.name
-        data.vectorStoreConfig = vsConfig.config
-        if (data.inputs) {
-            data.vectorStoreConfig = { ...vsConfig.config, ...data.inputs }
+        const embeddingConfig = parsePersistedComponentConfig(entity.embeddingConfig)
+        const vsConfig = parsePersistedComponentConfig(entity.vectorStoreConfig)
+        const retrievalOverrides = parseRetrievalOverrides(data.inputs, vsConfig.config)
+        const scopedQueryData: ICommonObject = {
+            storeId: entity.id,
+            embeddingName: embeddingConfig.name,
+            embeddingConfig: embeddingConfig.config,
+            vectorStoreName: vsConfig.name,
+            vectorStoreConfig: { ...vsConfig.config, ...retrievalOverrides }
         }
+        await validateDocumentVectorComponents(componentNodes, scopedQueryData, workspaceId, true)
+        const embeddingObj = await _createEmbeddingsObject(componentNodes, scopedQueryData, options)
 
-        const vStoreNodeData = _createVectorStoreNodeData(componentNodes, data, embeddingObj, undefined)
+        const vStoreNodeData = _createVectorStoreNodeData(componentNodes, scopedQueryData, embeddingObj, undefined)
 
         // Get Vector Store Instance
-        const vectorStoreObj = await _createVectorStoreObject(componentNodes, data, vStoreNodeData)
+        const vectorStoreObj = await _createVectorStoreObject(componentNodes, scopedQueryData, vStoreNodeData)
         const retriever = await vectorStoreObj.init(vStoreNodeData, '', options)
         if (!retriever) {
             throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Failed to create retriever`)
         }
         const startMillis = Date.now()
-        const results = await retriever.invoke(data.query, undefined)
-        if (!results) {
+        const results = await retriever.invoke(data.query.trim(), undefined)
+        if (!Array.isArray(results)) {
             throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Failed to retrieve results`)
         }
         const endMillis = Date.now()
         const timeTaken = endMillis - startMillis
-        const docs: any = results.map((result: IDocument) => {
-            return {
-                pageContent: result.pageContent,
-                metadata: result.metadata,
-                id: uuidv4()
-            }
-        })
+        const docs = createSafeVectorQueryDocuments(results).map((document) => ({ ...document, id: uuidv4(), chunkNo: -1 }))
         // query our document store chunk with the storeId and pageContent
         for (const doc of docs) {
             const documentStoreChunk = await appServer.AppDataSource.getRepository(DocumentStoreFileChunk).findOneBy({
-                storeId: data.storeId,
+                storeId: entity.id,
                 pageContent: doc.pageContent
             })
             if (documentStoreChunk) {
@@ -1584,10 +2531,8 @@ const queryVectorStore = async (data: ICommonObject) => {
             docs: docs
         }
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.queryVectorStore - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store query failed')
     }
 }
 
@@ -1598,7 +2543,7 @@ const _createEmbeddingsObject = async (
     upsertHistory?: Record<string, any>
 ): Promise<any> => {
     // prepare embedding node data
-    const embeddingComponent = componentNodes[data.embeddingName]
+    const embeddingComponent = resolveSafeDocumentStoreComponent(componentNodes, data.embeddingName, data.embeddingConfig, 'Embeddings')
     const embeddingNodeData: any = {
         inputs: { ...data.embeddingConfig },
         outputs: { output: 'document' },
@@ -1619,7 +2564,7 @@ const _createEmbeddingsObject = async (
     const embeddingNodeInstanceFilePath = embeddingComponent.filePath as string
     const embeddingNodeModule = await import(embeddingNodeInstanceFilePath)
     const embeddingNodeInstance = new embeddingNodeModule.nodeClass()
-    const embeddingObj = await embeddingNodeInstance.init(embeddingNodeData, '', options)
+    const embeddingObj = await embeddingNodeInstance.init(embeddingNodeData, '', { ...options, skipVariables: true })
     if (!embeddingObj) {
         throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Failed to create EmbeddingObj`)
     }
@@ -1633,7 +2578,12 @@ const _createRecordManagerObject = async (
     upsertHistory?: Record<string, any>
 ) => {
     // prepare record manager node data
-    const recordManagerComponent = componentNodes[data.recordManagerName]
+    const recordManagerComponent = resolveSafeDocumentStoreComponent(
+        componentNodes,
+        data.recordManagerName,
+        data.recordManagerConfig,
+        'Record Manager'
+    )
     const rmNodeData: any = {
         inputs: { ...data.recordManagerConfig },
         id: `${recordManagerComponent.name}_0`,
@@ -1653,7 +2603,7 @@ const _createRecordManagerObject = async (
     const rmNodeInstanceFilePath = recordManagerComponent.filePath as string
     const rmNodeModule = await import(rmNodeInstanceFilePath)
     const rmNodeInstance = new rmNodeModule.nodeClass()
-    const recordManagerObj = await rmNodeInstance.init(rmNodeData, '', options)
+    const recordManagerObj = await rmNodeInstance.init(rmNodeData, '', { ...options, skipVariables: true })
     if (!recordManagerObj) {
         throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Failed to create RecordManager obj`)
     }
@@ -1661,7 +2611,12 @@ const _createRecordManagerObject = async (
 }
 
 const _createVectorStoreNodeData = (componentNodes: IComponentNodes, data: ICommonObject, embeddingObj: any, recordManagerObj?: any) => {
-    const vectorStoreComponent = componentNodes[data.vectorStoreName]
+    const vectorStoreComponent = resolveSafeDocumentStoreComponent(
+        componentNodes,
+        data.vectorStoreName,
+        data.vectorStoreConfig,
+        'Vector Stores'
+    )
     const vStoreNodeData: any = {
         id: `${vectorStoreComponent.name}_0`,
         inputs: { ...data.vectorStoreConfig },
@@ -1684,7 +2639,7 @@ const _createVectorStoreNodeData = (componentNodes: IComponentNodes, data: IComm
 
     // Get all input params except the ones that are anchor points to avoid JSON stringify circular error
     const filterInputParams = ['document', 'embeddings', 'recordManager']
-    const inputParams = vectorStoreComponent.inputs?.filter((input) => !filterInputParams.includes(input.name))
+    const inputParams = vectorStoreComponent.inputs?.filter((input: any) => !filterInputParams.includes(input.name))
     vStoreNodeData.inputParams = inputParams
     return vStoreNodeData
 }
@@ -1695,11 +2650,99 @@ const _createVectorStoreObject = async (
     vStoreNodeData: INodeData,
     upsertHistory?: Record<string, any>
 ) => {
-    const vStoreNodeInstanceFilePath = componentNodes[data.vectorStoreName].filePath as string
+    const vectorStoreComponent = resolveSafeDocumentStoreComponent(
+        componentNodes,
+        data.vectorStoreName,
+        data.vectorStoreConfig,
+        'Vector Stores'
+    )
+    const vStoreNodeInstanceFilePath = vectorStoreComponent.filePath as string
     const vStoreNodeModule = await import(vStoreNodeInstanceFilePath)
     const vStoreNodeInstance = new vStoreNodeModule.nodeClass()
     if (upsertHistory) upsertHistory['flowData'] = saveUpsertFlowData(vStoreNodeData, upsertHistory)
     return vStoreNodeInstance
+}
+
+const parseUpsertComponentSelection = (value: unknown): ICommonObject => {
+    if (value === undefined || value === null || value === '') return {}
+    let parsed = value
+    if (typeof value === 'string') {
+        try {
+            parsed = JSON.parse(value)
+        } catch {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component selection')
+        }
+    }
+    if (!isPlainRecord(parsed) || Object.keys(parsed).some((key) => key !== 'name' && key !== 'config')) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component selection')
+    }
+    if (parsed.config !== undefined && !isPlainRecord(parsed.config)) {
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store component selection')
+    }
+    return parsed
+}
+
+const isCreateNewDocumentStore = (value: unknown): boolean => value === true || value === 'true'
+
+const validateDocStoreUpsertComponents = async (
+    appDataSource: DataSource,
+    componentNodes: IComponentNodes,
+    storeId: string,
+    data: IDocumentStoreUpsertData,
+    workspaceId: string,
+    operationIdentity?: DocumentStoreOperationIdentity
+): Promise<DocumentStore | null> => {
+    const createNewDocStore = isCreateNewDocumentStore(data.createNewDocStore)
+    let validatedEntity: DocumentStore | null = null
+    let persistedLoader: ICommonObject = {}
+    let persistedEmbedding: ICommonObject = {}
+    let persistedVectorStore: ICommonObject = {}
+    let persistedRecordManager: ICommonObject = {}
+
+    if (!createNewDocStore) {
+        validatedEntity = await appDataSource.getRepository(DocumentStore).findOneBy({ id: storeId, workspaceId })
+        if (!validatedEntity) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
+        assertDocumentStoreOperationRevision(validatedEntity, operationIdentity, 'Document store changed concurrently')
+        persistedEmbedding = parsePersistedComponentConfig(validatedEntity.embeddingConfig)
+        persistedVectorStore = parsePersistedComponentConfig(validatedEntity.vectorStoreConfig)
+        persistedRecordManager = parsePersistedComponentConfig(validatedEntity.recordManagerConfig)
+        if (data.docId) {
+            const loaders = JSON.parse(validatedEntity.loaders)
+            if (!Array.isArray(loaders))
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store loader configuration')
+            persistedLoader = loaders.find((loader: IDocumentStoreLoader) => loader.id === data.docId) || {}
+            if (!persistedLoader.id) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store loader not found')
+        }
+    }
+
+    const newLoader = parseUpsertComponentSelection(data.loader)
+    const newSplitter = parseUpsertComponentSelection(data.splitter)
+    const newEmbedding = parseUpsertComponentSelection(data.embedding)
+    const newVectorStore = parseUpsertComponentSelection(data.vectorStore)
+    const newRecordManager = parseUpsertComponentSelection(data.recordManager)
+    const processingData = {
+        loaderId: newLoader.name || persistedLoader.loaderId,
+        loaderConfig: { ...(persistedLoader.loaderConfig || {}), ...(newLoader.config || {}) },
+        splitterId: newSplitter.name || persistedLoader.splitterId,
+        splitterConfig: { ...(persistedLoader.splitterConfig || {}), ...(newSplitter.config || {}) },
+        credential: persistedLoader.credential
+    } as IDocumentStoreLoaderForPreview
+    await validateDocumentProcessingComponents(componentNodes, processingData, workspaceId)
+
+    await validateDocumentVectorComponents(
+        componentNodes,
+        {
+            embeddingName: newEmbedding.name || persistedEmbedding.name,
+            embeddingConfig: { ...(persistedEmbedding.config || {}), ...(newEmbedding.config || {}) },
+            vectorStoreName: newVectorStore.name || persistedVectorStore.name,
+            vectorStoreConfig: { ...(persistedVectorStore.config || {}), ...(newVectorStore.config || {}) },
+            recordManagerName: newRecordManager.name || persistedRecordManager.name,
+            recordManagerConfig: { ...(persistedRecordManager.config || {}), ...(newRecordManager.config || {}) }
+        },
+        workspaceId,
+        true
+    )
+    return validatedEntity
 }
 
 const upsertDocStore = async (
@@ -1713,8 +2756,17 @@ const upsertDocStore = async (
     orgId: string,
     workspaceId: string,
     subscriptionId: string,
-    usageCacheManager: UsageCacheManager
+    usageCacheManager: UsageCacheManager,
+    operationRevision?: DocumentStoreOperationIdentity
 ) => {
+    const validatedEntity = await validateDocStoreUpsertComponents(
+        appDataSource,
+        componentNodes,
+        storeId,
+        data,
+        workspaceId,
+        operationRevision
+    )
     const docId = data.docId
     let metadata = {}
     if (data.metadata) {
@@ -1760,18 +2812,11 @@ const upsertDocStore = async (
 
     // Step 1: Get existing loader
     if (docId) {
-        const entity = await appDataSource.getRepository(DocumentStore).findOneBy({ id: storeId })
-        if (!entity) {
-            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${storeId} not found`)
+        if (!validatedEntity) {
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
         }
 
-        if (workspaceId) {
-            if (entity?.workspaceId !== workspaceId) {
-                throw new Error('Unauthorized access')
-            }
-        }
-
-        const loaders = JSON.parse(entity.loaders)
+        const loaders = JSON.parse(validatedEntity.loaders)
         const loader = loaders.find((ldr: IDocumentStoreLoader) => ldr.id === docId)
         if (!loader) {
             throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document loader ${docId} not found`)
@@ -1794,80 +2839,90 @@ const upsertDocStore = async (
         }
 
         // Vector Store
-        vectorStoreName = JSON.parse(entity.vectorStoreConfig || '{}')?.name
-        vectorStoreConfig = JSON.parse(entity.vectorStoreConfig || '{}')?.config
+        vectorStoreName = JSON.parse(validatedEntity.vectorStoreConfig || '{}')?.name
+        vectorStoreConfig = JSON.parse(validatedEntity.vectorStoreConfig || '{}')?.config
 
         // Embedding
-        embeddingName = JSON.parse(entity.embeddingConfig || '{}')?.name
-        embeddingConfig = JSON.parse(entity.embeddingConfig || '{}')?.config
+        embeddingName = JSON.parse(validatedEntity.embeddingConfig || '{}')?.name
+        embeddingConfig = JSON.parse(validatedEntity.embeddingConfig || '{}')?.config
 
         // Record Manager
-        recordManagerName = JSON.parse(entity.recordManagerConfig || '{}')?.name
-        recordManagerConfig = JSON.parse(entity.recordManagerConfig || '{}')?.config
+        recordManagerName = JSON.parse(validatedEntity.recordManagerConfig || '{}')?.name
+        recordManagerConfig = JSON.parse(validatedEntity.recordManagerConfig || '{}')?.config
     }
 
-    if (createNewDocStore) {
-        const docStoreBody = typeof data.docStore === 'string' ? JSON.parse(data.docStore) : data.docStore
-        const newDocumentStore = docStoreBody ?? { name: `Document Store ${Date.now().toString()}` }
-        const docStore = DocumentStoreDTO.toEntity(newDocumentStore)
-        docStore.workspaceId = workspaceId // enforce trusted server-side value, never from user input
-        const documentStore = appDataSource.getRepository(DocumentStore).create(docStore)
-        const dbResponse = await appDataSource.getRepository(DocumentStore).save(documentStore)
-        storeId = dbResponse.id
-    }
+    let createdDocumentStore: DocumentStore | undefined
+    let providerSideEffectPossible = false
+    try {
+        if (createNewDocStore) {
+            const docStoreBody = typeof data.docStore === 'string' ? JSON.parse(data.docStore) : data.docStore
+            const newDocumentStore = docStoreBody ?? { name: `Document Store ${Date.now().toString()}` }
+            const docStore = DocumentStoreDTO.toEntity(newDocumentStore)
+            docStore.workspaceId = workspaceId // enforce trusted server-side value, never from user input
+            const documentStore = appDataSource.getRepository(DocumentStore).create({
+                ...getDocumentStoreMutablePatch(docStore),
+                workspaceId,
+                generationId: createDocumentStoreGenerationId()
+            })
+            const dbResponse = await appDataSource.getRepository(DocumentStore).save(documentStore)
+            storeId = dbResponse.id
+            createdDocumentStore = dbResponse
+            operationRevision = createDocumentStoreOperationRevision(dbResponse)
+        }
 
-    // Step 2: Replace with new values
-    loaderName = newLoader?.name ? getComponentLabelFromName(newLoader?.name) : loaderName
-    loaderId = newLoader?.name || loaderId
-    loaderConfig = {
-        ...loaderConfig,
-        ...newLoader?.config
-    }
+        // Step 2: Replace with new values
+        loaderName = newLoader?.name ? getComponentLabelFromName(newLoader?.name) : loaderName
+        loaderId = newLoader?.name || loaderId
+        loaderConfig = {
+            ...loaderConfig,
+            ...newLoader?.config
+        }
 
-    // Override loaderName if it's provided directly in data
-    if (data.loaderName) {
-        loaderName = data.loaderName
-    }
+        // Override loaderName if it's provided directly in data
+        if (data.loaderName) {
+            loaderName = data.loaderName
+        }
 
-    splitterName = newSplitter?.name ? getComponentLabelFromName(newSplitter?.name) : splitterName
-    splitterId = newSplitter?.name || splitterId
-    splitterConfig = {
-        ...splitterConfig,
-        ...newSplitter?.config
-    }
+        splitterName = newSplitter?.name ? getComponentLabelFromName(newSplitter?.name) : splitterName
+        splitterId = newSplitter?.name || splitterId
+        splitterConfig = {
+            ...splitterConfig,
+            ...newSplitter?.config
+        }
 
-    vectorStoreName = newVectorStore?.name || vectorStoreName
-    vectorStoreConfig = {
-        ...vectorStoreConfig,
-        ...newVectorStore?.config
-    }
+        vectorStoreName = newVectorStore?.name || vectorStoreName
+        vectorStoreConfig = {
+            ...vectorStoreConfig,
+            ...newVectorStore?.config
+        }
 
-    embeddingName = newEmbedding?.name || embeddingName
-    embeddingConfig = {
-        ...embeddingConfig,
-        ...newEmbedding?.config
-    }
+        embeddingName = newEmbedding?.name || embeddingName
+        embeddingConfig = {
+            ...embeddingConfig,
+            ...newEmbedding?.config
+        }
 
-    recordManagerName = newRecordManager?.name || recordManagerName
-    recordManagerConfig = {
-        ...recordManagerConfig,
-        ...newRecordManager?.config
-    }
+        recordManagerName = newRecordManager?.name || recordManagerName
+        recordManagerConfig = {
+            ...recordManagerConfig,
+            ...newRecordManager?.config
+        }
 
-    // Step 3: Replace with files
-    if (files.length) {
-        const filesLoaderConfig: ICommonObject = {}
-        for (const file of files) {
-            const fileNames: string[] = []
-            const fileBuffer = await getFileFromUpload(file.path ?? file.key)
-            // Address file name with special characters: https://github.com/expressjs/multer/issues/1104
-            file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8')
+        // Step 3: Replace with files
+        if (files.length) {
+            const filesLoaderConfig: ICommonObject = {}
+            for (const file of files) {
+                const uploadPath = file.path ?? file.key
+                if (typeof uploadPath !== 'string' || !uploadPath) {
+                    throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid document store upload')
+                }
+                const fileNames: string[] = []
+                const fileBuffer = await getFileFromUpload(uploadPath)
+                // Address file name with special characters: https://github.com/expressjs/multer/issues/1104
+                file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8')
 
-            // Validate file extension, MIME type, and content to prevent security vulnerabilities
-            validateFileMimeTypeAndExtensionMatch(file.originalname, file.mimetype)
-
-            try {
-                checkStorage(orgId, subscriptionId, usageCacheManager)
+                validateFileMimeTypeAndExtensionMatch(file.originalname, file.mimetype)
+                await checkStorage(orgId, subscriptionId, usageCacheManager)
                 const { totalSize } = await addArrayFilesToStorage(
                     file.mimetype,
                     fileBuffer,
@@ -1878,133 +2933,136 @@ const upsertDocStore = async (
                     storeId
                 )
                 await updateStorageUsage(orgId, workspaceId, totalSize, usageCacheManager)
-            } catch (error) {
-                continue
+
+                const mimePrefix = 'data:' + file.mimetype + ';base64'
+                const storagePath = mimePrefix + ',' + fileBuffer.toString('base64') + `,filename:${file.originalname}`
+                const fileInputField = resolveDocumentStoreFileInputField(file.mimetype, file.originalname, loaderId)
+
+                if (filesLoaderConfig[fileInputField]) {
+                    const existingFileInputFieldArray = JSON.parse(filesLoaderConfig[fileInputField])
+                    filesLoaderConfig[fileInputField] = JSON.stringify(existingFileInputFieldArray.concat([storagePath]))
+                } else {
+                    filesLoaderConfig[fileInputField] = JSON.stringify([storagePath])
+                }
             }
 
-            const mimePrefix = 'data:' + file.mimetype + ';base64'
-            const storagePath = mimePrefix + ',' + fileBuffer.toString('base64') + `,filename:${file.originalname}`
-
-            const fileInputFieldFromMimeType = mapMimeTypeToInputField(file.mimetype)
-
-            const fileExtension = path.extname(file.originalname)
-
-            const fileInputFieldFromExt = mapExtToInputField(fileExtension)
-
-            let fileInputField = 'txtFile'
-
-            if (fileInputFieldFromExt !== 'txtFile') {
-                fileInputField = fileInputFieldFromExt
-            } else if (fileInputFieldFromMimeType !== 'txtFile') {
-                fileInputField = fileInputFieldFromExt
+            loaderConfig = {
+                ...loaderConfig,
+                ...filesLoaderConfig
             }
-
-            if (loaderId === 'unstructuredFileLoader') {
-                fileInputField = 'fileObject'
-            }
-
-            if (filesLoaderConfig[fileInputField]) {
-                const existingFileInputFieldArray = JSON.parse(filesLoaderConfig[fileInputField])
-                const newFileInputFieldArray = [storagePath]
-                const updatedFieldArray = existingFileInputFieldArray.concat(newFileInputFieldArray)
-                filesLoaderConfig[fileInputField] = JSON.stringify(updatedFieldArray)
-            } else {
-                filesLoaderConfig[fileInputField] = JSON.stringify([storagePath])
-            }
-
-            await removeSpecificFileFromUpload(file.path ?? file.key)
         }
 
-        loaderConfig = {
-            ...loaderConfig,
-            ...filesLoaderConfig
+        if (Object.keys(metadata).length > 0) {
+            loaderConfig = {
+                ...loaderConfig,
+                metadata
+            }
         }
-    }
 
-    if (Object.keys(metadata).length > 0) {
-        loaderConfig = {
-            ...loaderConfig,
-            metadata
+        // Step 4: Verification for must have components
+        if (!loaderName || !loaderId || !loaderConfig) {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Loader not configured`)
         }
-    }
 
-    // Step 4: Verification for must have components
-    if (!loaderName || !loaderId || !loaderConfig) {
-        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Loader not configured`)
-    }
+        if (!vectorStoreName || !vectorStoreConfig) {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Vector store not configured`)
+        }
 
-    if (!vectorStoreName || !vectorStoreConfig) {
-        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Vector store not configured`)
-    }
+        if (!embeddingName || !embeddingConfig) {
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Embedding not configured`)
+        }
 
-    if (!embeddingName || !embeddingConfig) {
-        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Embedding not configured`)
-    }
-
-    // Step 5: Process & Upsert
-    const processData: IDocumentStoreLoaderForPreview = {
-        storeId,
-        loaderId,
-        loaderName,
-        loaderConfig,
-        splitterId,
-        splitterName,
-        splitterConfig
-    }
-
-    if (isRefreshExisting || replaceExisting) {
-        processData.id = docId
-    }
-
-    try {
-        const newLoader = await saveProcessingLoader(appDataSource, processData, workspaceId)
-        const result = await processLoader({
-            appDataSource,
-            componentNodes,
-            data: processData,
-            docLoaderId: newLoader.id || '',
-            isProcessWithoutUpsert: false,
-            telemetry,
-            orgId,
-            workspaceId,
-            subscriptionId,
-            usageCacheManager
-        })
-        const newDocId = result.docId
-
-        const insertData = {
+        // Step 5: Process & Upsert
+        const processData: IDocumentStoreLoaderForPreview = {
             storeId,
-            docId: newDocId,
-            vectorStoreName,
-            vectorStoreConfig,
-            embeddingName,
-            embeddingConfig,
-            recordManagerName,
-            recordManagerConfig
+            loaderId,
+            loaderName,
+            loaderConfig,
+            splitterId,
+            splitterName,
+            splitterConfig
         }
 
-        // Use isStrictSave: false to preserve existing configurations during upsert
-        // This allows the operation to reuse existing embedding/vector store/record manager configs
-        const res = await insertIntoVectorStore({
-            appDataSource,
-            componentNodes,
-            telemetry,
-            data: insertData,
-            isStrictSave: false,
-            isVectorStoreInsert: true,
-            orgId,
-            workspaceId,
-            subscriptionId,
-            usageCacheManager
-        })
-        res.docId = newDocId
+        if (isRefreshExisting || replaceExisting) {
+            processData.id = docId
+        }
 
-        return res
+        try {
+            if (!operationRevision) {
+                throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Document store operation ownership is missing')
+            }
+            const newLoader = await saveProcessingLoader(appDataSource, processData, workspaceId, operationRevision)
+            const result = await processLoader({
+                appDataSource,
+                componentNodes,
+                data: processData,
+                docLoaderId: newLoader.id || '',
+                isProcessWithoutUpsert: false,
+                telemetry,
+                orgId,
+                workspaceId,
+                subscriptionId,
+                usageCacheManager,
+                operationIdentity: operationRevision
+            })
+            const newDocId = result.docId
+
+            const insertData = {
+                storeId,
+                docId: newDocId,
+                vectorStoreName,
+                vectorStoreConfig,
+                embeddingName,
+                embeddingConfig,
+                recordManagerName,
+                recordManagerConfig
+            }
+
+            // Use isStrictSave: false to preserve existing configurations during upsert
+            // This allows the operation to reuse existing embedding/vector store/record manager configs
+            const res = await insertIntoVectorStore(
+                {
+                    appDataSource,
+                    componentNodes,
+                    telemetry,
+                    data: insertData,
+                    isStrictSave: false,
+                    isVectorStoreInsert: true,
+                    orgId,
+                    workspaceId,
+                    subscriptionId,
+                    usageCacheManager,
+                    operationIdentity: operationRevision
+                },
+                () => {
+                    providerSideEffectPossible = true
+                }
+            )
+            res.docId = newDocId
+
+            return res
+        } catch (error) {
+            if (error instanceof InternalFlowiseError) throw error
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store upsert failed')
+        }
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.upsertDocStore - ${getErrorMessage(error)}`
-        )
+        if (createdDocumentStore) {
+            await handleCreatedDocumentStoreFailure(
+                appDataSource,
+                orgId,
+                workspaceId,
+                {
+                    id: createdDocumentStore.id,
+                    workspaceId: createdDocumentStore.workspaceId,
+                    generationId: createdDocumentStore.generationId,
+                    revision: operationRevision?.revision ?? createdDocumentStore.revision
+                },
+                usageCacheManager,
+                providerSideEffectPossible
+            )
+        }
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store upsert failed')
     }
 }
 
@@ -2014,31 +3072,59 @@ export const executeDocStoreUpsert = async ({
     telemetry,
     storeId,
     totalItems,
-    files,
+    files = [],
     isRefreshAPI,
     orgId,
     workspaceId,
     subscriptionId,
-    usageCacheManager
+    usageCacheManager,
+    operationIdentity
 }: IExecuteDocStoreUpsert) => {
-    const results = []
-    for (const item of totalItems) {
-        const res = await upsertDocStore(
-            appDataSource,
-            componentNodes,
-            telemetry,
-            storeId,
-            item,
-            files,
-            isRefreshAPI,
-            orgId,
-            workspaceId,
-            subscriptionId,
-            usageCacheManager
-        )
-        results.push(res)
+    try {
+        if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store operation is not authorized')
+        const createFlags = totalItems.map((item) => isCreateNewDocumentStore(item.createNewDocStore))
+        if (isRefreshAPI && createFlags.some(Boolean)) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Refresh cannot create a document store')
+        }
+        if (createFlags.some(Boolean) && totalItems.length !== 1) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Document store creation accepts one item')
+        }
+        if (!createFlags.some(Boolean)) {
+            const scopedStore = await appDataSource.getRepository(DocumentStore).findOneBy({ id: storeId, workspaceId })
+            if (!scopedStore) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
+            assertDocumentStoreOperationRevision(scopedStore, operationIdentity, 'Document store changed concurrently')
+        }
+        for (const item of totalItems) {
+            await validateDocStoreUpsertComponents(appDataSource, componentNodes, storeId, item, workspaceId, operationIdentity)
+        }
+        const results = []
+        for (const item of totalItems) {
+            const res = await upsertDocStore(
+                appDataSource,
+                componentNodes,
+                telemetry,
+                storeId,
+                item,
+                files,
+                isRefreshAPI,
+                orgId,
+                workspaceId,
+                subscriptionId,
+                usageCacheManager,
+                operationIdentity
+            )
+            results.push(res)
+        }
+        if (!isRefreshAPI) return results[0]
+        const latestResult = results[results.length - 1]
+        return {
+            results,
+            versionToken:
+                latestResult?.versionToken ?? createDocumentStoreVersionTokenFromClaim(operationIdentity as DocumentStoreOperationIdentity)
+        }
+    } finally {
+        await cleanupDocumentStoreUploads(files)
     }
-    return isRefreshAPI ? results : results[0]
 }
 
 const upsertDocStoreMiddleware = async (
@@ -2048,14 +3134,22 @@ const upsertDocStoreMiddleware = async (
     orgId: string,
     workspaceId: string,
     subscriptionId: string,
-    usageCacheManager: UsageCacheManager
+    usageCacheManager: UsageCacheManager,
+    operationIdentity?: DocumentStoreOperationIdentity
 ) => {
     const appServer = getRunningExpressApp()
     const componentNodes = appServer.nodesPool.componentNodes
     const appDataSource = appServer.AppDataSource
     const telemetry = appServer.telemetry
+    let cleanupOwnedByExecution = false
 
     try {
+        const createNewDocStore = isCreateNewDocumentStore(data.createNewDocStore)
+        if (!createNewDocStore) {
+            const entity = await getScopedDocumentStore(storeId, workspaceId)
+            assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document store changed concurrently')
+        }
+        await validateDocStoreUpsertComponents(appDataSource, componentNodes, storeId, data, workspaceId, operationIdentity)
         const executeData: IExecuteDocStoreUpsert = {
             appDataSource,
             componentNodes,
@@ -2067,29 +3161,31 @@ const upsertDocStoreMiddleware = async (
             orgId,
             workspaceId,
             subscriptionId,
-            usageCacheManager
+            usageCacheManager,
+            operationIdentity
         }
 
         if (process.env.MODE === MODE.QUEUE) {
             const upsertQueue = appServer.queueManager.getQueue('upsert')
             const job = await upsertQueue.addJob(omit(executeData, OMIT_QUEUE_JOB_DATA))
+            cleanupOwnedByExecution = true
             logger.debug(`[server]: [${orgId}]: Job added to queue: ${job.id}`)
 
             const queueEvents = upsertQueue.getQueueEvents()
-            const result = await job.waitUntilFinished(queueEvents)
+            const result = await waitForDocumentStoreQueueResult<any>(job, queueEvents)
 
             if (!result) {
                 throw new Error('Job execution failed')
             }
             return result
         } else {
+            cleanupOwnedByExecution = true
             return await executeDocStoreUpsert(executeData)
         }
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.upsertDocStoreMiddleware - ${getErrorMessage(error)}`
-        )
+        if (!cleanupOwnedByExecution) await cleanupDocumentStoreUploads(files)
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store upsert failed')
     }
 }
 
@@ -2099,7 +3195,8 @@ const refreshDocStoreMiddleware = async (
     orgId: string,
     workspaceId: string,
     subscriptionId: string,
-    usageCacheManager: UsageCacheManager
+    usageCacheManager: UsageCacheManager,
+    operationIdentity: DocumentStoreOperationIdentity
 ) => {
     const appServer = getRunningExpressApp()
     const componentNodes = appServer.nodesPool.componentNodes
@@ -2107,20 +3204,11 @@ const refreshDocStoreMiddleware = async (
     const telemetry = appServer.telemetry
 
     try {
+        const entity = await getScopedDocumentStore(storeId, workspaceId)
+        assertDocumentStoreOperationRevision(entity, operationIdentity, 'Document store changed concurrently')
         let totalItems: IDocumentStoreUpsertData[] = []
 
         if (!data || !data.items || data.items.length === 0) {
-            const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({ id: storeId })
-            if (!entity) {
-                throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${storeId} not found`)
-            }
-
-            if (workspaceId) {
-                if (entity?.workspaceId !== workspaceId) {
-                    throw new Error('Unauthorized access')
-                }
-            }
-
             const loaders = JSON.parse(entity.loaders)
             totalItems = loaders.map((ldr: IDocumentStoreLoader) => {
                 return {
@@ -2129,6 +3217,12 @@ const refreshDocStoreMiddleware = async (
             })
         } else {
             totalItems = data.items
+        }
+        if (totalItems.some((item) => isCreateNewDocumentStore(item.createNewDocStore))) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Refresh cannot create a document store')
+        }
+        for (const item of totalItems) {
+            await validateDocStoreUpsertComponents(appDataSource, componentNodes, storeId, item, workspaceId, operationIdentity)
         }
 
         const executeData: IExecuteDocStoreUpsert = {
@@ -2142,7 +3236,8 @@ const refreshDocStoreMiddleware = async (
             orgId,
             workspaceId,
             subscriptionId,
-            usageCacheManager
+            usageCacheManager,
+            operationIdentity
         }
 
         if (process.env.MODE === MODE.QUEUE) {
@@ -2151,7 +3246,7 @@ const refreshDocStoreMiddleware = async (
             logger.debug(`[server]: [${orgId}]: Job added to queue: ${job.id}`)
 
             const queueEvents = upsertQueue.getQueueEvents()
-            const result = await job.waitUntilFinished(queueEvents)
+            const result = await waitForDocumentStoreQueueResult<any>(job, queueEvents)
 
             if (!result) {
                 throw new Error('Job execution failed')
@@ -2161,16 +3256,30 @@ const refreshDocStoreMiddleware = async (
             return await executeDocStoreUpsert(executeData)
         }
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.refreshDocStoreMiddleware - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store refresh failed')
     }
 }
 
-const generateDocStoreToolDesc = async (docStoreId: string, selectedChatModel: ICommonObject): Promise<ICommonObject> => {
+const generateDocStoreToolDesc = async (
+    docStoreId: string,
+    selectedChatModel: ICommonObject,
+    workspaceId: string
+): Promise<ICommonObject> => {
     try {
+        if (!workspaceId) {
+            throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store tool description generation is not authorized')
+        }
         const appServer = getRunningExpressApp()
+
+        const documentStore = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({
+            id: docStoreId,
+            workspaceId
+        })
+        if (!documentStore) {
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
+        }
+        const safeChatModel = await resolveDocumentStoreChatModel(selectedChatModel, workspaceId)
 
         // get matching DocumentStoreFileChunk storeId with docStoreId, and only the first 4 chunks sorted by chunkNo
         const chunks = await appServer.AppDataSource.getRepository(DocumentStoreFileChunk).findBy({
@@ -2192,54 +3301,42 @@ const generateDocStoreToolDesc = async (docStoreId: string, selectedChatModel: I
             })
             .join('\n')
 
-        if (selectedChatModel && Object.keys(selectedChatModel).length > 0) {
-            const nodeInstanceFilePath = appServer.nodesPool.componentNodes[selectedChatModel.name].filePath as string
-            const nodeModule = await import(nodeInstanceFilePath)
-            const newNodeInstance = new nodeModule.nodeClass()
-            const nodeData = {
-                credential: selectedChatModel.credential || selectedChatModel.inputs['FLOWISE_CREDENTIAL_ID'] || undefined,
-                inputs: selectedChatModel.inputs,
-                id: `${selectedChatModel.name}_0`
-            }
-            const options: ICommonObject = {
-                appDataSource: appServer.AppDataSource,
-                databaseEntities,
-                logger
-            }
-            const llmNodeInstance = await newNodeInstance.init(nodeData, '', options)
-            const response = await llmNodeInstance.invoke(
-                DOCUMENTSTORE_TOOL_DESCRIPTION_PROMPT_GENERATOR.replace('{context}', chunksPageContent)
-            )
-            const content = extractResponseContent(response)
-            return { content }
+        const nodeModule = await import(safeChatModel.component.filePath as string)
+        const newNodeInstance = new nodeModule.nodeClass()
+        const options: ICommonObject = {
+            appDataSource: appServer.AppDataSource,
+            databaseEntities,
+            workspaceId,
+            skipVariables: true,
+            logger,
+            refreshOAuth2Credential: createWorkspaceOAuth2RefreshCapability(workspaceId)
         }
-
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.generateDocStoreToolDesc - Error generating tool description`
+        const llmNodeInstance = await newNodeInstance.init(safeChatModel.nodeData, '', options)
+        const response = await llmNodeInstance.invoke(
+            DOCUMENTSTORE_TOOL_DESCRIPTION_PROMPT_GENERATOR.replace('{context}', chunksPageContent)
         )
+        const content = extractResponseContent(response)
+        return { content }
     } catch (error) {
         if (error instanceof InternalFlowiseError) throw error
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: documentStoreServices.generateDocStoreToolDesc - ${getErrorMessage(error)}`
-        )
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to generate document store tool description')
     }
 }
 
-export const findDocStoreAvailableConfigs = async (storeId: string, docId: string) => {
+export const findDocStoreAvailableConfigs = async (storeId: string, docId: string, workspaceId: string) => {
     // find the document store
     const appServer = getRunningExpressApp()
-    const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({ id: storeId })
+    if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store operation is not authorized')
+    const entity = await appServer.AppDataSource.getRepository(DocumentStore).findOneBy({ id: storeId, workspaceId })
 
     if (!entity) {
-        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document store ${storeId} not found`)
+        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store not found')
     }
 
     const loaders = JSON.parse(entity.loaders)
     const loader = loaders.find((ldr: IDocumentStoreLoader) => ldr.id === docId)
     if (!loader) {
-        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Document loader ${docId} not found`)
+        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Document store loader not found')
     }
 
     const nodes = []

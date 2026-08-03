@@ -24,6 +24,10 @@ describe('authenticated PC core continuity', () => {
 
     const internalHeaders = { 'x-request-from': 'internal' }
 
+    const assertDocumentStoreVersionToken = (versionToken) => {
+        expect(versionToken).to.match(/^"ds-v1\.[1-9][0-9]*\.[A-Za-z0-9_-]{43}"$/)
+    }
+
     const createFlowFixture = (name, type, flowData = { nodes: [], edges: [] }) =>
         cy
             .request({
@@ -195,7 +199,13 @@ describe('authenticated PC core continuity', () => {
             }).then((response) => {
                 if (response.status === 404) return
                 expect(response.status).to.eq(200)
-                cy.request({ method: 'DELETE', url: `/api/v1/document-store/store/${id}`, headers: internalHeaders })
+                assertDocumentStoreVersionToken(response.body.versionToken)
+                expect(response.body).not.to.have.property('generationId')
+                cy.request({
+                    method: 'DELETE',
+                    url: `/api/v1/document-store/store/${id}`,
+                    headers: { ...internalHeaders, 'If-Match': response.body.versionToken }
+                })
                     .its('status')
                     .should('eq', 200)
                 cy.request({ url: `/api/v1/document-store/store/${id}`, headers: internalHeaders, failOnStatusCode: false })
@@ -368,6 +378,9 @@ describe('authenticated PC core continuity', () => {
         cy.get('#btn_submitDocumentStore').click()
         cy.wait('@createDocumentStore').then(({ response }) => {
             expect(response.statusCode).to.be.oneOf([200, 201])
+            assertDocumentStoreVersionToken(response.body.versionToken)
+            expect(response.body).not.to.have.property('generationId')
+            let documentStoreVersionToken = response.body.versionToken
             createdDocumentStoreIds.push(response.body.id)
             cy.contains(documentStoreName).should('be.visible')
             cy.intercept('GET', '**/api/v1/document-store/store*').as('searchDocumentStores')
@@ -392,7 +405,13 @@ describe('authenticated PC core continuity', () => {
             cy.get('#txtInput_documentStoreName').type(renamedDocumentStoreName)
             cy.intercept('PUT', `**/api/v1/document-store/store/${response.body.id}`).as('renameDocumentStore')
             cy.get('#btn_submitDocumentStore').click()
-            cy.wait('@renameDocumentStore').its('response.statusCode').should('eq', 200)
+            cy.wait('@renameDocumentStore').then(({ request, response: renameResponse }) => {
+                expect(request.headers['if-match']).to.eq(documentStoreVersionToken)
+                expect(renameResponse.statusCode).to.eq(200)
+                assertDocumentStoreVersionToken(renameResponse.body.versionToken)
+                expect(renameResponse.body).not.to.have.property('generationId')
+                documentStoreVersionToken = renameResponse.body.versionToken
+            })
             cy.contains(renamedDocumentStoreName).should('be.visible')
             cy.contains('新增文档库失败').should('not.exist')
             cy.contains('文档库已创建', { timeout: 10000 }).should('not.exist')
@@ -403,7 +422,10 @@ describe('authenticated PC core continuity', () => {
             cy.get('button[aria-label="文档库操作"]').click()
             cy.contains('[role="menuitem"]', '删除').click()
             cy.get('[role="dialog"]').contains('button', '确认删除').click()
-            cy.wait('@deleteDocumentStore').its('response.statusCode').should('eq', 200)
+            cy.wait('@deleteDocumentStore').then(({ request, response: deleteResponse }) => {
+                expect(request.headers['if-match']).to.eq(documentStoreVersionToken)
+                expect(deleteResponse.statusCode).to.eq(200)
+            })
             cy.contains('暂无文档库').should('be.visible')
         })
 

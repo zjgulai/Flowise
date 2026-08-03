@@ -1,11 +1,9 @@
 import express from 'express'
 import cors from 'cors'
+import { StatusCodes } from 'http-status-codes'
 import mcpEndpointController from '../../controllers/mcp-endpoint'
 
 const router = express.Router()
-
-// Body size limit: 1MB max for MCP JSON-RPC payloads (overrides the global 50mb limit)
-router.use(express.json({ limit: '1mb', type: 'application/json' }))
 
 // CORS: Use MCP_CORS_ORIGINS if set, otherwise allow only non-browser (no Origin header) requests.
 // MCP desktop clients (Claude Desktop, Cursor, etc.) don't send an Origin header, so they pass through.
@@ -36,10 +34,24 @@ router.post(
     '/:chatflowId',
     mcpEndpointController.getRateLimiterMiddleware,
     mcpEndpointController.authenticateToken,
+    express.json({ limit: '1mb', type: 'application/json' }),
     mcpEndpointController.handlePost
 )
 
 // DELETE — Session termination (stateless mode returns 405)
 router.delete('/:chatflowId', mcpEndpointController.handleDelete)
+
+// Keep every MCP-shaped request on the bounded pre-parser path. Unknown methods
+// and subpaths must not fall through to the application's global body parsers.
+router.use((_req, res) =>
+    res.status(StatusCodes.NOT_FOUND).json({
+        jsonrpc: '2.0',
+        error: {
+            code: -32601,
+            message: 'MCP endpoint not found'
+        },
+        id: null
+    })
+)
 
 export default router

@@ -18,7 +18,11 @@ import AddDocStoreDialog from '@/views/docstore/AddDocStoreDialog'
 import DeleteDocStoreDialog from '@/views/docstore/DeleteDocStoreDialog'
 
 // API
-import documentsApi from '@/api/documentstore'
+import documentsApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 import { useAuth } from '@/hooks/useAuth'
 import useApi from '@/hooks/useApi'
 
@@ -71,7 +75,7 @@ const Documents = () => {
     const [showDeleteDocStoreDialog, setShowDeleteDocStoreDialog] = useState(false)
     const [deleteDocStoreDialogProps, setDeleteDocStoreDialogProps] = useState({})
 
-    const canRenameDocumentStore = hasPermission('documentStores:create,documentStores:update')
+    const canRenameDocumentStore = hasPermission('documentStores:update')
     const canDeleteDocumentStore = hasPermission('documentStores:delete')
     const canManageDocumentStore = canRenameDocumentStore || canDeleteDocumentStore
     const isActionMenuOpen = Boolean(actionMenuAnchorEl)
@@ -152,7 +156,8 @@ const Documents = () => {
             data: {
                 id: selectedDocumentStore.id,
                 name: selectedDocumentStore.name,
-                description: selectedDocumentStore.description
+                description: selectedDocumentStore.description,
+                versionToken: selectedDocumentStore.versionToken
             }
         }
         handleActionMenuClose()
@@ -165,15 +170,10 @@ const Documents = () => {
         const documentStoreToDelete = selectedDocumentStore
         handleActionMenuClose()
 
-        let description = `确定删除文档库“${documentStoreToDelete.name}”吗？删除后它将从列表中移除。`
+        let description = `确定删除文档库“${documentStoreToDelete.name}”吗？此操作会删除系统本地的文档库记录、加载器和分块。`
 
-        if (
-            documentStoreToDelete.recordManagerConfig &&
-            documentStoreToDelete.vectorStoreConfig &&
-            Object.keys(documentStoreToDelete.recordManagerConfig).length > 0 &&
-            Object.keys(documentStoreToDelete.vectorStoreConfig).length > 0
-        ) {
-            description = `确定删除文档库“${documentStoreToDelete.name}”吗？此操作还会删除向量数据库中的实际数据，且无法撤销。`
+        if (documentStoreToDelete.vectorStoreConfig && Object.keys(documentStoreToDelete.vectorStoreConfig).length > 0) {
+            description = `确定删除文档库“${documentStoreToDelete.name}”吗？此操作仅删除系统本地的文档库记录及分块，不会删除外部向量服务中的数据。外部数据需按受控清理流程另行处理，两步无法保证原子性。`
         }
 
         setDeleteDocStoreDialogProps({
@@ -182,23 +182,26 @@ const Documents = () => {
             vectorStoreConfig: documentStoreToDelete.vectorStoreConfig,
             recordManagerConfig: documentStoreToDelete.recordManagerConfig,
             type: 'STORE',
-            storeId: documentStoreToDelete.id
+            storeId: documentStoreToDelete.id,
+            versionToken: documentStoreToDelete.versionToken
         })
         setShowDeleteDocStoreDialog(true)
     }
 
     const onDocStoreDelete = async (type) => {
-        setShowDeleteDocStoreDialog(false)
         if (type !== 'STORE') return
 
         const storeId = deleteDocStoreDialogProps?.storeId
         if (!storeId) return
 
         try {
-            const deleteResp = await documentsApi.deleteDocumentStore(storeId)
+            const deleteResp = await documentsApi.deleteDocumentStore(storeId, deleteDocStoreDialogProps?.versionToken)
             if (deleteResp.data) {
+                setShowDeleteDocStoreDialog(false)
                 enqueueSnackbar({
-                    message: '文档库已删除',
+                    message: deleteDocStoreDialogProps?.vectorStoreConfig
+                        ? '本地文档库已删除；外部向量服务中的数据未自动清理'
+                        : '本地文档库已删除',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -219,6 +222,29 @@ const Documents = () => {
                 setTotal((prev) => Math.max(0, prev - 1))
             }
         } catch (error) {
+            if (isDocumentStoreVersionConflict(error)) {
+                setShowDeleteDocStoreDialog(false)
+                setDeleteDocStoreDialogProps({})
+                try {
+                    const latestResponse = await documentsApi.getSpecificDocumentStore(storeId)
+                    requireDocumentStoreVersionToken(latestResponse.data)
+                    setDocStores((current) =>
+                        current.map((documentStore) =>
+                            documentStore.id === storeId ? { ...documentStore, ...latestResponse.data } : documentStore
+                        )
+                    )
+                } catch {
+                    setDeleteDocStoreDialogProps((current) => ({ ...current, versionToken: undefined }))
+                }
+                enqueueSnackbar({
+                    message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                    options: {
+                        key: new Date().getTime() + Math.random(),
+                        variant: 'warning'
+                    }
+                })
+                return
+            }
             const errorMessage = getErrorMessage(error, '未知错误')
 
             enqueueSnackbar({

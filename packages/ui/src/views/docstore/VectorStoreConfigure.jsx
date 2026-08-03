@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid'
 import moment from 'moment/moment'
 
 // material-ui
-import { Button, Stack, Grid, Box, Typography, IconButton, Stepper, Step, StepLabel } from '@mui/material'
+import { Alert, Button, Stack, Grid, Box, Typography, IconButton, Stepper, Step, StepLabel } from '@mui/material'
 
 // project imports
 import MainCard from '@/ui-component/cards/MainCard'
@@ -21,7 +21,11 @@ import UpsertHistorySideDrawer from './UpsertHistorySideDrawer'
 import UpsertHistoryDetailsDialog from './UpsertHistoryDetailsDialog'
 
 // API
-import documentsApi from '@/api/documentstore'
+import documentsApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 import nodesApi from '@/api/nodes'
 
 // Hooks
@@ -61,14 +65,13 @@ const VectorStoreConfigure = () => {
     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
 
     const getSpecificDocumentStoreApi = useApi(documentsApi.getSpecificDocumentStore)
-    const insertIntoVectorStoreApi = useApi(documentsApi.insertIntoVectorStore)
-    const saveVectorStoreConfigApi = useApi(documentsApi.saveVectorStoreConfig)
     const getEmbeddingNodeDetailsApi = useApi(nodesApi.getSpecificNode)
     const getVectorStoreNodeDetailsApi = useApi(nodesApi.getSpecificNode)
     const getRecordManagerNodeDetailsApi = useApi(nodesApi.getSpecificNode)
 
     const [loading, setLoading] = useState(true)
     const [documentStore, setDocumentStore] = useState({})
+    const [hasVersionConflict, setHasVersionConflict] = useState(false)
     const [dialogProps, setDialogProps] = useState({})
     const [currentLoader, setCurrentLoader] = useState(null)
 
@@ -308,18 +311,77 @@ const VectorStoreConfigure = () => {
         return data
     }
 
-    const tryAndInsertIntoStore = () => {
+    const enterVersionConflict = () => {
+        setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+        setHasVersionConflict(true)
+        enqueueSnackbar({
+            message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+            options: { variant: 'warning' }
+        })
+    }
+
+    const reloadLatestValues = () => window.location.reload()
+
+    const tryAndInsertIntoStore = async () => {
+        if (hasVersionConflict) return
         if (checkMandatoryFields()) {
             setLoading(true)
             const data = prepareConfigData()
-            insertIntoVectorStoreApi.request(data)
+            try {
+                const insertResponse = await documentsApi.insertIntoVectorStore(data, documentStore.versionToken)
+                const advancedVersionToken = requireDocumentStoreVersionToken(insertResponse.data)
+                setDocumentStore((current) => ({ ...current, versionToken: advancedVersionToken }))
+
+                const { result, ...resultEnvelope } = insertResponse.data
+                delete resultEnvelope.versionToken
+                const resultDetails = result && typeof result === 'object' ? result : resultEnvelope
+                setUpsertResultDialogProps({
+                    ...resultDetails,
+                    ...(typeof result === 'string' ? { result } : {}),
+                    goToRetrievalQuery: true
+                })
+                setShowUpsertHistoryDialog(true)
+            } catch (error) {
+                if (isDocumentStoreVersionConflict(error)) {
+                    enterVersionConflict()
+                } else {
+                    setError(error)
+                }
+            } finally {
+                setLoading(false)
+            }
         }
     }
 
-    const saveVectorStoreConfig = () => {
+    const saveVectorStoreConfig = async () => {
+        if (hasVersionConflict) return
         setLoading(true)
         const data = prepareConfigData()
-        saveVectorStoreConfigApi.request(data)
+        try {
+            const saveResponse = await documentsApi.saveVectorStoreConfig(data, documentStore.versionToken)
+            requireDocumentStoreVersionToken(saveResponse.data)
+            setDocumentStore(saveResponse.data)
+            enqueueSnackbar({
+                message: '配置已保存',
+                options: {
+                    key: new Date().getTime() + Math.random(),
+                    variant: 'success',
+                    action: (key) => (
+                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                            <IconX />
+                        </Button>
+                    )
+                }
+            })
+        } catch (error) {
+            if (isDocumentStoreVersionConflict(error)) {
+                enterVersionConflict()
+            } else {
+                setError(error)
+            }
+        } finally {
+            setLoading(false)
+        }
     }
 
     const resetVectorStoreConfig = () => {
@@ -400,50 +462,6 @@ const VectorStoreConfigure = () => {
     }
 
     useEffect(() => {
-        if (saveVectorStoreConfigApi.data) {
-            setLoading(false)
-            enqueueSnackbar({
-                message: '配置已保存',
-                options: {
-                    key: new Date().getTime() + Math.random(),
-                    variant: 'success',
-                    action: (key) => (
-                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                            <IconX />
-                        </Button>
-                    )
-                }
-            })
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [saveVectorStoreConfigApi.data])
-
-    useEffect(() => {
-        if (insertIntoVectorStoreApi.data) {
-            setLoading(false)
-            setShowUpsertHistoryDialog(true)
-            setUpsertResultDialogProps({ ...insertIntoVectorStoreApi.data, goToRetrievalQuery: true })
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [insertIntoVectorStoreApi.data])
-
-    useEffect(() => {
-        if (insertIntoVectorStoreApi.error) {
-            setLoading(false)
-            setError(insertIntoVectorStoreApi.error)
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [insertIntoVectorStoreApi.error])
-
-    useEffect(() => {
-        if (saveVectorStoreConfigApi.error) {
-            setLoading(false)
-            setError(saveVectorStoreConfigApi.error)
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [saveVectorStoreConfigApi.error])
-
-    useEffect(() => {
         getSpecificDocumentStoreApi.request(storeId)
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -454,6 +472,14 @@ const VectorStoreConfigure = () => {
             const docStore = getSpecificDocumentStoreApi.data
             if (!hasAssignedWorkspace(docStore.workspaceId)) {
                 navigate('/unauthorized')
+                return
+            }
+            try {
+                requireDocumentStoreVersionToken(docStore)
+            } catch (versionError) {
+                setDocumentStore({ ...docStore, versionToken: undefined })
+                setLoading(false)
+                setError(versionError)
                 return
             }
             setDocumentStore(docStore)
@@ -550,6 +576,7 @@ const VectorStoreConfigure = () => {
                                     {(Object.keys(selectedEmbeddingsProvider).length > 0 ||
                                         Object.keys(selectedVectorStoreProvider).length > 0) && (
                                         <Button
+                                            disabled={hasVersionConflict}
                                             variant='outlined'
                                             color='secondary'
                                             sx={{
@@ -565,6 +592,7 @@ const VectorStoreConfigure = () => {
                                     {Object.keys(selectedEmbeddingsProvider).length > 0 &&
                                         Object.keys(selectedVectorStoreProvider).length > 0 && (
                                             <Button
+                                                disabled={hasVersionConflict}
                                                 variant='contained'
                                                 sx={{
                                                     borderRadius: 2,
@@ -584,6 +612,18 @@ const VectorStoreConfigure = () => {
                                         <IconClock />
                                     </IconButton>
                                 </ViewHeader>
+                                {hasVersionConflict && (
+                                    <Alert
+                                        severity='warning'
+                                        action={
+                                            <Button color='inherit' size='small' onClick={reloadLatestValues}>
+                                                重新载入最新值
+                                            </Button>
+                                        }
+                                    >
+                                        当前配置草稿已保留，但不能与新版本令牌混用。重新载入将放弃当前草稿并获取最新配置。
+                                    </Alert>
+                                )}
                                 <Steps />
                                 <Grid container spacing={1}>
                                     <Grid item xs={12} sm={4} md={4}>

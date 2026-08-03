@@ -3,8 +3,172 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StdioClientTransport, StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { CallToolRequest, CallToolResultSchema, ListToolsResult, ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js'
-import { checkDenyList, secureFetch } from '../../../src/httpSecurity'
+import { Readable } from 'stream'
+import { RequestInit as NodeFetchRequestInit, Response as NodeFetchResponse } from 'node-fetch'
+import { createFixedOriginPolicy, secureFetch } from '../../../src/httpSecurity'
+
+const MCP_TRANSPORT_REQUEST_FAILED = 'MCP transport request failed.'
+const MCP_TRANSPORT_CONNECTION_FAILED = 'MCP transport connection failed.'
+const MCP_INITIALIZATION_FAILED = 'MCP initialization failed.'
+const MCP_TOOL_REQUEST_FAILED = 'MCP tool request failed.'
+const EMPTY_RESPONSE_BODY_STATUSES = new Set([204, 205, 304])
+const MAX_MCP_REQUEST_HEADERS = 64
+const MAX_MCP_HEADER_NAME_BYTES = 128
+const MAX_MCP_HEADER_VALUE_BYTES = 8 * 1024
+const MAX_MCP_HEADER_BYTES = 32 * 1024
+const MCP_FORBIDDEN_REQUEST_HEADERS = new Set([
+    'connection',
+    'content-length',
+    'expect',
+    'forwarded',
+    'host',
+    'http2-settings',
+    'keep-alive',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'proxy-connection',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+    'x-forwarded-host',
+    'x-forwarded-port',
+    'x-forwarded-proto'
+])
+
+const disposeMcpRawBody = (rawBody: unknown): void => {
+    if (!rawBody || typeof rawBody !== 'object') return
+    const body = rawBody as { destroy?: () => void; cancel?: () => Promise<unknown> | unknown }
+    if (typeof body.destroy === 'function') {
+        try {
+            body.destroy()
+            return
+        } catch {
+            // Fall through to a web-stream cancellation attempt when present.
+        }
+    }
+    if (typeof body.cancel === 'function') {
+        try {
+            Promise.resolve(body.cancel()).catch(() => undefined)
+        } catch {
+            // Empty-status cleanup must not expose transport data.
+        }
+    }
+}
+
+const normalizeMcpRequestHeaders = (staticHeaders: unknown, injectedHeaders: unknown): Record<string, string> | undefined => {
+    const normalized = new Map<string, { name: string; value: string }>()
+    let entryCount = 0
+    let totalBytes = 0
+
+    for (const source of [staticHeaders, injectedHeaders]) {
+        if (source === undefined || source === null) continue
+        const entries =
+            source instanceof globalThis.Headers
+                ? Array.from(source.entries())
+                : typeof source === 'object' && !Array.isArray(source)
+                ? Object.entries(source as Record<string, unknown>)
+                : undefined
+        if (!entries) throw new Error(MCP_TRANSPORT_CONNECTION_FAILED)
+
+        for (const [name, value] of entries) {
+            entryCount += 1
+            if (
+                entryCount > MAX_MCP_REQUEST_HEADERS ||
+                !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name) ||
+                typeof value !== 'string' ||
+                /[\u0000\r\n]/.test(value)
+            ) {
+                throw new Error(MCP_TRANSPORT_CONNECTION_FAILED)
+            }
+
+            const lowerName = name.toLowerCase()
+            if (MCP_FORBIDDEN_REQUEST_HEADERS.has(lowerName)) throw new Error(MCP_TRANSPORT_CONNECTION_FAILED)
+
+            const nameBytes = Buffer.byteLength(name)
+            const valueBytes = Buffer.byteLength(value)
+            totalBytes += nameBytes + valueBytes
+            if (nameBytes > MAX_MCP_HEADER_NAME_BYTES || valueBytes > MAX_MCP_HEADER_VALUE_BYTES || totalBytes > MAX_MCP_HEADER_BYTES) {
+                throw new Error(MCP_TRANSPORT_CONNECTION_FAILED)
+            }
+
+            const existing = normalized.get(lowerName)
+            normalized.set(lowerName, { name: existing?.name ?? name, value })
+        }
+    }
+
+    if (normalized.size === 0) return undefined
+    const headers: Record<string, string> = Object.create(null)
+    for (const { name, value } of normalized.values()) headers[name] = value
+    return headers
+}
+
+const createSdkClient = (): Client =>
+    new Client(
+        {
+            name: 'flowise-client',
+            version: '1.0.0'
+        },
+        {
+            capabilities: {}
+        }
+    )
+
+const closeSdkClient = async (client: Client): Promise<void> => {
+    try {
+        await client.close()
+    } catch {
+        // Best-effort cleanup only.
+    }
+}
+
+/**
+ * Converts node-fetch's pinned-agent response into the web Response expected by
+ * the MCP SDK without copying or buffering streaming SSE bodies.
+ */
+const toSdkResponse = (response: NodeFetchResponse): globalThis.Response => {
+    // Native web Responses reject informational statuses. Treat them as a
+    // fixed transport failure instead of depending on a runtime RangeError.
+    if (response.status < 200 || response.status > 599) throw new Error(MCP_TRANSPORT_REQUEST_FAILED)
+
+    const headers = new globalThis.Headers()
+    response.headers.forEach((value, name) => headers.append(name, value))
+    const rawBody = response.body as unknown
+    const isEmptyResponse = EMPTY_RESPONSE_BODY_STATUSES.has(response.status)
+    if (isEmptyResponse) disposeMcpRawBody(rawBody)
+    const body = isEmptyResponse
+        ? null
+        : rawBody instanceof Readable
+        ? (Readable.toWeb(rawBody) as ReadableStream<Uint8Array>)
+        : (rawBody as BodyInit | null)
+
+    return new globalThis.Response(body, {
+        status: response.status,
+        // Do not propagate a remote-controlled status text into SDK errors.
+        statusText: '',
+        headers
+    })
+}
+
+/**
+ * Gives every MCP SDK HTTP operation the same pinned, redirect-aware transport.
+ * The policy keeps authorization headers and endpoint tokens on the initially
+ * configured origin and forces the default private/special-address deny list.
+ */
+const createMcpTransportFetch = (baseUrl: URL): FetchLike => {
+    const policy = createFixedOriginPolicy(baseUrl.origin)
+
+    return async (url, init) => {
+        try {
+            const response = await secureFetch(url.toString(), init as NodeFetchRequestInit, 5, undefined, policy)
+            return toSdkResponse(response)
+        } catch {
+            throw new Error(MCP_TRANSPORT_REQUEST_FAILED)
+        }
+    }
+}
 
 export class MCPToolkit extends BaseToolkit {
     tools: Tool[] = []
@@ -27,15 +191,7 @@ export class MCPToolkit extends BaseToolkit {
      * @param injectHeaders - Additional HTTP headers merged over static `serverParams.headers` for this connection. Used to pass per-invocation headers (e.g. from {@link getToolCallHeaders}) into SSE/HTTP transports.
      */
     async createClient(injectHeaders: Record<string, string> = {}): Promise<Client> {
-        const client = new Client(
-            {
-                name: 'flowise-client',
-                version: '1.0.0'
-            },
-            {
-                capabilities: {}
-            }
-        )
+        let client = createSdkClient()
 
         let transport: StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport
 
@@ -49,54 +205,55 @@ export class MCPToolkit extends BaseToolkit {
                 }
             }
 
-            transport = new StdioClientTransport(params as StdioServerParameters)
-            await client.connect(transport)
+            try {
+                transport = new StdioClientTransport(params as StdioServerParameters)
+                await client.connect(transport)
+            } catch {
+                await closeSdkClient(client)
+                throw new Error(MCP_TRANSPORT_CONNECTION_FAILED)
+            }
         } else {
             if (this.serverParams.url === undefined) {
                 throw new Error('URL is required for SSE transport')
             }
 
-            const baseUrl = new URL(this.serverParams.url)
-            await checkDenyList(this.serverParams.url)
-            const mergedHeaders = { ...this.serverParams?.headers, ...injectHeaders }
-            const headers = Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined
+            let baseUrl: URL
             try {
-                if (headers) {
-                    transport = new StreamableHTTPClientTransport(baseUrl, {
-                        requestInit: {
-                            headers
-                        }
-                    })
-                } else {
-                    transport = new StreamableHTTPClientTransport(baseUrl)
+                baseUrl = new URL(this.serverParams.url)
+                if (baseUrl.protocol !== 'https:' || baseUrl.username || baseUrl.password) {
+                    throw new Error(MCP_TRANSPORT_CONNECTION_FAILED)
                 }
+            } catch {
+                throw new Error(MCP_TRANSPORT_CONNECTION_FAILED)
+            }
+            const transportFetch = createMcpTransportFetch(baseUrl)
+            let headers: Record<string, string> | undefined
+            try {
+                headers = normalizeMcpRequestHeaders(this.serverParams?.headers, injectHeaders)
+            } catch {
+                await closeSdkClient(client)
+                throw new Error(MCP_TRANSPORT_CONNECTION_FAILED)
+            }
+            try {
+                transport = new StreamableHTTPClientTransport(baseUrl, {
+                    ...(headers ? { requestInit: { headers } } : {}),
+                    fetch: transportFetch
+                })
                 await client.connect(transport)
-            } catch (error) {
-                console.error('Error connecting to MCP server', error)
-                if (headers) {
+            } catch {
+                console.error('[MCPToolkit] Streamable HTTP transport unavailable; trying SSE fallback.')
+                await closeSdkClient(client)
+                client = createSdkClient()
+                try {
                     transport = new SSEClientTransport(baseUrl, {
-                        requestInit: {
-                            headers
-                        },
-                        eventSourceInit: {
-                            fetch: async (url, init) => {
-                                return secureFetch(url.toString(), {
-                                    ...(init as any),
-                                    headers
-                                }) as any
-                            }
-                        }
+                        ...(headers ? { requestInit: { headers } } : {}),
+                        fetch: transportFetch
                     })
-                } else {
-                    transport = new SSEClientTransport(baseUrl, {
-                        eventSourceInit: {
-                            fetch: async (url, init) => {
-                                return secureFetch(url.toString(), init as any) as any
-                            }
-                        }
-                    })
+                    await client.connect(transport)
+                } catch {
+                    await closeSdkClient(client)
+                    throw new Error(MCP_TRANSPORT_CONNECTION_FAILED)
                 }
-                await client.connect(transport)
             }
         }
 
@@ -105,14 +262,16 @@ export class MCPToolkit extends BaseToolkit {
 
     async initialize() {
         if (this._tools === null) {
-            this.client = await this.createClient()
-
-            this._tools = await this.client.request({ method: 'tools/list' }, ListToolsResultSchema)
-
-            this.tools = await this.get_tools()
-
-            // Close the initial client after initialization
-            await this.client.close()
+            try {
+                this.client = await this.createClient()
+                this._tools = await this.client.request({ method: 'tools/list' }, ListToolsResultSchema)
+                this.tools = await this.get_tools()
+            } catch {
+                throw new Error(MCP_INITIALIZATION_FAILED)
+            } finally {
+                // Close the initial client after initialization without exposing cleanup details.
+                if (this.client) await closeSdkClient(this.client)
+            }
         }
     }
 
@@ -135,7 +294,7 @@ export class MCPToolkit extends BaseToolkit {
         const res = await Promise.allSettled(toolsPromises)
         const errors = res.filter((r) => r.status === 'rejected')
         if (errors.length !== 0) {
-            console.error('MCP Tools failed to be resolved', errors)
+            console.error('[MCPToolkit] Some MCP tools could not be resolved.')
         }
         const successes = res.filter((r) => r.status === 'fulfilled').map((r) => r.value)
         return successes
@@ -155,19 +314,22 @@ export async function MCPTool({
 }): Promise<Tool> {
     return tool(
         async (input): Promise<string> => {
-            // Create a new client for this request
-            const toolCallHeaders = await toolkit.getToolCallHeaders?.()
-            const client = await toolkit.createClient(toolCallHeaders)
+            let client: Client | undefined
 
             try {
+                // Create a new client for this request.
+                const toolCallHeaders = await toolkit.getToolCallHeaders?.()
+                client = await toolkit.createClient(toolCallHeaders)
                 const req: CallToolRequest = { method: 'tools/call', params: { name: name, arguments: input as any } }
                 const res = await client.request(req, CallToolResultSchema)
                 const content = res.content
                 const contentString = JSON.stringify(content)
                 return contentString
+            } catch {
+                throw new Error(MCP_TOOL_REQUEST_FAILED)
             } finally {
-                // Always close the client after the request completes
-                await client.close()
+                // Always close the client after the request completes without exposing cleanup details.
+                if (client) await closeSdkClient(client)
             }
         },
         {
