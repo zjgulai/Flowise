@@ -14,11 +14,12 @@ import {
     TooltipProps,
     Typography
 } from '@mui/material'
-import Autocomplete from '@mui/material/Autocomplete'
+import Autocomplete, { createFilterOptions } from '@mui/material/Autocomplete'
 import { styled, useTheme } from '@mui/material/styles'
 import { tooltipClasses } from '@mui/material/Tooltip'
 import { IconArrowsMaximize, IconVariable } from '@tabler/icons-react'
 
+import { createMetadataDisplayView, getMetadataOptionSearchText } from '@/core/primitives'
 import type { InputAnchor, InputParam, NodeData, StateUpdate } from '@/core/types'
 
 import ArrayInput from './ArrayInput'
@@ -40,6 +41,20 @@ const CustomWidthTooltip = styled(({ className, ...props }: TooltipProps) => <To
         maxWidth: 500
     }
 })
+
+type StaticMetadataOption = { label: string; name: string; description?: string }
+
+const filterMetadataOptions = createFilterOptions<StaticMetadataOption>({ stringify: getMetadataOptionSearchText })
+
+const getSafeStaticOptionLabel = (option: StaticMetadataOption): string =>
+    typeof option.label === 'string' ? option.label : typeof option.name === 'string' ? option.name : ''
+
+const normalizeStaticOptions = (options: InputParam['options']): StaticMetadataOption[] =>
+    (options ?? []).flatMap((option): StaticMetadataOption[] => {
+        if (typeof option === 'string') return option ? [{ label: option, name: option }] : []
+        if (!option || typeof option !== 'object' || typeof option.name !== 'string' || !option.name) return []
+        return [option as StaticMetadataOption]
+    })
 
 /** Props passed to an async input component (asyncOptions / asyncMultiOptions). */
 export interface AsyncInputProps {
@@ -101,8 +116,8 @@ export interface NodeInputHandlerProps {
  * Handles basic input types: string, number, password, boolean, options, array, single-select, multi-select.
  */
 export function NodeInputHandler({
-    inputAnchor,
-    inputParam,
+    inputAnchor: rawInputAnchor,
+    inputParam: rawInputParam,
     data,
     disabled = false,
     isAdditionalParams = false,
@@ -124,14 +139,16 @@ export function NodeInputHandler({
     const [expandOpen, setExpandOpen] = useState(false)
     const [variableAnchorEl, setVariableAnchorEl] = useState<HTMLElement | null>(null)
     const [jsonDialogOpen, setJsonDialogOpen] = useState(false)
+    const inputAnchor = useMemo(() => createMetadataDisplayView(rawInputAnchor), [rawInputAnchor])
+    const inputParam = useMemo(() => createMetadataDisplayView(rawInputParam), [rawInputParam])
 
     const handleDataChange = useCallback(
         (newValue: unknown) => {
-            if (inputParam) {
-                onDataChange?.({ inputParam, newValue })
+            if (rawInputParam) {
+                onDataChange?.({ inputParam: rawInputParam, newValue })
             }
         },
-        [inputParam, onDataChange]
+        [rawInputParam, onDataChange]
     )
 
     useEffect(() => {
@@ -251,7 +268,7 @@ export function NodeInputHandler({
                 return <SwitchInput disabled={disabled} value={!!value} onChange={(checked) => handleDataChange(checked)} />
 
             case 'options': {
-                const dropdownOptions = (inputParam.options ?? []).map((opt) => (typeof opt === 'string' ? { label: opt, name: opt } : opt))
+                const dropdownOptions = normalizeStaticOptions(inputParam.options)
                 return (
                     <Dropdown
                         disabled={disabled}
@@ -265,7 +282,7 @@ export function NodeInputHandler({
 
             case 'multiOptions': {
                 // Stored as JSON-serialized array of names, e.g. '["option1","option2"]'
-                const staticOptions = (inputParam.options ?? []).map((opt) => (typeof opt === 'string' ? { label: opt, name: opt } : opt))
+                const staticOptions = normalizeStaticOptions(inputParam.options)
 
                 let selectedNames: string[] = []
                 if (typeof value === 'string' && value.startsWith('[')) {
@@ -274,8 +291,7 @@ export function NodeInputHandler({
                         if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
                             selectedNames = parsed
                         }
-                    } catch (e) {
-                        console.error('Failed to parse multiOptions value:', value, e)
+                    } catch {
                         selectedNames = []
                     }
                 } else if (Array.isArray(value)) {
@@ -285,14 +301,15 @@ export function NodeInputHandler({
                 const selectedOptions = staticOptions.filter((o) => selectedNames.includes(o.name))
 
                 return (
-                    <Autocomplete<{ label: string; name: string }, true>
+                    <Autocomplete<StaticMetadataOption, true>
                         multiple
                         filterSelectedOptions
                         size='small'
                         disabled={disabled}
                         options={staticOptions}
+                        filterOptions={filterMetadataOptions}
                         value={selectedOptions}
-                        getOptionLabel={(o) => o.label}
+                        getOptionLabel={getSafeStaticOptionLabel}
                         isOptionEqualToValue={(o, v) => o.name === v.name}
                         onChange={(_e, selection) => {
                             const names = selection.map((s) => s.name)

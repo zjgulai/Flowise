@@ -3,6 +3,8 @@ import { StatusCodes } from 'http-status-codes'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import openAIAssistantVectorStoreService from '../../services/openai-assistants-vector-store'
 import { validateFileMimeTypeAndExtensionMatch } from '../../utils/fileValidation'
+import { removeSpecificFileFromUpload } from 'flowise-components'
+import logger from '../../utils/logger'
 
 const getAssistantVectorStore = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -162,6 +164,7 @@ const deleteAssistantVectorStore = async (req: Request, res: Response, next: Nex
 }
 
 const uploadFilesToAssistantVectorStore = async (req: Request, res: Response, next: NextFunction) => {
+    let cleanupDelegatedToService = false
     try {
         if (!req.body) {
             throw new InternalFlowiseError(
@@ -181,6 +184,14 @@ const uploadFilesToAssistantVectorStore = async (req: Request, res: Response, ne
                 `Error: openaiAssistantsVectorStoreController.uploadFilesToAssistantVectorStore - credential not provided!`
             )
         }
+        const workspaceId = req.user?.activeWorkspaceId
+        if (!workspaceId) {
+            throw new InternalFlowiseError(
+                StatusCodes.NOT_FOUND,
+                `Error: openaiAssistantsVectorStoreController.uploadFilesToAssistantVectorStore - workspace not found!`
+            )
+        }
+
         const files = req.files ?? []
         const uploadFiles: { filePath: string; fileName: string }[] = []
 
@@ -190,22 +201,25 @@ const uploadFilesToAssistantVectorStore = async (req: Request, res: Response, ne
                 file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8')
 
                 // Validate file extension, MIME type, and content to prevent security vulnerabilities
-                validateFileMimeTypeAndExtensionMatch(file.originalname, file.mimetype)
+                try {
+                    validateFileMimeTypeAndExtensionMatch(file.originalname, file.mimetype)
+                } catch {
+                    throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Assistant vector store file upload validation failed')
+                }
+
+                const filePath = file.path ?? file.key
+                if (typeof filePath !== 'string' || !filePath) {
+                    throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid temporary upload path')
+                }
 
                 uploadFiles.push({
-                    filePath: file.path ?? file.key,
+                    filePath,
                     fileName: file.originalname
                 })
             }
         }
 
-        const workspaceId = req.user?.activeWorkspaceId
-        if (!workspaceId) {
-            throw new InternalFlowiseError(
-                StatusCodes.NOT_FOUND,
-                `Error: openaiAssistantsVectorStoreController.uploadFilesToAssistantVectorStore - workspace not found!`
-            )
-        }
+        cleanupDelegatedToService = true
         const apiResponse = await openAIAssistantVectorStoreService.uploadFilesToAssistantVectorStore(
             req.query.credential as string,
             req.params.id as string,
@@ -214,7 +228,26 @@ const uploadFilesToAssistantVectorStore = async (req: Request, res: Response, ne
         )
         return res.json(apiResponse)
     } catch (error) {
-        next(error)
+        let responseError = error
+        if (!cleanupDelegatedToService && Array.isArray(req.files)) {
+            const filePaths = [
+                ...new Set(
+                    req.files
+                        .map((file) => file.path ?? file.key)
+                        .filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0)
+                )
+            ]
+            const cleanupResults = await Promise.allSettled(filePaths.map((filePath) => removeSpecificFileFromUpload(filePath)))
+            const failedCount = cleanupResults.filter((result) => result.status === 'rejected').length
+            if (failedCount > 0) {
+                logger.error('openai_vector_store_controller_upload_cleanup_failed', {
+                    failedCount,
+                    totalCount: filePaths.length
+                })
+                responseError = new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Assistant vector store upload cleanup failed')
+            }
+        }
+        next(responseError)
     }
 }
 

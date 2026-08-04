@@ -39,6 +39,7 @@ import datasetsApi from '@/api/dataset'
 import useApi from '@/hooks/useApi'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useConfirm from '@/hooks/useConfirm'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -159,8 +160,8 @@ const EvalDatasetRows = () => {
     const addNew = () => {
         const dialogProp = {
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加',
             data: {
                 datasetId: datasetId,
                 datasetName: dataset.name
@@ -173,8 +174,8 @@ const EvalDatasetRows = () => {
     const uploadCSV = () => {
         const dialogProp = {
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Upload',
+            cancelButtonName: '取消',
+            confirmButtonName: '上传',
             data: {
                 datasetId: datasetId,
                 datasetName: dataset.name
@@ -187,8 +188,8 @@ const EvalDatasetRows = () => {
     const editDs = () => {
         const dialogProp = {
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             data: dataset
         }
         setDatasetDialogProps(dialogProp)
@@ -198,8 +199,8 @@ const EvalDatasetRows = () => {
     const edit = (item) => {
         const dialogProp = {
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             data: {
                 datasetName: dataset.name,
                 ...item
@@ -211,10 +212,10 @@ const EvalDatasetRows = () => {
 
     const deleteDatasetItems = async () => {
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete ${selected.length} dataset items?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除数据集条目',
+            description: `确定删除选中的 ${selected.length} 条数据集条目吗？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -223,7 +224,7 @@ const EvalDatasetRows = () => {
                 const deleteResp = await datasetsApi.deleteDatasetItems(selected)
                 if (deleteResp.data) {
                     enqueueSnackbar({
-                        message: 'Dataset Items deleted',
+                        message: '数据集条目已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -238,9 +239,7 @@ const EvalDatasetRows = () => {
                 }
             } catch (error) {
                 enqueueSnackbar({
-                    message: `Failed to delete dataset items: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `删除数据集条目失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -295,7 +294,7 @@ const EvalDatasetRows = () => {
                             onEdit={editDs}
                             onBack={() => window.history.back()}
                             search={false}
-                            title={`Dataset : ${dataset?.name || ''}`}
+                            title={`数据集：${dataset?.name || ''}`}
                             description={dataset?.description}
                         >
                             <StyledPermissionButton
@@ -306,7 +305,7 @@ const EvalDatasetRows = () => {
                                 onClick={uploadCSV}
                                 startIcon={<IconUpload />}
                             >
-                                Upload CSV
+                                上传 CSV
                             </StyledPermissionButton>
                             <StyledPermissionButton
                                 permissionId={'datasets:create,datasets:update'}
@@ -315,7 +314,7 @@ const EvalDatasetRows = () => {
                                 onClick={addNew}
                                 startIcon={<IconPlus />}
                             >
-                                New Item
+                                新增条目
                             </StyledPermissionButton>
                         </ViewHeader>
                         {selected.length > 0 && (
@@ -327,7 +326,7 @@ const EvalDatasetRows = () => {
                                 color='error'
                                 startIcon={<IconTrash />}
                             >
-                                Delete {selected.length} {selected.length === 1 ? 'item' : 'items'}
+                                删除选中的 {selected.length} 条记录
                             </PermissionButton>
                         )}
                         {!isLoading && dataset?.rows?.length <= 0 ? (
@@ -336,10 +335,10 @@ const EvalDatasetRows = () => {
                                     <img
                                         style={{ objectFit: 'cover', height: '20vh', width: 'auto' }}
                                         src={empty_datasetSVG}
-                                        alt='empty_datasetSVG'
+                                        alt='暂无数据集条目'
                                     />
                                 </Box>
-                                <div>No Dataset Items Yet</div>
+                                <div>暂无数据集条目</div>
                                 <StyledPermissionButton
                                     permissionId={'datasets:create,datasets:update'}
                                     variant='contained'
@@ -347,7 +346,7 @@ const EvalDatasetRows = () => {
                                     startIcon={<IconPlus />}
                                     onClick={addNew}
                                 >
-                                    New Item
+                                    新增条目
                                 </StyledPermissionButton>
                             </Stack>
                         ) : (
@@ -356,7 +355,7 @@ const EvalDatasetRows = () => {
                                     sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }}
                                     component={Paper}
                                 >
-                                    <Table sx={{ minWidth: 650 }} aria-label='simple table'>
+                                    <Table sx={{ minWidth: 650 }} aria-label='数据集条目列表'>
                                         <TableHead
                                             sx={{
                                                 backgroundColor: customization.isDarkMode
@@ -372,12 +371,12 @@ const EvalDatasetRows = () => {
                                                         checked={selected.length === (dataset?.rows || []).length}
                                                         onChange={onSelectAllClick}
                                                         inputProps={{
-                                                            'aria-label': 'select all'
+                                                            'aria-label': '全选'
                                                         }}
                                                     />
                                                 </StyledTableCell>
                                                 <StyledTableCell>输入</StyledTableCell>
-                                                <StyledTableCell>Expected Output</StyledTableCell>
+                                                <StyledTableCell>预期输出</StyledTableCell>
                                                 <StyledTableCell style={{ width: '1%' }}>
                                                     <IconArrowsDownUp />
                                                 </StyledTableCell>
@@ -470,7 +469,7 @@ const EvalDatasetRows = () => {
                                     </Table>
                                 </TableContainer>
                                 <Typography sx={{ color: theme.palette.grey[600], marginTop: -2 }} variant='subtitle2'>
-                                    <i>Use the drag icon at (extreme right) to reorder the dataset items</i>
+                                    <i>拖动最右侧图标可调整数据集条目的顺序</i>
                                 </Typography>
                                 {/* Pagination and Page Size Controls */}
                                 <TablePagination currentPage={currentPage} limit={pageLimit} total={total} onChange={onChange} />

@@ -65,7 +65,7 @@ describe('NodeInfoDialog', () => {
 
     it('should render version badge', async () => {
         await renderDialog()
-        expect(screen.getByText('version 2')).toBeInTheDocument()
+        expect(screen.getByText('版本 2')).toBeInTheDocument()
     })
 
     it('should render description', async () => {
@@ -122,12 +122,12 @@ describe('NodeInfoDialog', () => {
             documentation: 'https://docs.example.com/node'
         })
         await renderDialog({ data })
-        expect(screen.getByRole('button', { name: /documentation/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /文档/i })).toBeInTheDocument()
     })
 
     it('should not render documentation button when no URL', async () => {
         await renderDialog()
-        expect(screen.queryByRole('button', { name: /documentation/i })).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /文档/i })).not.toBeInTheDocument()
     })
 
     it('should render schema info icon when config entry has schema', async () => {
@@ -176,7 +176,7 @@ describe('NodeInfoDialog', () => {
         await user.hover(infoButton)
 
         await waitFor(() => {
-            expect(screen.getByText('Schema:')).toBeInTheDocument()
+            expect(screen.getByText('Schema：')).toBeInTheDocument()
         })
     })
 
@@ -207,7 +207,7 @@ describe('NodeInfoDialog', () => {
         await user.hover(infoButton)
 
         await waitFor(() => {
-            expect(screen.getByText('Schema:')).toBeInTheDocument()
+            expect(screen.getByText('Schema：')).toBeInTheDocument()
             expect(screen.getByText(/"key"/)).toBeInTheDocument()
         })
     })
@@ -221,7 +221,7 @@ describe('NodeInfoDialog', () => {
             documentation: 'https://docs.example.com/node'
         })
         await renderDialog({ data })
-        screen.getByRole('button', { name: /documentation/i }).click()
+        screen.getByRole('button', { name: /文档/i }).click()
         expect(openSpy).toHaveBeenCalledWith('https://docs.example.com/node', '_blank', 'noopener,noreferrer')
         openSpy.mockRestore()
     })
@@ -248,6 +248,7 @@ describe('NodeInfoDialog', () => {
     })
 
     it('should display Override column header with tooltip icon when config has enabled field', async () => {
+        const user = userEvent.setup()
         mockGetNodeConfig.mockResolvedValue([
             { node: 'LLM', nodeId: 'node-1', label: 'Model Name', name: 'modelName', type: 'string', enabled: true }
         ])
@@ -260,8 +261,29 @@ describe('NodeInfoDialog', () => {
         render(<NodeInfoDialog {...props} />)
 
         await waitFor(() => {
-            expect(screen.getByText('Override')).toBeInTheDocument()
+            expect(screen.getByText('允许覆盖')).toBeInTheDocument()
         })
+        const overrideHeader = screen.getByText('允许覆盖').parentElement!
+        await user.hover(overrideHeader.querySelector('svg')!)
+        expect(
+            await screen.findByText(
+                '启用后，可在 API 调用和嵌入组件中覆盖此变量；禁用后将忽略所有覆盖值。如需修改，请前往对话流程配置中的安全设置。'
+            )
+        ).toBeInTheDocument()
+    })
+
+    it('maps a Config-suffixed config row back to the localized base input definition', async () => {
+        mockGetNodeByName.mockResolvedValue({
+            name: 'llmAgentflow',
+            label: 'LLM',
+            inputs: [{ id: 'model', name: 'model', label: 'Model', displayLabel: '模型', type: 'string' }]
+        })
+        mockGetNodeConfig.mockResolvedValue([{ node: 'LLM', nodeId: 'node-1', label: 'Model Config', name: 'modelConfig', type: 'string' }])
+
+        await renderDialog()
+
+        expect(screen.getByText('模型')).toBeInTheDocument()
+        expect(screen.queryByText('Model Config')).not.toBeInTheDocument()
     })
 
     it('should handle API failures gracefully', async () => {
@@ -330,10 +352,10 @@ describe('NodeInfoDialog', () => {
             await waitFor(() => {
                 expect(screen.getByText('Starting point of the agentflow')).toBeInTheDocument()
             })
-            expect(screen.getByText('version 1.1')).toBeInTheDocument()
+            expect(screen.getByText('版本 1.1')).toBeInTheDocument()
             expect(screen.getByText('NEW')).toBeInTheDocument()
             expect(screen.getByText('core')).toBeInTheDocument()
-            expect(screen.getByRole('button', { name: /documentation/i })).toBeInTheDocument()
+            expect(screen.getByRole('button', { name: /文档/i })).toBeInTheDocument()
         })
 
         it('should prefer node data over component definition', async () => {
@@ -363,7 +385,7 @@ describe('NodeInfoDialog', () => {
             await waitFor(() => {
                 expect(screen.getByText('User-customized description')).toBeInTheDocument()
             })
-            expect(screen.getByText('version 3')).toBeInTheDocument()
+            expect(screen.getByText('版本 3')).toBeInTheDocument()
         })
     })
 })

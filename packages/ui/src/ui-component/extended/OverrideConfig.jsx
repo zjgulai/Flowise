@@ -24,6 +24,7 @@ import { StyledButton } from '@/ui-component/button/StyledButton'
 import { TooltipWithParser } from '@/ui-component/tooltip/TooltipWithParser'
 import { SwitchInput } from '@/ui-component/switch/Switch'
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction, SET_CHATFLOW } from '@/store/actions'
 
 // Icons
@@ -70,13 +71,13 @@ const OverrideConfigTable = ({ columns, onToggle, rows, sx }) => {
             } else if (typeof row.schema === 'object' && row.schema !== null) {
                 schemaContent = JSON.stringify(row.schema, null, 2).replace(/\n/g, '<br>').replace(/ /g, '&nbsp;')
             } else {
-                schemaContent = 'No schema available'
+                schemaContent = '暂无结构定义'
             }
 
             return (
                 <Stack direction='row' alignItems='center' spacing={0.5}>
                     <Typography sx={{ fontSize: '0.8rem' }}>{row[key]}</Typography>
-                    <TooltipWithParser title={`<div>Schema:<br/>${schemaContent}</div>`} />
+                    <TooltipWithParser title={`<div>结构定义：<br/>${schemaContent}</div>`} />
                 </Stack>
             )
         } else {
@@ -84,7 +85,7 @@ const OverrideConfigTable = ({ columns, onToggle, rows, sx }) => {
         }
     }
 
-    const columnLabels = { label: '标签', name: 'Name', type: 'Type', enabled: 'On' }
+    const columnLabels = { label: '标签', name: '名称', type: '类型', enabled: '启用' }
 
     return (
         <TableContainer
@@ -96,7 +97,7 @@ const OverrideConfigTable = ({ columns, onToggle, rows, sx }) => {
                 bgcolor: 'transparent'
             }}
         >
-            <Table size='small' sx={{ ...sx }} aria-label='override config table'>
+            <Table size='small' sx={{ ...sx }} aria-label='覆盖配置表'>
                 <TableHead>
                     <TableRow>
                         {columns.map((col, index) => (
@@ -338,7 +339,7 @@ const OverrideConfig = ({ dialogProps, hideTitle = false }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Override Configuration Saved',
+                    message: '覆盖配置已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -353,9 +354,7 @@ const OverrideConfig = ({ dialogProps, hideTitle = false }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to save Override Configuration: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存覆盖配置失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -398,17 +397,17 @@ const OverrideConfig = ({ dialogProps, hideTitle = false }) => {
         <Stack direction='column' spacing={2} sx={{ width: '100%' }}>
             {!hideTitle && (
                 <Typography variant='h3'>
-                    Override Configuration
+                    覆盖配置
                     <TooltipWithParser
                         style={{ mb: 1, mt: 2, marginLeft: 10 }}
                         title={
-                            'Enable or disable which properties of the flow configuration can be overridden. Refer to the <a href="https://docs.flowiseai.com/using-flowise/prediction#configuration-override" target="_blank">documentation</a> for more information.'
+                            '选择允许覆盖的流程配置属性。更多信息请参阅<a href="https://docs.flowiseai.com/using-flowise/prediction#configuration-override" target="_blank">文档</a>。'
                         }
                     />
                 </Typography>
             )}
             <Stack direction='column' spacing={2} sx={{ width: '100%' }}>
-                <SwitchInput label='Enable Override Configuration' onChange={setOverrideConfigStatus} value={overrideConfigStatus} />
+                <SwitchInput label='启用覆盖配置' onChange={setOverrideConfigStatus} value={overrideConfigStatus} />
                 {overrideConfigStatus && (
                     <>
                         {nodeOverrides && nodeConfig && (
@@ -520,7 +519,7 @@ const OverrideConfig = ({ dialogProps, hideTitle = false }) => {
             </Stack>
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
                 <StyledButton variant='contained' onClick={onOverrideConfigSave} sx={{ minWidth: 100 }}>
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </Stack>

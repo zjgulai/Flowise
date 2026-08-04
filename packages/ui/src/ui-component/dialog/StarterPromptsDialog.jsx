@@ -35,7 +35,7 @@ const StarterPromptsDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             aria-describedby='alert-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
-                {dialogProps.title || 'Conversation Starter Prompts'}
+                {dialogProps.title || '对话开场提示'}
             </DialogTitle>
             <DialogContent>
                 <StarterPrompts dialogProps={dialogProps} onConfirm={onConfirm} />

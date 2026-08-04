@@ -10,6 +10,7 @@ export class CachePool {
     activeEmbeddingCache: IActiveCache = {}
     activeMCPCache: { [key: string]: any } = {}
     ssoTokenCache: { [key: string]: any } = {}
+    private mcpCacheLocks = new Map<string, Promise<void>>()
 
     constructor() {
         if (process.env.MODE === MODE.QUEUE) {
@@ -136,6 +137,43 @@ export class CachePool {
             return this.activeMCPCache[`mcpCache:${cacheKey}`]
         }
         return undefined
+    }
+
+    /**
+     * Remove an MCP toolkit cache entry and return the previous value so callers
+     * can perform best-effort resource cleanup without retaining stale config.
+     */
+    async removeMCPCache(cacheKey: string): Promise<any | undefined> {
+        if (process.env.MODE !== MODE.QUEUE) {
+            const scopedKey = `mcpCache:${cacheKey}`
+            const previous = this.activeMCPCache[scopedKey]
+            delete this.activeMCPCache[scopedKey]
+            return previous
+        }
+        return undefined
+    }
+
+    /**
+     * Serialize cache validation and replacement for one MCP server. This keeps
+     * an older, slower initialization from overwriting a newer configuration.
+     */
+    async withMCPCacheLock<T>(cacheKey: string, operation: () => Promise<T>): Promise<T> {
+        const scopedKey = `mcpCache:${cacheKey}`
+        const previous = this.mcpCacheLocks.get(scopedKey) ?? Promise.resolve()
+        let release!: () => void
+        const gate = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        const tail = previous.catch(() => undefined).then(() => gate)
+        this.mcpCacheLocks.set(scopedKey, tail)
+
+        await previous.catch(() => undefined)
+        try {
+            return await operation()
+        } finally {
+            release()
+            if (this.mcpCacheLocks.get(scopedKey) === tail) this.mcpCacheLocks.delete(scopedKey)
+        }
     }
 
     /**

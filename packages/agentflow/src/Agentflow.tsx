@@ -6,7 +6,7 @@ import { IconRefreshAlert, IconSparkles } from '@tabler/icons-react'
 
 import { tokens } from './core/theme'
 import type { AgentFlowInstance, AgentflowProps, FlowData, FlowDataCallback, FlowEdge, FlowNode } from './core/types'
-import { initNode, resolveNodeType } from './core/utils'
+import { emitSanitizedFlowChange, initNode, resolveNodeType } from './core/utils'
 import { applyValidationErrorsToNodes, validateFlow } from './core/validation'
 import {
     AgentflowHeader,
@@ -184,13 +184,11 @@ function AgentflowCanvas({
             setLocalEdges(generatedEdges)
             setDirty(true)
 
-            if (onFlowGenerated) {
-                onFlowGenerated({
-                    nodes: generatedNodes,
-                    edges: generatedEdges,
-                    viewport: { x: 0, y: 0, zoom: 1 }
-                })
-            }
+            emitSanitizedFlowChange(onFlowGenerated, {
+                nodes: generatedNodes,
+                edges: generatedEdges,
+                viewport: { x: 0, y: 0, zoom: 1 }
+            })
         },
         [setLocalNodes, setLocalEdges, setDirty, onFlowGenerated]
     )

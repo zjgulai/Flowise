@@ -28,7 +28,7 @@ describe('CredentialTypeSelector', () => {
     it('renders search input with placeholder', () => {
         render(<CredentialTypeSelector schemas={schemas} apiBaseUrl={apiBaseUrl} onSelect={jest.fn()} />)
 
-        expect(screen.getByPlaceholderText('Search credential')).toBeInTheDocument()
+        expect(screen.getByPlaceholderText('搜索凭据')).toBeInTheDocument()
     })
 
     it('renders all credential cards with labels and icons', () => {
@@ -57,7 +57,7 @@ describe('CredentialTypeSelector', () => {
     it('filters schemas by search input', () => {
         render(<CredentialTypeSelector schemas={schemas} apiBaseUrl={apiBaseUrl} onSelect={jest.fn()} />)
 
-        const searchInput = screen.getByPlaceholderText('Search credential')
+        const searchInput = screen.getByPlaceholderText('搜索凭据')
         fireEvent.change(searchInput, { target: { value: 'bearer' } })
 
         expect(screen.getByText('HTTP Bearer Token')).toBeInTheDocument()
@@ -68,7 +68,7 @@ describe('CredentialTypeSelector', () => {
     it('search is case-insensitive', () => {
         render(<CredentialTypeSelector schemas={schemas} apiBaseUrl={apiBaseUrl} onSelect={jest.fn()} />)
 
-        fireEvent.change(screen.getByPlaceholderText('Search credential'), { target: { value: 'API' } })
+        fireEvent.change(screen.getByPlaceholderText('搜索凭据'), { target: { value: 'API' } })
 
         expect(screen.getByText('HTTP Api Key')).toBeInTheDocument()
         expect(screen.queryByText('HTTP Basic Auth')).not.toBeInTheDocument()
@@ -77,7 +77,7 @@ describe('CredentialTypeSelector', () => {
     it('clears search when clear button is clicked', () => {
         render(<CredentialTypeSelector schemas={schemas} apiBaseUrl={apiBaseUrl} onSelect={jest.fn()} />)
 
-        const searchInput = screen.getByPlaceholderText('Search credential')
+        const searchInput = screen.getByPlaceholderText('搜索凭据')
         fireEvent.change(searchInput, { target: { value: 'bearer' } })
 
         expect(screen.queryByText('HTTP Basic Auth')).not.toBeInTheDocument()
@@ -92,7 +92,7 @@ describe('CredentialTypeSelector', () => {
     it('shows no cards when search matches nothing', () => {
         render(<CredentialTypeSelector schemas={schemas} apiBaseUrl={apiBaseUrl} onSelect={jest.fn()} />)
 
-        fireEvent.change(screen.getByPlaceholderText('Search credential'), { target: { value: 'nonexistent' } })
+        fireEvent.change(screen.getByPlaceholderText('搜索凭据'), { target: { value: 'nonexistent' } })
 
         expect(screen.queryByText('HTTP Basic Auth')).not.toBeInTheDocument()
         expect(screen.queryByText('HTTP Bearer Token')).not.toBeInTheDocument()
@@ -103,7 +103,7 @@ describe('CredentialTypeSelector', () => {
     it('renders empty list when schemas is empty', () => {
         render(<CredentialTypeSelector schemas={[]} apiBaseUrl={apiBaseUrl} onSelect={jest.fn()} />)
 
-        expect(screen.getByPlaceholderText('Search credential')).toBeInTheDocument()
+        expect(screen.getByPlaceholderText('搜索凭据')).toBeInTheDocument()
         expect(screen.queryAllByRole('img')).toHaveLength(0)
     })
 

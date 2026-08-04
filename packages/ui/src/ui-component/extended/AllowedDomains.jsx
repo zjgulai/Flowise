@@ -13,6 +13,7 @@ import { TooltipWithParser } from '@/ui-component/tooltip/TooltipWithParser'
 
 // store
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // API
 import chatflowsApi from '@/api/chatflows'
@@ -60,7 +61,7 @@ const AllowedDomains = ({ dialogProps, onConfirm, hideTitle = false }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Allowed Origins Saved',
+                    message: '允许来源已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -76,9 +77,7 @@ const AllowedDomains = ({ dialogProps, onConfirm, hideTitle = false }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to save Allowed Origins: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存允许来源失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -122,16 +121,13 @@ const AllowedDomains = ({ dialogProps, onConfirm, hideTitle = false }) => {
         <Stack direction='column' spacing={2} sx={{ width: '100%' }}>
             {!hideTitle && (
                 <Typography variant='h3'>
-                    Allowed Domains
-                    <TooltipWithParser
-                        style={{ mb: 1, mt: 2, marginLeft: 10 }}
-                        title={'Your chatbot will only work when used from the following domains.'}
-                    />
+                    允许的域名
+                    <TooltipWithParser style={{ mb: 1, mt: 2, marginLeft: 10 }} title={'此聊天机器人仅允许从以下域名访问。'} />
                 </Typography>
             )}
             <Stack direction='column' spacing={2} sx={{ width: '100%' }}>
                 <Stack direction='column' spacing={2}>
-                    <Typography>Domains</Typography>
+                    <Typography>域名</Typography>
                     {inputFields.map((origin, index) => {
                         return (
                             <div key={index} style={{ display: 'flex', width: '100%' }}>
@@ -155,6 +151,7 @@ const AllowedDomains = ({ dialogProps, onConfirm, hideTitle = false }) => {
                                                         disabled={inputFields.length === 1}
                                                         onClick={() => removeInputFields(index)}
                                                         edge='end'
+                                                        aria-label={`删除第 ${index + 1} 个域名`}
                                                     >
                                                         <IconTrash />
                                                     </IconButton>
@@ -165,7 +162,7 @@ const AllowedDomains = ({ dialogProps, onConfirm, hideTitle = false }) => {
                                 </Box>
                                 <Box sx={{ width: '5%', mb: 1 }}>
                                     {index === inputFields.length - 1 && (
-                                        <IconButton color='primary' onClick={addInputField}>
+                                        <IconButton color='primary' onClick={addInputField} aria-label='添加域名'>
                                             <IconPlus />
                                         </IconButton>
                                     )}
@@ -176,11 +173,8 @@ const AllowedDomains = ({ dialogProps, onConfirm, hideTitle = false }) => {
                 </Stack>
                 <Stack direction='column' spacing={1}>
                     <Typography>
-                        Error Message
-                        <TooltipWithParser
-                            style={{ mb: 1, mt: 2, marginLeft: 10 }}
-                            title={'Custom error message that will be shown when for unauthorized domain'}
-                        />
+                        错误消息
+                        <TooltipWithParser style={{ mb: 1, mt: 2, marginLeft: 10 }} title={'访问域名未经授权时显示的自定义错误消息'} />
                     </Typography>
                     <OutlinedInput
                         sx={{ width: '100%' }}
@@ -197,7 +191,7 @@ const AllowedDomains = ({ dialogProps, onConfirm, hideTitle = false }) => {
             </Stack>
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
                 <StyledButton variant='contained' onClick={onSave} sx={{ minWidth: 100 }}>
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </Stack>

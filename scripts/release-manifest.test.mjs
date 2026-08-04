@@ -34,6 +34,7 @@ const PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH = fileURLToPath(new URL('./publish-veri
 const MAIN_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/main.yml', import.meta.url))
 const DOCKER_BUILD_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/test_docker_build.yml', import.meta.url))
 const DOCKERHUB_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-dockerhub.yml', import.meta.url))
+const ECR_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-ecr.yml', import.meta.url))
 const ROOT_DOCKERFILE_PATH = fileURLToPath(new URL('../Dockerfile', import.meta.url))
 const APK_BUILD_LOCK_PATH = fileURLToPath(new URL('../docker/apk-build.lock', import.meta.url))
 const APK_RUNTIME_LOCK_PATH = fileURLToPath(new URL('../docker/apk-runtime.lock', import.meta.url))
@@ -579,6 +580,62 @@ const validateRootDockerfileReproducibility = (dockerfile) => {
     )
     assert.doesNotMatch(cleanup, /node_modules\/\.cache\/\*|packages\/\*\/\.turbo|rm -rf\s+node_modules/)
     return cleanup
+}
+
+const validateApkClosureContracts = (dockerfile, closures) => {
+    const parseClosure = (entries, label) => {
+        const packages = new Map()
+        for (const entry of entries) {
+            const match = /^([A-Za-z0-9+_.-]+)=([A-Za-z0-9+_.~-]+)$/.exec(entry)
+            assert.ok(match, `${label} APK lock entry must contain an exact version: ${entry}`)
+            assert.equal(packages.has(match[1]), false, `${label} APK lock must not repeat ${match[1]}`)
+            packages.set(match[1], match[2])
+        }
+        return packages
+    }
+
+    const parseDirectPins = (lockName, label) => {
+        const escapedLockName = lockName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const layer = new RegExp(
+            `COPY docker\\/${escapedLockName} \\/tmp\\/${escapedLockName}\\nRUN [\\s\\S]*?cmp -s \\/tmp\\/${escapedLockName} \\/tmp\\/apk-actual\\.lock`
+        ).exec(dockerfile)?.[0]
+        assert.ok(layer, `${label} APK install layer must retain its fail-closed lock comparison`)
+        const install = /apk add --no-cache \\\n([\s\S]*?) && \\\n\s+awk -F:/.exec(layer)?.[1]
+        assert.ok(install, `${label} APK install layer must contain exact direct pins`)
+
+        const pins = new Map()
+        for (const line of install.trim().split('\n')) {
+            const match = /^([A-Za-z0-9+_.-]+)=([A-Za-z0-9+_.~-]+)(?: \\)?$/.exec(line.trim())
+            assert.ok(match, `${label} direct APK dependency must be exactly pinned: ${line.trim()}`)
+            assert.equal(pins.has(match[1]), false, `${label} direct APK dependency must not repeat ${match[1]}`)
+            pins.set(match[1], match[2])
+        }
+        return pins
+    }
+
+    const parsedClosures = new Map()
+    for (const { label, lockName, entries } of closures) {
+        const closure = parseClosure(entries, label)
+        const directPins = parseDirectPins(lockName, label)
+        for (const [packageName, version] of directPins) {
+            assert.equal(
+                closure.get(packageName),
+                version,
+                `${label} direct APK pin ${packageName}=${version} must exist unchanged in its complete closure`
+            )
+        }
+        parsedClosures.set(label, closure)
+    }
+
+    const runtimeClosure = parsedClosures.get('runtime')
+    assert.ok(runtimeClosure, 'runtime APK closure must be validated')
+    const chromiumPackages = ['chromium', 'chromium-angle', 'chromium-common']
+    const chromiumVersions = chromiumPackages.map((packageName) => {
+        const version = runtimeClosure.get(packageName)
+        assert.ok(version, `runtime APK closure must contain ${packageName}`)
+        return version
+    })
+    assert.equal(new Set(chromiumVersions).size, 1, 'Chromium runtime packages must use one identical version')
 }
 
 const replaceWorkflowTextOnce = (workflowSource, expected, replacement, label) => {
@@ -1736,6 +1793,8 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
     assert.ok(cypressStep, 'main CI must retain the Cypress test step')
     assert.match(cypressStep, /^ {18}ADMIN_ONLY_MODE: 'false'\s*$/m)
     assert.equal(workflow.match(/^\s+ADMIN_ONLY_MODE: 'false'\s*$/gm)?.length, 1)
+    assert.equal(workflow.match(/^\s+run:\s*pnpm metadata:i18n:validate:built\s*$/gm)?.length, 1)
+    assert.ok(workflow.indexOf('run: pnpm build') < workflow.indexOf('run: pnpm metadata:i18n:validate:built'))
 
     for (const workspace of ['agentflow', 'observe', 'components', 'server']) {
         const packageJsonPath = fileURLToPath(new URL(`../packages/${workspace}/package.json`, import.meta.url))
@@ -1749,6 +1808,11 @@ test('root Dockerfile removes dynamic Turbo output and supplies a validated epoc
     const buildLock = readFileSync(APK_BUILD_LOCK_PATH, 'utf8').trim().split('\n')
     const runtimeLock = readFileSync(APK_RUNTIME_LOCK_PATH, 'utf8').trim().split('\n')
     const cleanup = validateRootDockerfileReproducibility(dockerfile)
+
+    validateApkClosureContracts(dockerfile, [
+        { label: 'build', lockName: 'apk-build.lock', entries: buildLock },
+        { label: 'runtime', lockName: 'apk-runtime.lock', entries: runtimeLock }
+    ])
 
     for (const [label, entries] of [
         ['build', buildLock],
@@ -1773,6 +1837,38 @@ test('root Dockerfile removes dynamic Turbo output and supplies a validated epoc
     assert.equal(dockerfile.match(/SOURCE_DATE_EPOCH must be a non-negative integer/g)?.length, 2)
     assert.equal(dockerfile.match(/SOURCE_DATE_EPOCH="\$SOURCE_DATE_EPOCH" fc-cache -fv/g)?.length, 2)
     assert.doesNotMatch(cleanup, /node_modules\/\.cache\/\*|packages\/\*\/\.turbo/)
+})
+
+test('APK closure contracts reject isolated direct-pin and Chromium closure mutations', () => {
+    const dockerfile = readFileSync(ROOT_DOCKERFILE_PATH, 'utf8')
+    const buildLock = readFileSync(APK_BUILD_LOCK_PATH, 'utf8').trim().split('\n')
+    const runtimeLock = readFileSync(APK_RUNTIME_LOCK_PATH, 'utf8').trim().split('\n')
+    const validate = (dockerfileSource, runtimeEntries) =>
+        validateApkClosureContracts(dockerfileSource, [
+            { label: 'build', lockName: 'apk-build.lock', entries: buildLock },
+            { label: 'runtime', lockName: 'apk-runtime.lock', entries: runtimeEntries }
+        ])
+
+    const chromiumEntry = runtimeLock.find((entry) => entry.startsWith('chromium='))
+    assert.ok(chromiumEntry, 'Chromium closure mutation source must exist')
+    const chromiumVersion = chromiumEntry.slice('chromium='.length)
+    const revision = /^(.*-r)(\d+)$/.exec(chromiumVersion)
+    assert.ok(revision, 'Chromium closure mutation source must use an APK revision')
+    const alternateVersion = `${revision[1]}${Number(revision[2]) + 1}`
+
+    const directPinOnly = replaceWorkflowTextOnce(
+        dockerfile,
+        `chromium=${chromiumVersion}`,
+        `chromium=${alternateVersion}`,
+        'Dockerfile Chromium direct pin'
+    )
+    assert.throws(() => validate(directPinOnly, runtimeLock), /must exist unchanged in its complete closure/)
+
+    const singleClosureOnly = runtimeLock.map((entry) =>
+        entry === `chromium-common=${chromiumVersion}` ? `chromium-common=${alternateVersion}` : entry
+    )
+    assert.notDeepEqual(singleClosureOnly, runtimeLock, 'Chromium closure mutation target must exist')
+    assert.throws(() => validate(dockerfile, singleClosureOnly), /Chromium runtime packages must use one identical version/)
 })
 
 test('root Dockerfile reproducibility cleanup rejects timestamped APK, pnpm state and root Turbo regressions', () => {
@@ -1811,6 +1907,12 @@ test('build-only Docker CI produces and reconsumes a canonical offline release a
         'persist-credentials: false',
         'git ls-files --error-unmatch',
         'pnpm audit --prod --audit-level high',
+        'pnpm metadata:i18n:validate',
+        'scripts/metadata-i18n/extract.mjs',
+        'scripts/metadata-i18n/fingerprint.mjs',
+        'scripts/metadata-i18n/fingerprint.test.mjs',
+        'scripts/metadata-i18n/validate.mjs',
+        'scripts/metadata-i18n/write-build-fingerprint.mjs',
         'bash scripts/verify-release-candidate.sh',
         'scripts/deployment-bundle.mjs',
         'scripts/flowise-production-release.py',
@@ -1915,6 +2017,12 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
         '[[ ${#TAG_VERSION} -le 128 ]]',
         '[[ "$TAG_VERSION" =~',
         'pnpm audit --prod --audit-level high',
+        'pnpm metadata:i18n:validate',
+        'scripts/metadata-i18n/extract.mjs',
+        'scripts/metadata-i18n/fingerprint.mjs',
+        'scripts/metadata-i18n/fingerprint.test.mjs',
+        'scripts/metadata-i18n/validate.mjs',
+        'scripts/metadata-i18n/write-build-fingerprint.mjs',
         'git ls-files --error-unmatch',
         'bash scripts/verify-release-candidate.sh',
         'git tag --format=',
@@ -1961,6 +2069,25 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
     assert.ok(workflow.indexOf('test "$actual_config_digest" = "$EXPECTED_IMAGE_CONFIG_DIGEST"') < workflow.indexOf('docker/login-action@'))
     assert.ok(workflow.indexOf('node scripts/verify-dockerhub-immutability.mjs') < workflow.indexOf('docker/login-action@'))
     assertExternalActionsAreCommitPinned(workflow, 'Docker Hub publishing workflow')
+})
+
+test('every build and publication workflow enforces the current component metadata receipt', () => {
+    const contracts = [
+        ['main CI', MAIN_WORKFLOW_PATH, 'pnpm metadata:i18n:validate:built', 'pnpm build'],
+        ['build-only Docker CI', DOCKER_BUILD_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile'],
+        ['Docker Hub publishing', DOCKERHUB_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile'],
+        ['ECR build-only CI', ECR_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile']
+    ]
+
+    for (const [label, workflowPath, metadataGate, prerequisite] of contracts) {
+        const workflow = readFileSync(workflowPath, 'utf8')
+        assert.equal(workflow.split(metadataGate).length - 1, 1, `${label} must run exactly one metadata gate`)
+        assert.ok(
+            workflow.indexOf(prerequisite) < workflow.indexOf(metadataGate),
+            `${label} must prepare the build before metadata validation`
+        )
+        assert.doesNotMatch(workflow, /metadata:i18n:validate[^\n]*(?:\|\||;\s*true)/)
+    }
 })
 
 test('workflow reproducibility contracts reject commented or removed active fields in their named build steps', () => {

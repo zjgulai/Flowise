@@ -1,5 +1,7 @@
 import type { FlowEdge, FlowNode, NodeData } from '../types'
 
+import { sanitizeFlowDisplayMetadata } from './metadataDisplay'
+
 /** Sensitive input types that must not appear in exported flow data. */
 const SENSITIVE_INPUT_TYPES = new Set(['password', 'file', 'folder'])
 
@@ -63,5 +65,5 @@ export function generateExportFlowData(flowData: { nodes: FlowNode[]; edges: Flo
         selected: false
     }))
 
-    return { nodes, edges }
+    return sanitizeFlowDisplayMetadata({ nodes, edges })
 }

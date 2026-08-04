@@ -31,10 +31,17 @@ jest.mock('@tabler/icons-react', () => ({
     IconTrash: () => <span data-testid='icon-trash' />
 }))
 
+jest.mock('./TooltipWithParser', () => ({
+    TooltipWithParser: ({ title }: { title: string }) => <span data-testid='tooltip-with-parser'>{title}</span>
+}))
+
 const conditionInputParam: InputParam = {
     id: 'conditions',
     name: 'conditions',
     label: 'Conditions',
+    displayLabel: '条件',
+    description: 'Define conditions for splitting',
+    displayDescription: '定义用于分流的条件',
     type: 'array',
     array: [
         {
@@ -80,27 +87,29 @@ describe('ConditionBuilder', () => {
 
         render(<ConditionBuilder inputParam={conditionInputParam} data={data} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('Condition 0')).toBeInTheDocument()
-        expect(screen.getByText('Condition 1')).toBeInTheDocument()
+        expect(screen.getByText('条件')).toBeInTheDocument()
+        expect(screen.getByTestId('tooltip-with-parser')).toHaveTextContent('定义用于分流的条件')
+        expect(screen.getByText('条件 0')).toBeInTheDocument()
+        expect(screen.getByText('条件 1')).toBeInTheDocument()
     })
 
     it('should always render Else indicator', () => {
         render(<ConditionBuilder inputParam={conditionInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByText('Else')).toBeInTheDocument()
-        expect(screen.getByText('Executes when no conditions match')).toBeInTheDocument()
+        expect(screen.getByText('否则')).toBeInTheDocument()
+        expect(screen.getByText('当所有条件均不匹配时执行')).toBeInTheDocument()
     })
 
     it('should render Add Condition button', () => {
         render(<ConditionBuilder inputParam={conditionInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByRole('button', { name: /Add Condition/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '添加条件' })).toBeInTheDocument()
     })
 
     it('should add a new condition with default values', () => {
         render(<ConditionBuilder inputParam={conditionInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByRole('button', { name: /Add Condition/i }))
+        fireEvent.click(screen.getByRole('button', { name: '添加条件' }))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
             inputParam: conditionInputParam,
@@ -121,7 +130,7 @@ describe('ConditionBuilder', () => {
 
         render(<ConditionBuilder inputParam={conditionInputParam} data={data} onDataChange={mockOnDataChange} />)
 
-        const deleteButtons = screen.getAllByTitle('Delete')
+        const deleteButtons = screen.getAllByTitle('删除')
         fireEvent.click(deleteButtons[0])
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
@@ -178,8 +187,8 @@ describe('ConditionBuilder', () => {
 
         render(<ConditionBuilder inputParam={conditionInputParam} data={data} disabled={true} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByRole('button', { name: /Add Condition/i })).toBeDisabled()
-        expect(screen.getByTitle('Delete')).toBeDisabled()
+        expect(screen.getByRole('button', { name: '添加条件' })).toBeDisabled()
+        expect(screen.getByTitle('删除')).toBeDisabled()
     })
 
     it('should respect minItems constraint', () => {
@@ -193,7 +202,7 @@ describe('ConditionBuilder', () => {
 
         render(<ConditionBuilder inputParam={inputParamWithMin} data={data} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByTitle('Delete')).toBeDisabled()
+        expect(screen.getByTitle('删除')).toBeDisabled()
     })
 
     it('should use itemParameters for field visibility when provided', () => {

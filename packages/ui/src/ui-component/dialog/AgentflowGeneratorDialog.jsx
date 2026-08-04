@@ -18,19 +18,20 @@ import { baseURL, FLOWISE_CREDENTIAL_ID } from '@/store/constant'
 import { initNode, showHideInputParams } from '@/utils/genericHelper'
 import DocStoreInputHandler from '@/views/docstore/DocStoreInputHandler'
 import useApi from '@/hooks/useApi'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 const defaultInstructions = [
     {
-        text: 'An agent that can autonomously search the web and generate report'
+        text: '创建一个能够自主搜索网页并生成报告的智能体'
     },
     {
-        text: 'Summarize a document'
+        text: '总结一份文档'
     },
     {
-        text: 'Generate response to user queries and send it to Slack'
+        text: '回复用户问题并发送到 Slack'
     },
     {
-        text: 'A team of agents that can handle all customer queries'
+        text: '创建一个能够处理所有客户问题的智能体团队'
     }
 ]
 
@@ -109,7 +110,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                     // Check for credential in both possible locations
                     const credential = selectedChatModel.credential || selectedChatModel.inputs?.[FLOWISE_CREDENTIAL_ID]
                     if (!credential) {
-                        missingFields.push(inputParam.label || 'Credential')
+                        missingFields.push(inputParam.label || '凭据')
                     }
                 } else if (isMissingRequiredValue(selectedChatModel.inputs?.[inputParam.name])) {
                     missingFields.push(inputParam.label || inputParam.name)
@@ -187,10 +188,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
         // Validate all mandatory fields before proceeding
         const { isValid, missingFields } = checkMandatoryFields()
         if (!isValid) {
-            const message =
-                missingFields.length > 0
-                    ? `Please fill in the following required fields: ${missingFields.join(', ')}`
-                    : 'Please fill in all mandatory fields for the selected model.'
+            const message = missingFields.length > 0 ? `请填写以下必填字段：${missingFields.join('、')}` : '请填写所选模型的全部必填字段。'
             displayWarning(message)
             return
         }
@@ -209,7 +207,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                 onConfirm()
             } else {
                 enqueueSnackbar({
-                    message: response.error || 'Failed to generate agentflow',
+                    message: '生成智能体流程失败，请重试',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -224,7 +222,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
             }
         } catch (error) {
             enqueueSnackbar({
-                message: error.response?.data?.message || 'Failed to generate agentflow',
+                message: getErrorMessage(error, '生成智能体流程失败，请重试'),
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -270,9 +268,9 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                 <DialogContent>
                     {loading ? (
                         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column' }}>
-                            <img src={generatorGIF} alt='Generating Agentflow' style={{ maxWidth: '100%', height: 'auto' }} />
+                            <img src={generatorGIF} alt='正在生成智能体流程' style={{ maxWidth: '100%', height: 'auto' }} />
                             <Typography variant='h5' sx={{ mt: 2 }}>
-                                Generating your Agentflow...
+                                正在生成您的智能体流程……
                             </Typography>
                             <Box sx={{ width: '100%', mt: 2 }}>
                                 <LinearProgress
@@ -343,7 +341,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                                     rows={12}
                                     disabled={loading}
                                     value={customAssistantInstruction}
-                                    placeholder={'Describe your agent here'}
+                                    placeholder={'请描述您想创建的智能体'}
                                     onChange={(event) => setCustomAssistantInstruction(event.target.value)}
                                 />
                             )}
@@ -360,7 +358,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                             <Box sx={{ mt: 2 }}>
                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                     <Typography>
-                                        Select model to generate agentflow<span style={{ color: 'red' }}>&nbsp;*</span>
+                                        选择用于生成智能体流程的模型<span style={{ color: 'red' }}>&nbsp;*</span>
                                     </Typography>
                                 </div>
                                 <Dropdown
@@ -380,7 +378,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                                             }
                                         }
                                     }}
-                                    value={selectedChatModel ? selectedChatModel?.name : 'choose an option'}
+                                    value={selectedChatModel?.name || '请选择'}
                                 />
                             </Box>
                             {selectedChatModel && Object.keys(selectedChatModel).length > 0 && (
@@ -432,7 +430,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                                         !checkMandatoryFields().isValid
                                     }
                                 >
-                                    Generate
+                                    生成
                                 </LoadingButton>
                             )}
                             {generatedInstruction && (
@@ -443,7 +441,7 @@ const AgentflowGeneratorDialog = ({ show, dialogProps, onCancel, onConfirm }) =>
                                         setGeneratedInstruction('')
                                     }}
                                 >
-                                    Back
+                                    返回
                                 </Button>
                             )}
                         </>

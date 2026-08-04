@@ -1,5 +1,5 @@
 import { useDispatch, useSelector } from 'react-redux'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import PropTypes from 'prop-types'
 
 // material-ui
@@ -22,6 +22,12 @@ import useNotifier from '@/utils/useNotifier'
 // API
 import mcpServerApi from '@/api/mcpserver'
 import chatflowsApi from '@/api/chatflows'
+import {
+    clearMcpTokenDisclosure,
+    issueMcpTokenDisclosureIfCurrent,
+    retainMcpTokenDisclosureForConfig,
+    selectMcpTokenDisclosure
+} from './mcpTokenDisclosure'
 
 const McpServer = ({ dialogProps, onStatusChange }) => {
     const dispatch = useDispatch()
@@ -37,15 +43,36 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
     const [mcpEnabled, setMcpEnabled] = useState(false)
     const [toolName, setToolName] = useState('')
     const [description, setDescription] = useState('')
-    const [token, setToken] = useState('')
+    const [tokenDisclosure, setTokenDisclosure] = useState(() => clearMcpTokenDisclosure())
+    const [hasToken, setHasToken] = useState(false)
     const [loading, setLoading] = useState(false)
     const [hasExistingConfig, setHasExistingConfig] = useState(false)
 
-    const getMcpServerConfigApi = useApi(mcpServerApi.getMcpServerConfig)
+    const getMcpServerConfigApi = useApi(async (requestedFlowId) => {
+        try {
+            const response = await mcpServerApi.getMcpServerConfig(requestedFlowId)
+            return {
+                ...response,
+                data: {
+                    requestedFlowId,
+                    config: response.data
+                }
+            }
+        } catch (error) {
+            if (error && typeof error === 'object') error.mcpRequestedFlowId = requestedFlowId
+            throw error
+        }
+    })
     const [toolNameError, setToolNameError] = useState('')
 
     const chatflowId = dialogProps?.chatflow?.id
+    const activeChatflowIdRef = useRef(chatflowId)
+    const configRequestFlowIdRef = useRef(null)
+    activeChatflowIdRef.current = chatflowId
+    const token = selectMcpTokenDisclosure(tokenDisclosure, chatflowId)
     const endpointUrl = chatflowId ? `${window.location.origin}/api/v1/mcp/${chatflowId}` : ''
+
+    const isCurrentFlowRequest = (requestedFlowId) => activeChatflowIdRef.current === requestedFlowId
 
     const validateToolName = (name) => {
         if (!name) return '工具名称必填'
@@ -90,10 +117,10 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
         })
     }
 
-    const refreshChatflowStore = async () => {
+    const refreshChatflowStore = async (requestedFlowId) => {
         try {
-            const resp = await chatflowsApi.getSpecificChatflow(dialogProps.chatflow.id)
-            if (resp.data) {
+            const resp = await chatflowsApi.getSpecificChatflow(requestedFlowId)
+            if (resp.data && isCurrentFlowRequest(requestedFlowId)) {
                 dispatch({ type: SET_CHATFLOW, chatflow: resp.data })
             }
         } catch {
@@ -106,34 +133,39 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
     }
 
     const onSave = async () => {
-        if (!dialogProps.chatflow?.id) return
+        const requestedFlowId = chatflowId
+        if (!requestedFlowId) return
         if (mcpEnabled && (toolNameError || !toolName.trim() || !description.trim())) return
 
         setLoading(true)
         try {
             if (mcpEnabled) {
                 if (hasExistingConfig) {
-                    const resp = await mcpServerApi.updateMcpServerConfig(dialogProps.chatflow.id, {
+                    const resp = await mcpServerApi.updateMcpServerConfig(requestedFlowId, {
                         enabled: true,
                         toolName: toolName || undefined,
                         description: description || undefined
                     })
-                    if (resp.data) {
+                    if (resp.data && isCurrentFlowRequest(requestedFlowId)) {
                         setMcpEnabled(resp.data.enabled)
-                        setToken(resp.data.token || '')
+                        const issuedToken = issueMcpTokenDisclosureIfCurrent(activeChatflowIdRef.current, requestedFlowId, resp.data.token)
+                        if (issuedToken) setTokenDisclosure(issuedToken)
+                        setHasToken(resp.data.hasToken === true)
                         setToolName(resp.data.toolName || '')
                         setDescription(resp.data.description || '')
                         onStatusChange?.(resp.data.enabled)
                         showSuccess('MCP 服务器设置已保存')
                     }
                 } else {
-                    const resp = await mcpServerApi.createMcpServerConfig(dialogProps.chatflow.id, {
+                    const resp = await mcpServerApi.createMcpServerConfig(requestedFlowId, {
                         toolName: toolName || undefined,
                         description: description || undefined
                     })
-                    if (resp.data) {
+                    if (resp.data && isCurrentFlowRequest(requestedFlowId)) {
                         setMcpEnabled(resp.data.enabled)
-                        setToken(resp.data.token || '')
+                        const issuedToken = issueMcpTokenDisclosureIfCurrent(activeChatflowIdRef.current, requestedFlowId, resp.data.token)
+                        if (issuedToken) setTokenDisclosure(issuedToken)
+                        setHasToken(resp.data.hasToken === true)
                         setToolName(resp.data.toolName || '')
                         setDescription(resp.data.description || '')
                         setHasExistingConfig(true)
@@ -142,20 +174,24 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                     }
                 }
             } else {
-                await mcpServerApi.deleteMcpServerConfig(dialogProps.chatflow.id)
+                await mcpServerApi.deleteMcpServerConfig(requestedFlowId)
+                if (!isCurrentFlowRequest(requestedFlowId)) return
                 setMcpEnabled(false)
+                setHasToken(false)
+                setTokenDisclosure(clearMcpTokenDisclosure(requestedFlowId))
                 onStatusChange?.(false)
                 showSuccess('MCP 服务器已禁用')
             }
-            await refreshChatflowStore()
+            await refreshChatflowStore(requestedFlowId)
         } catch (error) {
+            if (!isCurrentFlowRequest(requestedFlowId)) return
             showError(
                 `保存 MCP 服务器设置失败: ${
                     typeof error.response?.data === 'object' ? error.response.data.message : error.response?.data || error.message
                 }`
             )
         } finally {
-            setLoading(false)
+            if (isCurrentFlowRequest(requestedFlowId)) setLoading(false)
         }
     }
 
@@ -166,6 +202,8 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
     }
 
     const handleRefreshCode = async () => {
+        const requestedFlowId = chatflowId
+        if (!requestedFlowId) return
         const confirmPayload = {
             title: '轮换令牌',
             description: '这将使现有令牌失效。使用旧令牌的客户端需要更新为新令牌。确定要继续吗？',
@@ -173,37 +211,52 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
             cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
-        if (!isConfirmed) return
-        if (!dialogProps.chatflow?.id) return
+        if (!isConfirmed || !isCurrentFlowRequest(requestedFlowId)) return
 
         setLoading(true)
         try {
-            const resp = await mcpServerApi.refreshMcpToken(dialogProps.chatflow.id)
-            if (resp.data) {
-                setToken(resp.data.token || '')
+            const resp = await mcpServerApi.refreshMcpToken(requestedFlowId)
+            if (resp.data && isCurrentFlowRequest(requestedFlowId)) {
+                const issuedToken = issueMcpTokenDisclosureIfCurrent(activeChatflowIdRef.current, requestedFlowId, resp.data.token)
+                if (issuedToken) setTokenDisclosure(issuedToken)
+                setHasToken(resp.data.hasToken === true)
                 showSuccess('令牌轮换成功')
             }
-            await refreshChatflowStore()
+            await refreshChatflowStore(requestedFlowId)
         } catch (error) {
+            if (!isCurrentFlowRequest(requestedFlowId)) return
             showError(
                 `轮换令牌失败: ${
                     typeof error.response?.data === 'object' ? error.response.data.message : error.response?.data || error.message
                 }`
             )
         } finally {
-            setLoading(false)
+            if (isCurrentFlowRequest(requestedFlowId)) setLoading(false)
         }
     }
 
     useEffect(() => {
-        if (dialogProps.chatflow?.id) {
-            getMcpServerConfigApi.request(dialogProps.chatflow.id)
+        setTokenDisclosure(clearMcpTokenDisclosure(chatflowId))
+        setMcpEnabled(false)
+        setToolName('')
+        setDescription('')
+        setToolNameError('')
+        setHasToken(false)
+        setHasExistingConfig(false)
+        setLoading(false)
+        getMcpServerConfigApi.reset()
+        if (chatflowId) {
+            configRequestFlowIdRef.current = chatflowId
+            getMcpServerConfigApi.request(chatflowId)
+        } else {
+            configRequestFlowIdRef.current = null
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [dialogProps])
+    }, [chatflowId])
 
     useEffect(() => {
-        if (getMcpServerConfigApi.error) {
+        const requestedFlowId = getMcpServerConfigApi.error?.mcpRequestedFlowId || configRequestFlowIdRef.current
+        if (getMcpServerConfigApi.error && requestedFlowId && isCurrentFlowRequest(requestedFlowId)) {
             showError(
                 `加载 MCP 服务器配置失败: ${
                     typeof getMcpServerConfigApi.error.response?.data === 'object'
@@ -216,13 +269,16 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
     }, [getMcpServerConfigApi.error])
 
     useEffect(() => {
-        if (getMcpServerConfigApi.data) {
-            const enabled = getMcpServerConfigApi.data.enabled || false
+        const requestedFlowId = getMcpServerConfigApi.data?.requestedFlowId
+        const config = getMcpServerConfigApi.data?.config
+        if (config && requestedFlowId && isCurrentFlowRequest(requestedFlowId)) {
+            const enabled = config.enabled || false
             setMcpEnabled(enabled)
-            setToolName(getMcpServerConfigApi.data.toolName || '')
-            setDescription(getMcpServerConfigApi.data.description || '')
-            setToken(getMcpServerConfigApi.data.token || '')
-            setHasExistingConfig(!!getMcpServerConfigApi.data.token)
+            setToolName(config.toolName || '')
+            setDescription(config.description || '')
+            setTokenDisclosure((current) => retainMcpTokenDisclosureForConfig(current, requestedFlowId))
+            setHasToken(config.hasToken === true)
+            setHasExistingConfig(config.configured === true)
             onStatusChange?.(enabled)
         }
     }, [getMcpServerConfigApi.data]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -293,8 +349,8 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                         </Typography>
                     </Box>
 
-                    {/* MCP Endpoint URL — visible only when has token */}
-                    {token && (
+                    {/* MCP Endpoint URL — visible only when a bearer token is configured */}
+                    {hasToken && (
                         <Box>
                             <Typography sx={{ mb: 1 }}>可流式 HTTP 端点</Typography>
                             <OutlinedInput
@@ -331,41 +387,54 @@ const McpServer = ({ dialogProps, onStatusChange }) => {
                             </Typography>
 
                             <Typography sx={{ mb: 1, mt: 2 }}>令牌（Bearer Token）</Typography>
-                            <OutlinedInput
-                                fullWidth
-                                size='small'
-                                value={token}
-                                readOnly
-                                type='password'
-                                sx={{
-                                    fontFamily: 'monospace',
-                                    fontSize: '0.875rem'
-                                }}
-                                endAdornment={
-                                    <InputAdornment position='end'>
-                                        <IconButton
-                                            size='small'
-                                            onClick={() => {
-                                                navigator.clipboard.writeText(token)
-                                                showSuccess('令牌已复制到剪贴板')
-                                            }}
-                                            title='复制令牌'
-                                            sx={{ color: customization.isDarkMode ? theme.palette.grey[300] : 'inherit' }}
-                                        >
-                                            <IconCopy size={18} />
-                                        </IconButton>
-                                        <IconButton
-                                            size='small'
-                                            onClick={handleRefreshCode}
-                                            title='轮换令牌'
-                                            disabled={loading}
-                                            sx={{ color: customization.isDarkMode ? theme.palette.grey[300] : 'inherit' }}
-                                        >
-                                            <IconRefresh size={18} />
-                                        </IconButton>
-                                    </InputAdornment>
-                                }
-                            />
+                            {token ? (
+                                <OutlinedInput
+                                    fullWidth
+                                    size='small'
+                                    value={token}
+                                    readOnly
+                                    type='password'
+                                    sx={{
+                                        fontFamily: 'monospace',
+                                        fontSize: '0.875rem'
+                                    }}
+                                    endAdornment={
+                                        <InputAdornment position='end'>
+                                            <IconButton
+                                                size='small'
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(token)
+                                                    showSuccess('令牌已复制到剪贴板')
+                                                }}
+                                                title='复制令牌'
+                                                sx={{ color: customization.isDarkMode ? theme.palette.grey[300] : 'inherit' }}
+                                            >
+                                                <IconCopy size={18} />
+                                            </IconButton>
+                                            <IconButton
+                                                size='small'
+                                                onClick={handleRefreshCode}
+                                                title='轮换令牌'
+                                                disabled={loading}
+                                                sx={{ color: customization.isDarkMode ? theme.palette.grey[300] : 'inherit' }}
+                                            >
+                                                <IconRefresh size={18} />
+                                            </IconButton>
+                                        </InputAdornment>
+                                    }
+                                />
+                            ) : (
+                                <Alert
+                                    severity='warning'
+                                    action={
+                                        <Button color='inherit' size='small' onClick={handleRefreshCode} disabled={loading}>
+                                            轮换并显示新令牌
+                                        </Button>
+                                    }
+                                >
+                                    为保护凭据，已保存的令牌不会再次显示。需要配置新客户端时，请轮换令牌。
+                                </Alert>
+                            )}
                             <Alert
                                 severity='info'
                                 sx={{

@@ -74,7 +74,34 @@ describe('MessagesInput', () => {
         id: 'messages',
         name: 'agentMessages',
         label: 'Messages',
-        type: 'array'
+        displayLabel: '消息',
+        placeholder: 'Message content',
+        displayPlaceholder: '请输入消息内容',
+        type: 'array',
+        array: [
+            {
+                id: 'role',
+                name: 'role',
+                label: 'Role',
+                displayLabel: '角色',
+                type: 'options',
+                options: [
+                    { label: 'System', displayLabel: '系统', name: 'system' },
+                    { label: 'Assistant', displayLabel: '助手', name: 'assistant' },
+                    { label: 'Developer', displayLabel: '开发者', name: 'developer' },
+                    { label: 'User', displayLabel: '用户', name: 'user' }
+                ]
+            },
+            {
+                id: 'content',
+                name: 'content',
+                label: 'Content',
+                displayLabel: '内容',
+                type: 'string',
+                placeholder: 'Message content',
+                displayPlaceholder: '请输入消息内容'
+            }
+        ]
     }
 
     const mockNodeData: NodeData = {
@@ -94,9 +121,9 @@ describe('MessagesInput', () => {
         render(<MessagesInput inputParam={mockInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
         // Section header from inputParam.label
-        expect(screen.getByText('Messages')).toBeInTheDocument()
+        expect(screen.getByText('消息')).toBeInTheDocument()
         expect(screen.queryByText('0')).not.toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /Add Messages/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '添加消息' })).toBeInTheDocument()
     })
 
     it('should render existing messages with field labels, role and content', async () => {
@@ -117,8 +144,8 @@ describe('MessagesInput', () => {
         expect(screen.getByText('1')).toBeInTheDocument()
 
         // Field labels (2 messages × 2 labels each)
-        expect(screen.getAllByText('Role')).toHaveLength(2)
-        expect(screen.getAllByText('Content')).toHaveLength(2)
+        expect(screen.getAllByText('角色')).toHaveLength(2)
+        expect(screen.getAllByText('内容')).toHaveLength(2)
 
         // Variable and expand icons on content fields
         expect(screen.getAllByTestId('icon-variable')).toHaveLength(2)
@@ -132,6 +159,7 @@ describe('MessagesInput', () => {
         await waitFor(() => {
             expect(screen.getAllByTestId('variable-input')).toHaveLength(2)
         })
+        expect(screen.getAllByPlaceholderText('请输入消息内容')).toHaveLength(2)
     })
 
     // --- Add ---
@@ -139,7 +167,7 @@ describe('MessagesInput', () => {
     it('should add a new message with empty role and empty content', () => {
         render(<MessagesInput inputParam={mockInputParam} data={mockNodeData} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByRole('button', { name: /Add Messages/i }))
+        fireEvent.click(screen.getByRole('button', { name: '添加消息' }))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
             inputParam: mockInputParam,
@@ -157,7 +185,7 @@ describe('MessagesInput', () => {
 
         render(<MessagesInput inputParam={mockInputParam} data={dataWithMessages} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByRole('button', { name: /Add Messages/i }))
+        fireEvent.click(screen.getByRole('button', { name: '添加消息' }))
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
             inputParam: mockInputParam,
@@ -183,7 +211,7 @@ describe('MessagesInput', () => {
 
         render(<MessagesInput inputParam={mockInputParam} data={dataWithMessages} onDataChange={mockOnDataChange} />)
 
-        const deleteButtons = screen.getAllByTitle('Delete')
+        const deleteButtons = screen.getAllByTitle('删除')
         fireEvent.click(deleteButtons[0])
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
@@ -208,7 +236,7 @@ describe('MessagesInput', () => {
         const roleSelect = screen.getByRole('combobox')
         // Open dropdown and select 'system'
         fireEvent.mouseDown(roleSelect)
-        const systemOption = screen.getByText('System')
+        const systemOption = screen.getByText('系统')
         fireEvent.click(systemOption)
 
         expect(mockOnDataChange).toHaveBeenCalledWith({
@@ -290,7 +318,7 @@ describe('MessagesInput', () => {
         fireEvent.change(textarea, { target: { value: 'Edited inline' } })
 
         // Open expand dialog
-        fireEvent.click(screen.getByTitle('Expand'))
+        fireEvent.click(screen.getByTitle('展开'))
 
         // Wait for the RichTextEditor inside the expand dialog to mount (no suggestionItems)
         await waitFor(() => {
@@ -322,7 +350,7 @@ describe('MessagesInput', () => {
         fireEvent.change(textareas[2], { target: { value: 'Edited assistant reply' } })
 
         // Delete the first message (index 0) — this should shift index 2 → 1 in latestContentRef
-        const deleteButtons = screen.getAllByTitle('Delete')
+        const deleteButtons = screen.getAllByTitle('删除')
         fireEvent.click(deleteButtons[0])
 
         // Simulate parent re-rendering with updated data (first message removed)
@@ -338,7 +366,7 @@ describe('MessagesInput', () => {
         rerender(<MessagesInput inputParam={mockInputParam} data={updatedData} onDataChange={mockOnDataChange} />)
 
         // Open expand for the second message (was index 2, now index 1)
-        const expandButtons = screen.getAllByTitle('Expand')
+        const expandButtons = screen.getAllByTitle('展开')
         fireEvent.click(expandButtons[1])
 
         // The expand dialog should show the edited content from the shifted ref
@@ -359,10 +387,10 @@ describe('MessagesInput', () => {
         render(<MessagesInput inputParam={mockInputParam} data={dataWithMessages} disabled={true} onDataChange={mockOnDataChange} />)
 
         // Add button disabled
-        expect(screen.getByRole('button', { name: /Add Messages/i })).toBeDisabled()
+        expect(screen.getByRole('button', { name: '添加消息' })).toBeDisabled()
 
         // Delete button disabled
-        expect(screen.getByTitle('Delete')).toBeDisabled()
+        expect(screen.getByTitle('删除')).toBeDisabled()
 
         // VariableInput is rendered (disabled state is handled by TipTap internally)
         expect(await screen.findByTestId('variable-input')).toBeInTheDocument()
@@ -385,7 +413,7 @@ describe('MessagesInput', () => {
 
         render(<MessagesInput inputParam={inputParamWithMin} data={dataWithMessages} onDataChange={mockOnDataChange} />)
 
-        expect(screen.queryByTitle('Delete')).not.toBeInTheDocument()
+        expect(screen.queryByTitle('删除')).not.toBeInTheDocument()
     })
 
     it('should allow delete when above minItems', () => {
@@ -406,7 +434,7 @@ describe('MessagesInput', () => {
 
         render(<MessagesInput inputParam={inputParamWithMin} data={dataWithMessages} onDataChange={mockOnDataChange} />)
 
-        const deleteButtons = screen.getAllByTitle('Delete')
+        const deleteButtons = screen.getAllByTitle('删除')
         expect(deleteButtons[0]).not.toBeDisabled()
         expect(deleteButtons[1]).not.toBeDisabled()
     })
@@ -431,7 +459,7 @@ describe('MessagesInput', () => {
 
         render(<MessagesInput inputParam={inputParamWithMax} data={dataWithMessages} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByRole('button', { name: /Add Messages/i })).toBeDisabled()
+        expect(screen.getByRole('button', { name: '添加消息' })).toBeDisabled()
     })
 
     it('should enable Add button when below maxItems', () => {
@@ -449,7 +477,7 @@ describe('MessagesInput', () => {
 
         render(<MessagesInput inputParam={inputParamWithMax} data={dataWithMessages} onDataChange={mockOnDataChange} />)
 
-        expect(screen.getByRole('button', { name: /Add Messages/i })).not.toBeDisabled()
+        expect(screen.getByRole('button', { name: '添加消息' })).not.toBeDisabled()
     })
 
     // --- Expand dialog (now uses rich text mode with TipTap) ---
@@ -464,13 +492,14 @@ describe('MessagesInput', () => {
 
         render(<MessagesInput inputParam={mockInputParam} data={dataWithMessages} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByTitle('Expand'))
+        fireEvent.click(screen.getByTitle('展开'))
 
         // Inline uses VariableInput; dialog (no suggestionItems) falls back to RichTextEditor
         await waitFor(() => {
             expect(screen.getByTestId('variable-input')).toBeInTheDocument()
             expect(screen.getByTestId('rich-text-editor')).toBeInTheDocument()
         })
+        expect(screen.getByRole('heading', { name: '内容' })).toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
     })
@@ -493,7 +522,7 @@ describe('MessagesInput', () => {
             />
         )
 
-        fireEvent.click(screen.getByTitle('Expand'))
+        fireEvent.click(screen.getByTitle('展开'))
 
         // Both inline and expand dialog use VariableInput when suggestionItems are available
         await waitFor(() => {
@@ -512,7 +541,7 @@ describe('MessagesInput', () => {
 
         render(<MessagesInput inputParam={mockInputParam} data={dataWithMessages} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByTitle('Expand'))
+        fireEvent.click(screen.getByTitle('展开'))
         fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
         // Save fires onDataChange with the current content (unchanged since TipTap is mocked)
@@ -532,7 +561,7 @@ describe('MessagesInput', () => {
 
         render(<MessagesInput inputParam={mockInputParam} data={dataWithMessages} onDataChange={mockOnDataChange} />)
 
-        fireEvent.click(screen.getByTitle('Expand'))
+        fireEvent.click(screen.getByTitle('展开'))
         fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
         expect(mockOnDataChange).not.toHaveBeenCalled()

@@ -86,7 +86,7 @@ export const MCPServersTable = ({ data, isLoading, onSelect }) => {
 
     return (
         <TableContainer sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }} component={Paper}>
-            <Table sx={{ minWidth: 650 }} size='small' aria-label='MCP servers table'>
+            <Table sx={{ minWidth: 650 }} size='small' aria-label='MCP 服务器表'>
                 <TableHead
                     sx={{
                         backgroundColor: customization.isDarkMode ? theme.palette.common.black : theme.palette.grey[100],

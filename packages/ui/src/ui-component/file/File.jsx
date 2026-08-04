@@ -5,7 +5,16 @@ import { FormControl, Button } from '@mui/material'
 import { IconUpload } from '@tabler/icons-react'
 import { getFileName } from '@/utils/genericHelper'
 
-export const File = ({ value, formDataUpload, fileType, onChange, onFormDataChange, disabled = false }) => {
+export const File = ({
+    value,
+    formDataUpload,
+    fileType,
+    onChange,
+    onFormDataChange,
+    disabled = false,
+    placeholder = '选择要上传的文件',
+    buttonText = '上传文件'
+}) => {
     const theme = useTheme()
 
     const [myValue, setMyValue] = useState(value ?? '')
@@ -88,7 +97,7 @@ export const File = ({ value, formDataUpload, fileType, onChange, onFormDataChan
                         marginBottom: '1rem'
                     }}
                 >
-                    {myValue ? getFileName(myValue) : 'Choose a file to upload'}
+                    {(myValue && getFileName(myValue)) || placeholder}
                 </span>
             )}
             <Button
@@ -99,7 +108,7 @@ export const File = ({ value, formDataUpload, fileType, onChange, onFormDataChan
                 startIcon={<IconUpload />}
                 sx={{ marginRight: '1rem' }}
             >
-                {'Upload File'}
+                {buttonText}
                 <input
                     type='file'
                     multiple
@@ -118,5 +127,7 @@ File.propTypes = {
     formDataUpload: PropTypes.bool,
     onChange: PropTypes.func,
     onFormDataChange: PropTypes.func,
-    disabled: PropTypes.bool
+    disabled: PropTypes.bool,
+    placeholder: PropTypes.string,
+    buttonText: PropTypes.string
 }

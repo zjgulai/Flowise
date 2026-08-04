@@ -33,7 +33,52 @@ jest.mock('./features/generator', () => ({
                 <button data-testid='close-dialog' onClick={onClose}>
                     Close
                 </button>
-                <button data-testid='trigger-generate' onClick={() => onGenerated([], [])}>
+                <button
+                    data-testid='trigger-generate'
+                    onClick={() =>
+                        onGenerated(
+                            [
+                                {
+                                    id: 'generated-node',
+                                    type: 'agentflowNode',
+                                    position: { x: 0, y: 0 },
+                                    data: {
+                                        id: 'generated-node',
+                                        name: 'llmAgentflow',
+                                        label: 'LLM',
+                                        displayLabel: '<img src=x onerror="globalThis.pwned=true">',
+                                        displayLocale: 'zh-CN',
+                                        inputParams: [
+                                            {
+                                                id: 'generated-node-input-payload-json',
+                                                name: 'payload',
+                                                label: 'Payload',
+                                                displayLabel: '载荷',
+                                                type: 'json',
+                                                default: { displayLabel: 'legitimate schema default value' }
+                                            }
+                                        ],
+                                        inputs: {
+                                            payload: {
+                                                displayLabel: 'legitimate runtime display label',
+                                                nested: { displayDescription: 'legitimate runtime description' }
+                                            }
+                                        }
+                                    }
+                                }
+                            ],
+                            [
+                                {
+                                    id: 'generated-edge',
+                                    source: 'generated-node',
+                                    target: 'generated-node',
+                                    type: 'agentflowEdge',
+                                    data: { displayLabel: 'legitimate edge display label' }
+                                }
+                            ]
+                        )
+                    }
+                >
                     Generate
                 </button>
             </div>
@@ -419,11 +464,19 @@ describe('Agentflow Component', () => {
             fireEvent.click(getByTestId('trigger-generate'))
 
             await waitFor(() => {
-                expect(onFlowGenerated).toHaveBeenCalledWith({
-                    nodes: [],
-                    edges: [],
-                    viewport: { x: 0, y: 0, zoom: 1 }
+                const emittedFlow = onFlowGenerated.mock.calls[0][0] as FlowData
+                expect(emittedFlow.nodes[0].data.displayLabel).toBeUndefined()
+                expect(emittedFlow.nodes[0].data.displayLocale).toBeUndefined()
+                expect(emittedFlow.nodes[0].data.inputParams?.[0].displayLabel).toBeUndefined()
+                expect(emittedFlow.nodes[0].data.inputParams?.[0].default).toEqual({
+                    displayLabel: 'legitimate schema default value'
                 })
+                expect(emittedFlow.nodes[0].data.inputs?.payload).toEqual({
+                    displayLabel: 'legitimate runtime display label',
+                    nested: { displayDescription: 'legitimate runtime description' }
+                })
+                expect(emittedFlow.edges[0].data).toEqual({ displayLabel: 'legitimate edge display label' })
+                expect(emittedFlow.viewport).toEqual({ x: 0, y: 0, zoom: 1 })
             })
         })
     })

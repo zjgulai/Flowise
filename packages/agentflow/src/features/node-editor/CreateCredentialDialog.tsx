@@ -26,6 +26,7 @@ import { TooltipWithParser } from '@/atoms/TooltipWithParser'
 import { getDefaultValueForType } from '@/core/primitives'
 import { tokens } from '@/core/theme/tokens'
 import type { ComponentCredentialSchema, CredentialSchemaInput } from '@/core/types'
+import { createMetadataDisplayView, getMetadataDisplayText } from '@/core/utils'
 import { useApiContext } from '@/infrastructure/store/ApiContext'
 
 export interface CreateCredentialDialogProps {
@@ -191,10 +192,10 @@ export function CreateCredentialDialog({ open, credentialNames, onClose, onCreat
                         <div style={{ marginRight: 10 }}>
                             <CredentialIcon name={selectedSchema.name} apiBaseUrl={apiBaseUrl} />
                         </div>
-                        {selectedSchema.label}
+                        {getMetadataDisplayText(selectedSchema, 'label', selectedSchema.label)}
                     </div>
                 ) : (
-                    'Add New Credential'
+                    '新增凭据'
                 )}
             </DialogTitle>
             <DialogContent
@@ -230,7 +231,11 @@ export function CreateCredentialDialog({ open, credentialNames, onClose, onCreat
                                     }}
                                 >
                                     <span style={{ color: theme.palette.warningBanner.text }}>
-                                        {parser(DOMPurify.sanitize(selectedSchema.description))}
+                                        {parser(
+                                            DOMPurify.sanitize(
+                                                getMetadataDisplayText(selectedSchema, 'description', selectedSchema.description)
+                                            )
+                                        )}
                                     </span>
                                 </div>
                             </Box>
@@ -238,13 +243,13 @@ export function CreateCredentialDialog({ open, credentialNames, onClose, onCreat
 
                         <Box sx={{ p: 2 }}>
                             <Typography>
-                                Credential Name
+                                凭据名称
                                 <span style={{ color: theme.palette.error.main }}>&nbsp;*</span>
                             </Typography>
                             <OutlinedInput
                                 fullWidth
                                 type='string'
-                                placeholder={selectedSchema.label}
+                                placeholder={getMetadataDisplayText(selectedSchema, 'label', selectedSchema.label)}
                                 value={credentialName}
                                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCredentialName(e.target.value)}
                                 autoFocus
@@ -256,7 +261,7 @@ export function CreateCredentialDialog({ open, credentialNames, onClose, onCreat
                             .map((input) => (
                                 <CredentialField
                                     key={input.name}
-                                    input={input}
+                                    input={createMetadataDisplayView(input)}
                                     value={formValues[input.name]}
                                     onChange={(value) => handleFieldChange(input.name, value)}
                                 />
@@ -266,7 +271,7 @@ export function CreateCredentialDialog({ open, credentialNames, onClose, onCreat
             </DialogContent>
             <DialogActions>
                 <Button onClick={handleClose} disabled={submitting}>
-                    Cancel
+                    取消
                 </Button>
                 {selectedSchema && (
                     <Button
@@ -274,7 +279,7 @@ export function CreateCredentialDialog({ open, credentialNames, onClose, onCreat
                         onClick={handleSubmit}
                         disabled={!credentialName.trim() || hasEmptyRequiredFields || submitting}
                     >
-                        {submitting ? (isEditMode ? 'Saving...' : 'Adding...') : isEditMode ? 'Save' : 'Add'}
+                        {submitting ? (isEditMode ? '保存中…' : '添加中…') : isEditMode ? '保存' : '添加'}
                     </Button>
                 )}
             </DialogActions>
@@ -312,7 +317,7 @@ function CredentialField({ input, value, onChange, disabled = false }: Credentia
                     <IconButton
                         size='small'
                         sx={{ height: 25, width: 25 }}
-                        title='Expand'
+                        title='展开'
                         color='primary'
                         onClick={() => setExpandOpen(true)}
                     >
@@ -384,7 +389,7 @@ function CredentialField({ input, value, onChange, disabled = false }: Credentia
                         />
                     </DialogContent>
                     <DialogActions>
-                        <Button onClick={() => setExpandOpen(false)}>Close</Button>
+                        <Button onClick={() => setExpandOpen(false)}>关闭</Button>
                     </DialogActions>
                 </Dialog>
             )}

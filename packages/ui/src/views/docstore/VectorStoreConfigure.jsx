@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid'
 import moment from 'moment/moment'
 
 // material-ui
-import { Button, Stack, Grid, Box, Typography, IconButton, Stepper, Step, StepLabel } from '@mui/material'
+import { Alert, Button, Stack, Grid, Box, Typography, IconButton, Stepper, Step, StepLabel } from '@mui/material'
 
 // project imports
 import MainCard from '@/ui-component/cards/MainCard'
@@ -21,7 +21,11 @@ import UpsertHistorySideDrawer from './UpsertHistorySideDrawer'
 import UpsertHistoryDetailsDialog from './UpsertHistoryDetailsDialog'
 
 // API
-import documentsApi from '@/api/documentstore'
+import documentsApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 import nodesApi from '@/api/nodes'
 
 // Hooks
@@ -42,9 +46,10 @@ import DynamicFeed from '@mui/icons-material/Filter1'
 // utils
 import { initNode, showHideInputParams, getFileName } from '@/utils/genericHelper'
 import useNotifier from '@/utils/useNotifier'
+import { getDocStoreComponentDisplayLabel } from './componentMetadataView'
 
 // const
-const steps = ['Embeddings', 'Vector Store', 'Record Manager']
+const steps = ['向量嵌入', '向量库', '记录管理器']
 
 const VectorStoreConfigure = () => {
     const navigate = useNavigate()
@@ -60,25 +65,27 @@ const VectorStoreConfigure = () => {
     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
 
     const getSpecificDocumentStoreApi = useApi(documentsApi.getSpecificDocumentStore)
-    const insertIntoVectorStoreApi = useApi(documentsApi.insertIntoVectorStore)
-    const saveVectorStoreConfigApi = useApi(documentsApi.saveVectorStoreConfig)
     const getEmbeddingNodeDetailsApi = useApi(nodesApi.getSpecificNode)
     const getVectorStoreNodeDetailsApi = useApi(nodesApi.getSpecificNode)
     const getRecordManagerNodeDetailsApi = useApi(nodesApi.getSpecificNode)
 
     const [loading, setLoading] = useState(true)
     const [documentStore, setDocumentStore] = useState({})
+    const [hasVersionConflict, setHasVersionConflict] = useState(false)
     const [dialogProps, setDialogProps] = useState({})
     const [currentLoader, setCurrentLoader] = useState(null)
 
     const [showEmbeddingsListDialog, setShowEmbeddingsListDialog] = useState(false)
     const [selectedEmbeddingsProvider, setSelectedEmbeddingsProvider] = useState({})
+    const [selectedEmbeddingsMetadata, setSelectedEmbeddingsMetadata] = useState({})
 
     const [showVectorStoreListDialog, setShowVectorStoreListDialog] = useState(false)
     const [selectedVectorStoreProvider, setSelectedVectorStoreProvider] = useState({})
+    const [selectedVectorStoreMetadata, setSelectedVectorStoreMetadata] = useState({})
 
     const [showRecordManagerListDialog, setShowRecordManagerListDialog] = useState(false)
     const [selectedRecordManagerProvider, setSelectedRecordManagerProvider] = useState({})
+    const [selectedRecordManagerMetadata, setSelectedRecordManagerMetadata] = useState({})
     const [isRecordManagerUnavailable, setRecordManagerUnavailable] = useState(false)
 
     const [showUpsertHistoryDialog, setShowUpsertHistoryDialog] = useState(false)
@@ -123,6 +130,7 @@ const VectorStoreConfigure = () => {
             nodeData.inputs = documentStore.embeddingConfig.config
             nodeData.credential = documentStore.embeddingConfig.config.credential
         }
+        setSelectedEmbeddingsMetadata(component)
         setSelectedEmbeddingsProvider(nodeData)
         setShowEmbeddingsListDialog(false)
     }
@@ -140,6 +148,7 @@ const VectorStoreConfigure = () => {
         if (!nodeData.inputAnchors.find((anchor) => anchor.name === 'recordManager')) {
             setRecordManagerUnavailable(true)
             setSelectedRecordManagerProvider({})
+            setSelectedRecordManagerMetadata({})
         } else {
             setRecordManagerUnavailable(false)
         }
@@ -147,6 +156,7 @@ const VectorStoreConfigure = () => {
             nodeData.inputs = documentStore.vectorStoreConfig.config
             nodeData.credential = documentStore.vectorStoreConfig.config.credential
         }
+        setSelectedVectorStoreMetadata(component)
         setSelectedVectorStoreProvider(nodeData)
         setShowVectorStoreListDialog(false)
     }
@@ -165,6 +175,7 @@ const VectorStoreConfigure = () => {
             nodeData.inputs = documentStore.recordManagerConfig.config
             nodeData.credential = documentStore.recordManagerConfig.config.credential
         }
+        setSelectedRecordManagerMetadata(component)
         setSelectedRecordManagerProvider(nodeData)
         setShowRecordManagerListDialog(false)
     }
@@ -187,7 +198,7 @@ const VectorStoreConfigure = () => {
 
     const onSelectHistoryDetails = (history) => {
         const props = {
-            title: moment(history.date).format('DD-MMM-YYYY, hh:mm:ss A'),
+            title: moment(history.date).format('YYYY-MM-DD HH:mm:ss'),
             numAdded: history.result.numAdded,
             numUpdated: history.result.numUpdated,
             numSkipped: history.result.numSkipped,
@@ -300,24 +311,86 @@ const VectorStoreConfigure = () => {
         return data
     }
 
-    const tryAndInsertIntoStore = () => {
+    const enterVersionConflict = () => {
+        setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+        setHasVersionConflict(true)
+        enqueueSnackbar({
+            message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+            options: { variant: 'warning' }
+        })
+    }
+
+    const reloadLatestValues = () => window.location.reload()
+
+    const tryAndInsertIntoStore = async () => {
+        if (hasVersionConflict) return
         if (checkMandatoryFields()) {
             setLoading(true)
             const data = prepareConfigData()
-            insertIntoVectorStoreApi.request(data)
+            try {
+                const insertResponse = await documentsApi.insertIntoVectorStore(data, documentStore.versionToken)
+                const advancedVersionToken = requireDocumentStoreVersionToken(insertResponse.data)
+                setDocumentStore((current) => ({ ...current, versionToken: advancedVersionToken }))
+
+                const { result, ...resultEnvelope } = insertResponse.data
+                delete resultEnvelope.versionToken
+                const resultDetails = result && typeof result === 'object' ? result : resultEnvelope
+                setUpsertResultDialogProps({
+                    ...resultDetails,
+                    ...(typeof result === 'string' ? { result } : {}),
+                    goToRetrievalQuery: true
+                })
+                setShowUpsertHistoryDialog(true)
+            } catch (error) {
+                if (isDocumentStoreVersionConflict(error)) {
+                    enterVersionConflict()
+                } else {
+                    setError(error)
+                }
+            } finally {
+                setLoading(false)
+            }
         }
     }
 
-    const saveVectorStoreConfig = () => {
+    const saveVectorStoreConfig = async () => {
+        if (hasVersionConflict) return
         setLoading(true)
         const data = prepareConfigData()
-        saveVectorStoreConfigApi.request(data)
+        try {
+            const saveResponse = await documentsApi.saveVectorStoreConfig(data, documentStore.versionToken)
+            requireDocumentStoreVersionToken(saveResponse.data)
+            setDocumentStore(saveResponse.data)
+            enqueueSnackbar({
+                message: '配置已保存',
+                options: {
+                    key: new Date().getTime() + Math.random(),
+                    variant: 'success',
+                    action: (key) => (
+                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                            <IconX />
+                        </Button>
+                    )
+                }
+            })
+        } catch (error) {
+            if (isDocumentStoreVersionConflict(error)) {
+                enterVersionConflict()
+            } else {
+                setError(error)
+            }
+        } finally {
+            setLoading(false)
+        }
     }
 
     const resetVectorStoreConfig = () => {
         setSelectedEmbeddingsProvider({})
+        setSelectedEmbeddingsMetadata({})
         setSelectedVectorStoreProvider({})
+        setSelectedVectorStoreMetadata({})
         setSelectedRecordManagerProvider({})
+        setSelectedRecordManagerMetadata({})
     }
 
     const getActiveStep = () => {
@@ -358,7 +431,7 @@ const VectorStoreConfigure = () => {
     const getLoaderDisplayName = (loader) => {
         if (!loader) return ''
 
-        const loaderName = loader.loaderName || 'Unknown'
+        const loaderName = loader.loaderName || '未知加载器'
         let sourceName = ''
 
         // Prefer files.name when files array exists and has items
@@ -389,50 +462,6 @@ const VectorStoreConfigure = () => {
     }
 
     useEffect(() => {
-        if (saveVectorStoreConfigApi.data) {
-            setLoading(false)
-            enqueueSnackbar({
-                message: 'Configuration saved successfully',
-                options: {
-                    key: new Date().getTime() + Math.random(),
-                    variant: 'success',
-                    action: (key) => (
-                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                            <IconX />
-                        </Button>
-                    )
-                }
-            })
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [saveVectorStoreConfigApi.data])
-
-    useEffect(() => {
-        if (insertIntoVectorStoreApi.data) {
-            setLoading(false)
-            setShowUpsertHistoryDialog(true)
-            setUpsertResultDialogProps({ ...insertIntoVectorStoreApi.data, goToRetrievalQuery: true })
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [insertIntoVectorStoreApi.data])
-
-    useEffect(() => {
-        if (insertIntoVectorStoreApi.error) {
-            setLoading(false)
-            setError(insertIntoVectorStoreApi.error)
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [insertIntoVectorStoreApi.error])
-
-    useEffect(() => {
-        if (saveVectorStoreConfigApi.error) {
-            setLoading(false)
-            setError(saveVectorStoreConfigApi.error)
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [saveVectorStoreConfigApi.error])
-
-    useEffect(() => {
         getSpecificDocumentStoreApi.request(storeId)
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -443,6 +472,14 @@ const VectorStoreConfigure = () => {
             const docStore = getSpecificDocumentStoreApi.data
             if (!hasAssignedWorkspace(docStore.workspaceId)) {
                 navigate('/unauthorized')
+                return
+            }
+            try {
+                requireDocumentStoreVersionToken(docStore)
+            } catch (versionError) {
+                setDocumentStore({ ...docStore, versionToken: undefined })
+                setLoading(false)
+                setError(versionError)
                 return
             }
             setDocumentStore(docStore)
@@ -518,7 +555,7 @@ const VectorStoreConfigure = () => {
                                     isBackButton={true}
                                     search={false}
                                     title={getViewHeaderTitle()}
-                                    description='Configure Embeddings, Vector Store and Record Manager'
+                                    description='配置向量嵌入、向量库和记录管理器'
                                     onBack={() => navigate(-1)}
                                 >
                                     {(Object.keys(selectedEmbeddingsProvider).length > 0 ||
@@ -533,12 +570,13 @@ const VectorStoreConfigure = () => {
                                             startIcon={<IconRefresh />}
                                             onClick={() => resetVectorStoreConfig()}
                                         >
-                                            Reset
+                                            重置
                                         </Button>
                                     )}
                                     {(Object.keys(selectedEmbeddingsProvider).length > 0 ||
                                         Object.keys(selectedVectorStoreProvider).length > 0) && (
                                         <Button
+                                            disabled={hasVersionConflict}
                                             variant='outlined'
                                             color='secondary'
                                             sx={{
@@ -548,12 +586,13 @@ const VectorStoreConfigure = () => {
                                             startIcon={<IconDeviceFloppy />}
                                             onClick={() => saveVectorStoreConfig()}
                                         >
-                                            Save Config
+                                            保存配置
                                         </Button>
                                     )}
                                     {Object.keys(selectedEmbeddingsProvider).length > 0 &&
                                         Object.keys(selectedVectorStoreProvider).length > 0 && (
                                             <Button
+                                                disabled={hasVersionConflict}
                                                 variant='contained'
                                                 sx={{
                                                     borderRadius: 2,
@@ -566,13 +605,25 @@ const VectorStoreConfigure = () => {
                                                 startIcon={<IconRowInsertTop />}
                                                 onClick={() => tryAndInsertIntoStore()}
                                             >
-                                                Upsert
+                                                更新插入
                                             </Button>
                                         )}
                                     <IconButton onClick={showUpsertHistoryDrawer} size='small' color='inherit' title='更新历史'>
                                         <IconClock />
                                     </IconButton>
                                 </ViewHeader>
+                                {hasVersionConflict && (
+                                    <Alert
+                                        severity='warning'
+                                        action={
+                                            <Button color='inherit' size='small' onClick={reloadLatestValues}>
+                                                重新载入最新值
+                                            </Button>
+                                        }
+                                    >
+                                        当前配置草稿已保留，但不能与新版本令牌混用。重新载入将放弃当前草稿并获取最新配置。
+                                    </Alert>
+                                )}
                                 <Steps />
                                 <Grid container spacing={1}>
                                     <Grid item xs={12} sm={4} md={4}>
@@ -596,7 +647,7 @@ const VectorStoreConfigure = () => {
                                                     }
                                                 }}
                                             >
-                                                Select Embeddings
+                                                选择嵌入模型
                                             </Button>
                                         ) : (
                                             <Box>
@@ -636,7 +687,10 @@ const VectorStoreConfigure = () => {
                                                                                 borderRadius: '50%',
                                                                                 objectFit: 'contain'
                                                                             }}
-                                                                            alt={selectedEmbeddingsProvider.label ?? 'embeddings'}
+                                                                            alt={getDocStoreComponentDisplayLabel(
+                                                                                selectedEmbeddingsMetadata,
+                                                                                selectedEmbeddingsProvider.label ?? '嵌入模型'
+                                                                            )}
                                                                             src={`${baseURL}/api/v1/node-icon/${selectedEmbeddingsProvider?.name}`}
                                                                         />
                                                                     ) : (
@@ -644,7 +698,10 @@ const VectorStoreConfigure = () => {
                                                                     )}
                                                                 </div>
                                                                 <Typography sx={{ ml: 2 }} variant='h3'>
-                                                                    {selectedEmbeddingsProvider.label}
+                                                                    {getDocStoreComponentDisplayLabel(
+                                                                        selectedEmbeddingsMetadata,
+                                                                        selectedEmbeddingsProvider.label
+                                                                    )}
                                                                 </Typography>
                                                                 <div style={{ flex: 1 }}></div>
                                                                 <div
@@ -679,6 +736,7 @@ const VectorStoreConfigure = () => {
                                                                             key={index}
                                                                             data={selectedEmbeddingsProvider}
                                                                             inputParam={inputParam}
+                                                                            componentMetadata={selectedEmbeddingsMetadata}
                                                                             isAdditionalParams={inputParam.additionalParams}
                                                                             onNodeDataChange={handleEmbeddingsProviderDataChange}
                                                                         />
@@ -712,7 +770,7 @@ const VectorStoreConfigure = () => {
                                                 }}
                                                 disabled={isVectorStoreDisabled()}
                                             >
-                                                Select Vector Store
+                                                选择向量库
                                             </Button>
                                         ) : (
                                             <Box>
@@ -754,7 +812,10 @@ const VectorStoreConfigure = () => {
                                                                                 borderRadius: '50%',
                                                                                 objectFit: 'contain'
                                                                             }}
-                                                                            alt={selectedVectorStoreProvider.label ?? 'embeddings'}
+                                                                            alt={getDocStoreComponentDisplayLabel(
+                                                                                selectedVectorStoreMetadata,
+                                                                                selectedVectorStoreProvider.label ?? '向量库'
+                                                                            )}
                                                                             src={`${baseURL}/api/v1/node-icon/${selectedVectorStoreProvider?.name}`}
                                                                         />
                                                                     ) : (
@@ -762,7 +823,10 @@ const VectorStoreConfigure = () => {
                                                                     )}
                                                                 </div>
                                                                 <Typography sx={{ ml: 2 }} variant='h3'>
-                                                                    {selectedVectorStoreProvider.label}
+                                                                    {getDocStoreComponentDisplayLabel(
+                                                                        selectedVectorStoreMetadata,
+                                                                        selectedVectorStoreProvider.label
+                                                                    )}
                                                                 </Typography>
                                                                 <div style={{ flex: 1 }}></div>
                                                                 <div
@@ -797,6 +861,7 @@ const VectorStoreConfigure = () => {
                                                                             key={index}
                                                                             data={selectedVectorStoreProvider}
                                                                             inputParam={inputParam}
+                                                                            componentMetadata={selectedVectorStoreMetadata}
                                                                             isAdditionalParams={inputParam.additionalParams}
                                                                             onNodeDataChange={handleVectorStoreProviderDataChange}
                                                                         />
@@ -836,9 +901,7 @@ const VectorStoreConfigure = () => {
                                                 }}
                                                 disabled={isRecordManagerDisabled()}
                                             >
-                                                {isRecordManagerUnavailable
-                                                    ? 'Record Manager is not applicable for selected Vector Store'
-                                                    : 'Select Record Manager'}
+                                                {isRecordManagerUnavailable ? '所选向量库不适用记录管理器' : '选择记录管理器'}
                                             </Button>
                                         ) : (
                                             <Box>
@@ -880,7 +943,10 @@ const VectorStoreConfigure = () => {
                                                                                 borderRadius: '50%',
                                                                                 objectFit: 'contain'
                                                                             }}
-                                                                            alt={selectedRecordManagerProvider.label ?? 'embeddings'}
+                                                                            alt={getDocStoreComponentDisplayLabel(
+                                                                                selectedRecordManagerMetadata,
+                                                                                selectedRecordManagerProvider.label ?? '记录管理器'
+                                                                            )}
                                                                             src={`${baseURL}/api/v1/node-icon/${selectedRecordManagerProvider?.name}`}
                                                                         />
                                                                     ) : (
@@ -888,7 +954,10 @@ const VectorStoreConfigure = () => {
                                                                     )}
                                                                 </div>
                                                                 <Typography sx={{ ml: 2 }} variant='h3'>
-                                                                    {selectedRecordManagerProvider.label}
+                                                                    {getDocStoreComponentDisplayLabel(
+                                                                        selectedRecordManagerMetadata,
+                                                                        selectedRecordManagerProvider.label
+                                                                    )}
                                                                 </Typography>
                                                                 <div style={{ flex: 1 }}></div>
                                                                 <div
@@ -923,6 +992,7 @@ const VectorStoreConfigure = () => {
                                                                             key={index}
                                                                             data={selectedRecordManagerProvider}
                                                                             inputParam={inputParam}
+                                                                            componentMetadata={selectedRecordManagerMetadata}
                                                                             isAdditionalParams={inputParam.additionalParams}
                                                                             onNodeDataChange={handleRecordManagerProviderDataChange}
                                                                         />

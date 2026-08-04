@@ -12,16 +12,47 @@ import OpenAI from 'openai'
 import { DataSource } from 'typeorm'
 import { getCredentialData, getCredentialParam } from '../../../src/utils'
 import fetch from 'node-fetch'
-import { flatten, uniqWith, isEqual } from 'lodash'
+import { flatten } from 'lodash'
 import { toolSchemaToJsonSchema } from '../../../src/utils'
 import { AnalyticHandler } from '../../../src/handler'
 import { Moderation, checkInputs, streamResponse } from '../../moderation/Moderation'
 import { formatResponse } from '../../outputparsers/OutputParserHelpers'
 import { addSingleFileToStorage } from '../../../src/storageUtils'
 import { DynamicStructuredTool } from '../../tools/OpenAPIToolkit/core'
+import {
+    OPENAI_ASSISTANT_POLL_FAILED_ERROR,
+    OPENAI_ASSISTANT_DOWNLOAD_ERROR,
+    OPENAI_ASSISTANT_MAX_DOWNLOAD_BYTES,
+    OPENAI_ASSISTANT_SESSION_ERROR,
+    OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR,
+    DownloadBudget,
+    ToolExecutionBudget,
+    buildPerRunTools,
+    createDownloadBudget,
+    createIrreversibleCommitTracker,
+    createToolExecutionBudget,
+    downloadAndStoreBounded,
+    IrreversibleCommitTracker,
+    prepareToolActions,
+    requireChatflowId,
+    requireSelectedAssistantId,
+    requireWorkspaceId,
+    serialPoll,
+    toAssistantOption,
+    withAbortTimeout
+} from './runtimeGuards'
 
 const lenticularBracketRegex = /【[^】]*】/g
 const imageRegex = /<img[^>]*\/>/g
+const INPUT_MODERATION_FAILED_ERROR = 'Input moderation failed'
+
+function getSafeModerationMessage(error: unknown, moderations: Moderation[]): string {
+    const errorMessage = error instanceof Error ? error.message : ''
+    const configuredMessages = moderations
+        .map((moderation) => (moderation as any)?.moderationErrorMessage)
+        .filter((message): message is string => typeof message === 'string' && message.length > 0 && message.length <= 500)
+    return configuredMessages.includes(errorMessage) ? errorMessage : INPUT_MODERATION_FAILED_ERROR
+}
 
 class OpenAIAssistant_Agents implements INode {
     label: string
@@ -45,7 +76,8 @@ class OpenAIAssistant_Agents implements INode {
         this.icon = 'assistant.svg'
         this.description = `An agent that uses OpenAI Assistant API to pick the tool and args to call`
         this.badge = 'DEPRECATING'
-        this.deprecateMessage = 'OpenAI Assistant is deprecated and will be removed in a future release. Use Custom Assistant instead.'
+        this.deprecateMessage =
+            'OpenAI Assistants API will shut down on August 26, 2026. Migrate to Custom Assistant or OpenAI Responses API; see the OpenAI Assistants migration guide.'
         this.baseClasses = [this.type]
         this.inputs = [
             {
@@ -102,31 +134,16 @@ class OpenAIAssistant_Agents implements INode {
     //@ts-ignore
     loadMethods = {
         async listAssistants(_: INodeData, options: ICommonObject): Promise<INodeOptionsValue[]> {
-            const returnData: INodeOptionsValue[] = []
-
+            const workspaceId = requireWorkspaceId(options)
             const appDataSource = options.appDataSource as DataSource
             const databaseEntities = options.databaseEntities as IDatabaseEntity
+            if (!appDataSource || !databaseEntities?.['Assistant']) return []
 
-            if (appDataSource === undefined || !appDataSource) {
-                return returnData
-            }
-
-            const searchOptions = options.searchOptions || {}
             const assistants = await appDataSource.getRepository(databaseEntities['Assistant']).findBy({
-                ...searchOptions,
+                workspaceId,
                 type: 'OPENAI'
             })
-
-            for (let i = 0; i < assistants.length; i += 1) {
-                const assistantDetails = JSON.parse(assistants[i].details)
-                const data = {
-                    label: assistantDetails.name,
-                    name: assistants[i].id,
-                    description: assistantDetails.instructions
-                } as INodeOptionsValue
-                returnData.push(data)
-            }
-            return returnData
+            return assistants.map(toAssistantOption).filter((assistant): assistant is INodeOptionsValue => Boolean(assistant))
         }
     }
 
@@ -135,70 +152,95 @@ class OpenAIAssistant_Agents implements INode {
     }
 
     async clearChatMessages(nodeData: INodeData, options: ICommonObject, sessionIdObj: { type: string; id: string }): Promise<void> {
-        const selectedAssistantId = nodeData.inputs?.selectedAssistant as string
+        const selectedAssistantId = requireSelectedAssistantId(nodeData.inputs?.selectedAssistant)
         const appDataSource = options.appDataSource as DataSource
         const databaseEntities = options.databaseEntities as IDatabaseEntity
-        const orgId = options.orgId
+        const workspaceId = requireWorkspaceId(options)
+        const chatflowId = requireChatflowId(options)
+
+        if (
+            !sessionIdObj ||
+            !['chatId', 'threadId'].includes(sessionIdObj.type) ||
+            typeof sessionIdObj.id !== 'string' ||
+            !sessionIdObj.id
+        ) {
+            throw new Error(OPENAI_ASSISTANT_SESSION_ERROR)
+        }
+        const scopedChatId = typeof options.chatId === 'string' ? options.chatId.trim() : ''
+        if (sessionIdObj.type === 'threadId' && !scopedChatId) throw new Error(OPENAI_ASSISTANT_SESSION_ERROR)
 
         const assistant = await appDataSource.getRepository(databaseEntities['Assistant']).findOneBy({
-            id: selectedAssistantId
+            id: selectedAssistantId,
+            workspaceId,
+            type: 'OPENAI'
         })
 
-        if (!assistant) {
-            options.logger.error(`[${orgId}]: Assistant ${selectedAssistantId} not found`)
-            return
-        }
-
-        if (!sessionIdObj) return
+        if (!assistant) throw new Error('OpenAI Assistant not found')
 
         let sessionId = ''
         if (sessionIdObj.type === 'chatId') {
-            const chatId = sessionIdObj.id
             const chatmsg = await appDataSource.getRepository(databaseEntities['ChatMessage']).findOneBy({
-                chatId
+                chatId: sessionIdObj.id,
+                chatflowid: chatflowId
             })
-            if (!chatmsg) {
-                options.logger.error(`[${orgId}]: Chat Message with Chat Id: ${chatId} not found`)
-                return
-            }
+            if (!chatmsg?.sessionId) throw new Error(OPENAI_ASSISTANT_SESSION_ERROR)
             sessionId = chatmsg.sessionId
-        } else if (sessionIdObj.type === 'threadId') {
-            sessionId = sessionIdObj.id
+        } else {
+            const chatmsg = await appDataSource.getRepository(databaseEntities['ChatMessage']).findOneBy({
+                sessionId: sessionIdObj.id,
+                chatflowid: chatflowId,
+                chatId: scopedChatId
+            })
+            if (!chatmsg?.sessionId) throw new Error(OPENAI_ASSISTANT_SESSION_ERROR)
+            sessionId = chatmsg.sessionId
         }
+        if (!sessionId.startsWith('thread_')) throw new Error(OPENAI_ASSISTANT_SESSION_ERROR)
 
         const credentialData = await getCredentialData(assistant.credential ?? '', options)
         const openAIApiKey = getCredentialParam('openAIApiKey', credentialData, nodeData)
-        if (!openAIApiKey) {
-            options.logger.error(`[${orgId}]: OpenAI ApiKey not found`)
-            return
-        }
+        if (!openAIApiKey) throw new Error('OpenAI API key not found')
 
         const openai = new OpenAI({ apiKey: openAIApiKey })
-        options.logger.info(`[${orgId}]: Clearing OpenAI Thread ${sessionId}`)
         try {
-            if (sessionId && sessionId.startsWith('thread_')) {
-                await openai.beta.threads.delete(sessionId)
-                options.logger.info(`[${orgId}]: Successfully cleared OpenAI Thread ${sessionId}`)
-            } else {
-                options.logger.error(`[${orgId}]: Error clearing OpenAI Thread ${sessionId}`)
-            }
-        } catch (e) {
-            options.logger.error(`[${orgId}]: Error clearing OpenAI Thread ${sessionId}`)
+            const result = await openai.beta.threads.delete(sessionId)
+            if (result?.id !== sessionId || result?.deleted !== true) throw new Error('OpenAI Assistant thread cleanup failed')
+        } catch {
+            options.logger?.error('OpenAI Assistant thread cleanup failed')
+            throw new Error('OpenAI Assistant thread cleanup failed')
         }
     }
 
     async run(nodeData: INodeData, input: string, options: ICommonObject): Promise<string | object> {
-        const selectedAssistantId = nodeData.inputs?.selectedAssistant as string
+        const selectedAssistantId = requireSelectedAssistantId(nodeData.inputs?.selectedAssistant)
         const appDataSource = options.appDataSource as DataSource
         const databaseEntities = options.databaseEntities as IDatabaseEntity
         const disableFileDownload = nodeData.inputs?.disableFileDownload as boolean
         const moderations = nodeData.inputs?.inputModeration as Moderation[]
         const _toolChoice = nodeData.inputs?.toolChoice as string
         const parallelToolCalls = nodeData.inputs?.parallelToolCalls as boolean
+        const workspaceId = requireWorkspaceId(options)
+        const chatflowId = requireChatflowId(options)
+        const chatId = typeof options.chatId === 'string' ? options.chatId.trim() : ''
+        if (!chatId) throw new Error(OPENAI_ASSISTANT_SESSION_ERROR)
+
+        const assistant = await appDataSource.getRepository(databaseEntities['Assistant']).findOneBy({
+            id: selectedAssistantId,
+            workspaceId,
+            type: 'OPENAI'
+        })
+        if (!assistant) throw new Error('OpenAI Assistant not found')
+
+        let assistantDetails: ICommonObject
+        try {
+            assistantDetails = JSON.parse(assistant.details)
+        } catch {
+            throw new Error('OpenAI Assistant configuration is invalid')
+        }
+        const openAIAssistantId = typeof assistantDetails?.id === 'string' ? assistantDetails.id : ''
+        if (!openAIAssistantId) throw new Error('OpenAI Assistant configuration is invalid')
 
         const shouldStreamResponse = options.shouldStreamResponse
         const sseStreamer: IServerSideEventStreamer = options.sseStreamer as IServerSideEventStreamer
-        const chatId = options.chatId
         const checkStorage = options.checkStorage
             ? (options.checkStorage as (orgId: string, subscriptionId: string, usageCacheManager: any) => Promise<void>)
             : undefined
@@ -214,32 +256,37 @@ class OpenAIAssistant_Agents implements INode {
         if (moderations && moderations.length > 0) {
             try {
                 input = await checkInputs(moderations, input)
-            } catch (e) {
+            } catch (error) {
+                const safeMessage = getSafeModerationMessage(error, moderations)
+                if (safeMessage === INPUT_MODERATION_FAILED_ERROR) {
+                    options.logger?.error('OpenAI Assistant input moderation failed')
+                }
                 await new Promise((resolve) => setTimeout(resolve, 500))
                 if (shouldStreamResponse) {
-                    streamResponse(sseStreamer, chatId, e.message)
+                    streamResponse(sseStreamer, chatId, safeMessage)
                 }
-                return formatResponse(e.message)
+                return formatResponse(safeMessage)
             }
         }
 
         let tools = nodeData.inputs?.tools
         tools = flatten(tools)
         const formattedTools = tools?.map((tool: any) => formatToOpenAIAssistantTool(tool)) ?? []
+        if (
+            _toolChoice &&
+            !['file_search', 'code_interpreter', 'none', 'auto', 'required'].includes(_toolChoice) &&
+            !formattedTools.some((tool: OpenAI.Beta.FunctionTool) => tool.function.name === _toolChoice)
+        ) {
+            throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
+        }
 
         const usedTools: IUsedTool[] = []
-        const fileAnnotations = []
-        const artifacts = []
-
-        const assistant = await appDataSource.getRepository(databaseEntities['Assistant']).findOneBy({
-            id: selectedAssistantId
-        })
-
-        if (!assistant) throw new Error(`Assistant ${selectedAssistantId} not found`)
+        const fileAnnotations: Array<{ filePath: string; fileName: string }> = []
+        const artifacts: Array<{ type: string; data: string }> = []
 
         const credentialData = await getCredentialData(assistant.credential ?? '', options)
         const openAIApiKey = getCredentialParam('openAIApiKey', credentialData, nodeData)
-        if (!openAIApiKey) throw new Error(`OpenAI ApiKey not found`)
+        if (!openAIApiKey) throw new Error('OpenAI API key not found')
 
         const openai = new OpenAI({ apiKey: openAIApiKey })
 
@@ -249,96 +296,50 @@ class OpenAIAssistant_Agents implements INode {
         const parentIds = await analyticHandlers.onChainStart('OpenAIAssistant', input)
 
         try {
-            const assistantDetails = JSON.parse(assistant.details)
-            const openAIAssistantId = assistantDetails.id
-
             // Retrieve assistant
             const retrievedAssistant = await openai.beta.assistants.retrieve(openAIAssistantId)
-
-            if (formattedTools.length) {
-                let filteredTools = []
-                for (const tool of retrievedAssistant.tools) {
-                    if (tool.type === 'code_interpreter' || tool.type === 'file_search') filteredTools.push(tool)
-                }
-                filteredTools = uniqWith([...filteredTools, ...formattedTools], isEqual)
-                // filter out tool with empty function
-                filteredTools = filteredTools.filter((tool) => !(tool.type === 'function' && !(tool as any).function))
-                await openai.beta.assistants.update(openAIAssistantId, { tools: filteredTools })
-            } else {
-                let filteredTools = retrievedAssistant.tools.filter((tool) => tool.type !== 'function')
-                await openai.beta.assistants.update(openAIAssistantId, { tools: filteredTools })
+            if (retrievedAssistant.id !== openAIAssistantId) throw new Error('OpenAI Assistant configuration is invalid')
+            const runTools = buildPerRunTools(retrievedAssistant.tools, formattedTools)
+            if (['file_search', 'code_interpreter'].includes(_toolChoice) && !runTools.some((tool) => tool.type === _toolChoice)) {
+                throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
             }
-
             const chatmessage = await appDataSource.getRepository(databaseEntities['ChatMessage']).findOneBy({
-                chatId: options.chatId,
-                chatflowid: options.chatflowid
+                chatId,
+                chatflowid: chatflowId
             })
 
             let threadId = ''
             let isNewThread = false
             if (!chatmessage) {
                 const thread = await openai.beta.threads.create({})
+                if (typeof thread.id !== 'string' || !thread.id.startsWith('thread_')) {
+                    throw new Error(OPENAI_ASSISTANT_SESSION_ERROR)
+                }
                 threadId = thread.id
                 isNewThread = true
             } else {
-                const thread = await openai.beta.threads.retrieve(chatmessage.sessionId)
+                const storedSessionId = typeof chatmessage.sessionId === 'string' ? chatmessage.sessionId : ''
+                if (!storedSessionId.startsWith('thread_')) throw new Error(OPENAI_ASSISTANT_SESSION_ERROR)
+                const thread = await openai.beta.threads.retrieve(storedSessionId)
+                if (thread.id !== storedSessionId) throw new Error(OPENAI_ASSISTANT_SESSION_ERROR)
                 threadId = thread.id
             }
 
             // List all runs, in case existing thread is still running
             if (!isNewThread) {
-                const promise = (threadId: string) => {
-                    return new Promise<void>((resolve, reject) => {
-                        const maxWaitTime = 30000 // Maximum wait time of 30 seconds
-                        const startTime = Date.now()
-                        let delay = 500 // Initial delay between retries
-                        const maxRetries = 10
-                        let retries = 0
-
-                        const timeout = setInterval(async () => {
-                            try {
-                                const allRuns = await openai.beta.threads.runs.list(threadId)
-                                if (allRuns.data && allRuns.data.length) {
-                                    const firstRunId = allRuns.data[0].id
-                                    const runStatus = allRuns.data.find((run) => run.id === firstRunId)?.status
-                                    if (
-                                        runStatus &&
-                                        (runStatus === 'cancelled' ||
-                                            runStatus === 'completed' ||
-                                            runStatus === 'expired' ||
-                                            runStatus === 'failed' ||
-                                            runStatus === 'requires_action')
-                                    ) {
-                                        clearInterval(timeout)
-                                        resolve()
-                                    }
-                                } else {
-                                    clearInterval(timeout)
-                                    reject(new Error(`Empty Thread: ${threadId}`))
-                                }
-                            } catch (error: any) {
-                                if (error.response?.status === 404) {
-                                    clearInterval(timeout)
-                                    reject(new Error(`Thread not found: ${threadId}`))
-                                } else if (error.response?.status === 429 && retries < maxRetries) {
-                                    retries++
-                                    delay *= 2
-                                    console.warn(`Rate limit exceeded, retrying in ${delay}ms...`)
-                                } else {
-                                    clearInterval(timeout)
-                                    reject(new Error(`Unexpected error: ${error.message}`))
-                                }
-                            }
-
-                            // Timeout condition to stop the loop if maxWaitTime is exceeded
-                            if (Date.now() - startTime > maxWaitTime) {
-                                clearInterval(timeout)
-                                reject(new Error('Timeout waiting for thread to finish.'))
-                            }
-                        }, delay)
-                    })
-                }
-                await promise(threadId)
+                await serialPoll({
+                    operation: (signal) => openai.beta.threads.runs.list(threadId, undefined, { signal }),
+                    evaluate: (allRuns) => {
+                        const latestRun = allRuns.data?.[0]
+                        if (!latestRun) return { done: true, value: undefined }
+                        if (['cancelled', 'completed', 'expired', 'failed', 'incomplete'].includes(latestRun.status)) {
+                            return { done: true, value: undefined }
+                        }
+                        if (latestRun.status === 'requires_action') throw new Error(OPENAI_ASSISTANT_POLL_FAILED_ERROR)
+                        return { done: false }
+                    },
+                    onRetry: () => options.logger?.warn('OpenAI Assistant polling retry scheduled')
+                })
             }
 
             // Add message to thread
@@ -349,6 +350,8 @@ class OpenAIAssistant_Agents implements INode {
 
             // Run assistant thread
             const llmIds = await analyticHandlers.onLLMStart('ChatOpenAI', input, parentIds)
+            const toolBudget = createToolExecutionBudget()
+            const downloadBudget = createDownloadBudget(toolBudget.deadlineAt)
 
             let text = ''
             let runThreadId = ''
@@ -368,261 +371,284 @@ class OpenAIAssistant_Agents implements INode {
             }
 
             if (shouldStreamResponse) {
-                const streamThread = await openai.beta.threads.runs.create(threadId, {
-                    assistant_id: retrievedAssistant.id,
-                    stream: true,
-                    tool_choice: toolChoice,
-                    parallel_tool_calls: parallelToolCalls
-                })
+                const storageCommitTracker = createIrreversibleCommitTracker()
+                const accountStoredBytes = updateStorageUsage
+                    ? (totalSize: number) => updateStorageUsage(options.orgId, options.workspaceId, totalSize, options.usageCacheManager)
+                    : undefined
+                try {
+                    await withAbortTimeout(
+                        async (signal) => {
+                            const streamThread = await openai.beta.threads.runs.create(
+                                threadId,
+                                {
+                                    assistant_id: retrievedAssistant.id,
+                                    stream: true,
+                                    tools: runTools,
+                                    tool_choice: toolChoice,
+                                    parallel_tool_calls: parallelToolCalls
+                                },
+                                { signal }
+                            )
 
-                for await (const event of streamThread) {
-                    if (event.event === 'thread.run.created') {
-                        runThreadId = event.data.id
-                    }
+                            for await (const event of streamThread) {
+                                if (signal.aborted || Date.now() >= toolBudget.deadlineAt) {
+                                    throw new Error(OPENAI_ASSISTANT_DOWNLOAD_ERROR)
+                                }
+                                if (event.event === 'thread.run.created') {
+                                    runThreadId = event.data.id
+                                }
 
-                    if (event.event === 'thread.message.delta') {
-                        const chunk = event.data.delta.content?.[0]
+                                if (event.event === 'thread.message.delta') {
+                                    const chunk = event.data.delta.content?.[0]
 
-                        if (chunk && 'text' in chunk) {
-                            if (chunk.text?.annotations?.length) {
-                                const message_content = chunk.text
-                                const annotations = chunk.text?.annotations
+                                    if (chunk && 'text' in chunk) {
+                                        if (chunk.text?.annotations?.length) {
+                                            const message_content = chunk.text
+                                            const annotations = chunk.text?.annotations
 
-                                // Iterate over the annotations
-                                for (let index = 0; index < annotations.length; index++) {
-                                    const annotation = annotations[index]
-                                    let filePath = ''
+                                            // Iterate over the annotations
+                                            for (let index = 0; index < annotations.length; index++) {
+                                                const annotation = annotations[index]
+                                                let filePath = ''
 
-                                    // Gather citations based on annotation attributes
-                                    const file_citation = (annotation as OpenAI.Beta.Threads.Messages.FileCitationAnnotation).file_citation
-                                    if (file_citation) {
-                                        const cited_file = await openai.files.retrieve(file_citation.file_id)
-                                        // eslint-disable-next-line no-useless-escape
-                                        const fileName = cited_file.filename.split(/[\/\\]/).pop() ?? cited_file.filename
-                                        if (!disableFileDownload) {
-                                            if (checkStorage)
-                                                await checkStorage(options.orgId, options.subscriptionId, options.usageCacheManager)
-
-                                            const { path, totalSize } = await downloadFile(
-                                                openAIApiKey,
-                                                cited_file,
-                                                fileName,
-                                                options.orgId,
-                                                options.chatflowid,
-                                                options.chatId
-                                            )
-                                            filePath = path
-                                            fileAnnotations.push({
-                                                filePath,
-                                                fileName
-                                            })
-
-                                            if (updateStorageUsage)
-                                                await updateStorageUsage(
-                                                    options.orgId,
-                                                    options.workspaceId,
-                                                    totalSize,
-                                                    options.usageCacheManager
-                                                )
-                                        }
-                                    } else {
-                                        const file_path = (annotation as OpenAI.Beta.Threads.Messages.FilePathAnnotation).file_path
-                                        if (file_path) {
-                                            const cited_file = await openai.files.retrieve(file_path.file_id)
-                                            // eslint-disable-next-line no-useless-escape
-                                            const fileName = cited_file.filename.split(/[\/\\]/).pop() ?? cited_file.filename
-                                            if (!disableFileDownload) {
-                                                if (checkStorage)
-                                                    await checkStorage(options.orgId, options.subscriptionId, options.usageCacheManager)
-
-                                                const { path, totalSize } = await downloadFile(
-                                                    openAIApiKey,
-                                                    cited_file,
-                                                    fileName,
-                                                    options.orgId,
-                                                    options.chatflowid,
-                                                    options.chatId
-                                                )
-                                                filePath = path
-                                                fileAnnotations.push({
-                                                    filePath,
-                                                    fileName
-                                                })
-
-                                                if (updateStorageUsage)
-                                                    await updateStorageUsage(
-                                                        options.orgId,
-                                                        options.workspaceId,
-                                                        totalSize,
-                                                        options.usageCacheManager
+                                                // Gather citations based on annotation attributes
+                                                const file_citation = (annotation as OpenAI.Beta.Threads.Messages.FileCitationAnnotation)
+                                                    .file_citation
+                                                if (file_citation && !disableFileDownload) {
+                                                    const cited_file = await retrieveFileMetadata(
+                                                        openai,
+                                                        file_citation.file_id,
+                                                        downloadBudget,
+                                                        signal,
+                                                        options
                                                     )
+                                                    // eslint-disable-next-line no-useless-escape
+                                                    const fileName = cited_file.filename.split(/[\/\\]/).pop() ?? cited_file.filename
+                                                    if (!disableFileDownload) {
+                                                        if (checkStorage)
+                                                            await checkStorage(
+                                                                options.orgId,
+                                                                options.subscriptionId,
+                                                                options.usageCacheManager
+                                                            )
+
+                                                        const { path } = await downloadFile(
+                                                            openAIApiKey,
+                                                            cited_file,
+                                                            fileName,
+                                                            options.orgId,
+                                                            options,
+                                                            downloadBudget,
+                                                            signal,
+                                                            storageCommitTracker,
+                                                            accountStoredBytes,
+                                                            options.chatflowid,
+                                                            chatId
+                                                        )
+                                                        if (signal.aborted || Date.now() >= toolBudget.deadlineAt) {
+                                                            throw new Error(OPENAI_ASSISTANT_DOWNLOAD_ERROR)
+                                                        }
+                                                        filePath = path
+                                                        fileAnnotations.push({
+                                                            filePath,
+                                                            fileName
+                                                        })
+                                                    }
+                                                } else {
+                                                    const file_path = (annotation as OpenAI.Beta.Threads.Messages.FilePathAnnotation)
+                                                        .file_path
+                                                    if (file_path && !disableFileDownload) {
+                                                        const cited_file = await retrieveFileMetadata(
+                                                            openai,
+                                                            file_path.file_id,
+                                                            downloadBudget,
+                                                            signal,
+                                                            options
+                                                        )
+                                                        // eslint-disable-next-line no-useless-escape
+                                                        const fileName = cited_file.filename.split(/[\/\\]/).pop() ?? cited_file.filename
+                                                        if (!disableFileDownload) {
+                                                            if (checkStorage)
+                                                                await checkStorage(
+                                                                    options.orgId,
+                                                                    options.subscriptionId,
+                                                                    options.usageCacheManager
+                                                                )
+
+                                                            const { path } = await downloadFile(
+                                                                openAIApiKey,
+                                                                cited_file,
+                                                                fileName,
+                                                                options.orgId,
+                                                                options,
+                                                                downloadBudget,
+                                                                signal,
+                                                                storageCommitTracker,
+                                                                accountStoredBytes,
+                                                                options.chatflowid,
+                                                                chatId
+                                                            )
+                                                            if (signal.aborted || Date.now() >= toolBudget.deadlineAt) {
+                                                                throw new Error(OPENAI_ASSISTANT_DOWNLOAD_ERROR)
+                                                            }
+                                                            filePath = path
+                                                            fileAnnotations.push({
+                                                                filePath,
+                                                                fileName
+                                                            })
+                                                        }
+                                                    }
+                                                }
+
+                                                // Replace the text with a footnote
+                                                message_content.value = message_content.value?.replace(
+                                                    `${annotation.text}`,
+                                                    `${disableFileDownload ? '' : filePath}`
+                                                )
+                                            }
+
+                                            // Remove lenticular brackets
+                                            message_content.value = message_content.value?.replace(lenticularBracketRegex, '')
+
+                                            text += message_content.value ?? ''
+
+                                            if (message_content.value) {
+                                                if (!isStreamingStarted) {
+                                                    isStreamingStarted = true
+                                                    if (sseStreamer) {
+                                                        sseStreamer.streamStartEvent(chatId, message_content.value)
+                                                    }
+                                                }
+                                                if (sseStreamer) {
+                                                    sseStreamer.streamTokenEvent(chatId, message_content.value)
+                                                }
+                                            }
+
+                                            if (fileAnnotations.length) {
+                                                if (!isStreamingStarted) {
+                                                    isStreamingStarted = true
+                                                    if (sseStreamer) {
+                                                        sseStreamer.streamStartEvent(chatId, ' ')
+                                                    }
+                                                }
+                                                if (sseStreamer) {
+                                                    sseStreamer.streamFileAnnotationsEvent(chatId, fileAnnotations)
+                                                }
+                                            }
+                                        } else {
+                                            text += chunk.text?.value
+                                            if (!isStreamingStarted) {
+                                                isStreamingStarted = true
+                                                if (sseStreamer) {
+                                                    sseStreamer.streamStartEvent(chatId, chunk.text?.value || '')
+                                                }
+                                            }
+                                            if (sseStreamer) {
+                                                sseStreamer.streamTokenEvent(chatId, chunk.text?.value || '')
                                             }
                                         }
                                     }
 
-                                    // Replace the text with a footnote
-                                    message_content.value = message_content.value?.replace(
-                                        `${annotation.text}`,
-                                        `${disableFileDownload ? '' : filePath}`
-                                    )
-                                }
+                                    if (chunk && 'image_file' in chunk && chunk.image_file?.file_id && !disableFileDownload) {
+                                        const fileId = chunk.image_file.file_id
+                                        const fileObj = await retrieveFileMetadata(openai, fileId, downloadBudget, signal, options)
 
-                                // Remove lenticular brackets
-                                message_content.value = message_content.value?.replace(lenticularBracketRegex, '')
+                                        if (checkStorage)
+                                            await checkStorage(options.orgId, options.subscriptionId, options.usageCacheManager)
 
-                                text += message_content.value ?? ''
+                                        const { filePath } = await downloadImg(
+                                            openai,
+                                            fileId,
+                                            `${fileObj.filename}.png`,
+                                            fileObj.bytes,
+                                            options.orgId,
+                                            options,
+                                            downloadBudget,
+                                            signal,
+                                            storageCommitTracker,
+                                            accountStoredBytes,
+                                            options.chatflowid,
+                                            chatId
+                                        )
+                                        if (signal.aborted || Date.now() >= toolBudget.deadlineAt) {
+                                            throw new Error(OPENAI_ASSISTANT_DOWNLOAD_ERROR)
+                                        }
+                                        artifacts.push({ type: 'png', data: filePath })
 
-                                if (message_content.value) {
-                                    if (!isStreamingStarted) {
-                                        isStreamingStarted = true
+                                        if (!isStreamingStarted) {
+                                            isStreamingStarted = true
+                                            if (sseStreamer) {
+                                                sseStreamer.streamStartEvent(chatId, ' ')
+                                            }
+                                        }
                                         if (sseStreamer) {
-                                            sseStreamer.streamStartEvent(chatId, message_content.value)
+                                            sseStreamer.streamArtifactsEvent(chatId, artifacts)
                                         }
                                     }
-                                    if (sseStreamer) {
-                                        sseStreamer.streamTokenEvent(chatId, message_content.value)
-                                    }
                                 }
 
-                                if (fileAnnotations.length) {
-                                    if (!isStreamingStarted) {
-                                        isStreamingStarted = true
-                                        if (sseStreamer) {
-                                            sseStreamer.streamStartEvent(chatId, ' ')
+                                if (event.event === 'thread.run.requires_action') {
+                                    runThreadId = event.data.id
+                                    const toolCalls = event.data.required_action?.submit_tool_outputs.tool_calls
+                                    if (toolCalls) {
+                                        try {
+                                            const submitToolOutputs = await executeToolCalls({
+                                                toolCalls,
+                                                tools,
+                                                budget: toolBudget,
+                                                analyticHandlers,
+                                                parentIds,
+                                                threadId,
+                                                chatId,
+                                                input,
+                                                usedTools,
+                                                options
+                                            })
+                                            if (signal.aborted || Date.now() >= toolBudget.deadlineAt) {
+                                                throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
+                                            }
+                                            const result = await handleToolSubmission({
+                                                openai,
+                                                threadId,
+                                                runThreadId,
+                                                submitToolOutputs,
+                                                tools,
+                                                analyticHandlers,
+                                                parentIds,
+                                                llmIds,
+                                                sseStreamer,
+                                                chatId,
+                                                options,
+                                                input,
+                                                usedTools,
+                                                text,
+                                                isStreamingStarted,
+                                                budget: toolBudget,
+                                                abortSignal: signal
+                                            })
+                                            text = result.text
+                                            isStreamingStarted = result.isStreamingStarted
+                                        } catch {
+                                            options.logger?.error('OpenAI Assistant tool submission failed')
+                                            await cancelRunSafely(openai, threadId, runThreadId, options)
+                                            const errMsg = OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR
+                                            await analyticHandlers.onLLMError(llmIds, errMsg)
+                                            await analyticHandlers.onChainError(parentIds, errMsg, true)
+                                            throw new Error(errMsg)
                                         }
                                     }
-                                    if (sseStreamer) {
-                                        sseStreamer.streamFileAnnotationsEvent(chatId, fileAnnotations)
-                                    }
-                                }
-                            } else {
-                                text += chunk.text?.value
-                                if (!isStreamingStarted) {
-                                    isStreamingStarted = true
-                                    if (sseStreamer) {
-                                        sseStreamer.streamStartEvent(chatId, chunk.text?.value || '')
-                                    }
-                                }
-                                if (sseStreamer) {
-                                    sseStreamer.streamTokenEvent(chatId, chunk.text?.value || '')
                                 }
                             }
-                        }
-
-                        if (chunk && 'image_file' in chunk && chunk.image_file?.file_id) {
-                            const fileId = chunk.image_file.file_id
-                            const fileObj = await openai.files.retrieve(fileId)
-
-                            if (checkStorage) await checkStorage(options.orgId, options.subscriptionId, options.usageCacheManager)
-
-                            const { filePath, totalSize } = await downloadImg(
-                                openai,
-                                fileId,
-                                `${fileObj.filename}.png`,
-                                options.orgId,
-                                options.chatflowid,
-                                options.chatId
-                            )
-                            artifacts.push({ type: 'png', data: filePath })
-
-                            if (updateStorageUsage)
-                                await updateStorageUsage(options.orgId, options.workspaceId, totalSize, options.usageCacheManager)
-
-                            if (!isStreamingStarted) {
-                                isStreamingStarted = true
-                                if (sseStreamer) {
-                                    sseStreamer.streamStartEvent(chatId, ' ')
-                                }
-                            }
-                            if (sseStreamer) {
-                                sseStreamer.streamArtifactsEvent(chatId, artifacts)
-                            }
-                        }
-                    }
-
-                    if (event.event === 'thread.run.requires_action') {
-                        if (event.data.required_action?.submit_tool_outputs.tool_calls) {
-                            const actions: ICommonObject[] = []
-                            event.data.required_action.submit_tool_outputs.tool_calls.forEach((item) => {
-                                const functionCall = item.function
-                                let args = {}
-                                try {
-                                    args = JSON.parse(functionCall.arguments)
-                                } catch (e) {
-                                    console.error('Error parsing arguments, default to empty object')
-                                }
-                                actions.push({
-                                    tool: functionCall.name,
-                                    toolInput: args,
-                                    toolCallId: item.id
-                                })
-                            })
-                            const submitToolOutputs = []
-                            for (let i = 0; i < actions.length; i += 1) {
-                                const tool = tools.find((tool: any) => tool.name === actions[i].tool)
-                                if (!tool) continue
-
-                                // Start tool analytics
-                                const toolIds = await analyticHandlers.onToolStart(tool.name, actions[i].toolInput, parentIds)
-
-                                try {
-                                    const toolOutput = await tool.call(actions[i].toolInput, undefined, undefined, {
-                                        sessionId: threadId,
-                                        chatId: options.chatId,
-                                        input
-                                    })
-                                    await analyticHandlers.onToolEnd(toolIds, toolOutput)
-                                    submitToolOutputs.push({
-                                        tool_call_id: actions[i].toolCallId,
-                                        output: toolOutput
-                                    })
-                                    usedTools.push({
-                                        tool: tool.name,
-                                        toolInput: actions[i].toolInput,
-                                        toolOutput
-                                    })
-                                } catch (e) {
-                                    await analyticHandlers.onToolError(toolIds, e)
-                                    console.error('Error executing tool', e)
-                                    throw new Error(
-                                        `Error executing tool. Tool: ${tool.name}. Thread ID: ${threadId}. Run ID: ${runThreadId}`
-                                    )
-                                }
-                            }
-
-                            try {
-                                const result = await handleToolSubmission({
-                                    openai,
-                                    threadId,
-                                    runThreadId,
-                                    submitToolOutputs,
-                                    tools,
-                                    analyticHandlers,
-                                    parentIds,
-                                    llmIds,
-                                    sseStreamer,
-                                    chatId,
-                                    options,
-                                    input,
-                                    usedTools,
-                                    text,
-                                    isStreamingStarted
-                                })
-                                text = result.text
-                                isStreamingStarted = result.isStreamingStarted
-                            } catch (error) {
-                                console.error('Error submitting tool outputs:', error)
-                                await openai.beta.threads.runs.cancel(runThreadId, { thread_id: threadId })
-
-                                const errMsg = `Error submitting tool outputs. Thread ID: ${threadId}. Run ID: ${runThreadId}`
-
-                                await analyticHandlers.onLLMError(llmIds, errMsg)
-                                await analyticHandlers.onChainError(parentIds, errMsg, true)
-
-                                throw new Error(errMsg)
-                            }
-                        }
-                    }
+                        },
+                        Math.max(1, toolBudget.deadlineAt - Date.now()),
+                        undefined,
+                        () => storageCommitTracker.waitForIdle()
+                    )
+                } catch {
+                    options.logger?.error('OpenAI Assistant streaming run failed')
+                    await cancelRunSafely(openai, threadId, runThreadId, options)
+                    await analyticHandlers.onLLMError(llmIds, 'OpenAI Assistant streaming run failed')
+                    throw new Error('OpenAI Assistant streaming run failed')
                 }
 
                 // List messages
@@ -646,160 +672,70 @@ class OpenAIAssistant_Agents implements INode {
                 }
             }
 
-            const promise = (threadId: string, runId: string) => {
-                return new Promise((resolve, reject) => {
-                    const maxWaitTime = 30000 // Maximum wait time of 30 seconds
-                    const startTime = Date.now()
-                    let delay = 500 // Initial delay between retries
-                    const maxRetries = 10
-                    let retries = 0
-
-                    const timeout = setInterval(async () => {
-                        try {
-                            const run = await openai.beta.threads.runs.retrieve(runId, { thread_id: threadId })
-                            const state = run.status
-
-                            if (state === 'completed') {
-                                clearInterval(timeout)
-                                resolve(state)
-                            } else if (state === 'requires_action') {
-                                if (run.required_action?.submit_tool_outputs.tool_calls) {
-                                    clearInterval(timeout)
-                                    const actions: ICommonObject[] = []
-                                    run.required_action.submit_tool_outputs.tool_calls.forEach((item) => {
-                                        const functionCall = item.function
-                                        let args = {}
-                                        try {
-                                            args = JSON.parse(functionCall.arguments)
-                                        } catch (e) {
-                                            console.error('Error parsing arguments, default to empty object')
-                                        }
-                                        actions.push({
-                                            tool: functionCall.name,
-                                            toolInput: args,
-                                            toolCallId: item.id
-                                        })
-                                    })
-                                    const submitToolOutputs = []
-                                    for (let i = 0; i < actions.length; i += 1) {
-                                        const tool = tools.find((tool: any) => tool.name === actions[i].tool)
-                                        if (!tool) continue
-
-                                        // Start tool analytics
-                                        const toolIds = await analyticHandlers.onToolStart(tool.name, actions[i].toolInput, parentIds)
-                                        if (shouldStreamResponse && sseStreamer) {
-                                            sseStreamer.streamToolEvent(chatId, tool.name)
-                                        }
-
-                                        try {
-                                            const toolOutput = await tool.call(actions[i].toolInput, undefined, undefined, {
-                                                sessionId: threadId,
-                                                chatId: options.chatId,
-                                                input
-                                            })
-                                            await analyticHandlers.onToolEnd(toolIds, toolOutput)
-                                            submitToolOutputs.push({
-                                                tool_call_id: actions[i].toolCallId,
-                                                output: toolOutput
-                                            })
-                                            usedTools.push({
-                                                tool: tool.name,
-                                                toolInput: actions[i].toolInput,
-                                                toolOutput
-                                            })
-                                        } catch (e) {
-                                            await analyticHandlers.onToolError(toolIds, e)
-                                            console.error('Error executing tool', e)
-                                            clearInterval(timeout)
-                                            reject(
-                                                new Error(
-                                                    `Error processing thread: ${state}, Thread ID: ${threadId}, Run ID: ${runId}, Tool: ${tool.name}`
-                                                )
-                                            )
-                                            return
-                                        }
-                                    }
-
-                                    const newRun = await openai.beta.threads.runs.retrieve(runId, { thread_id: threadId })
-                                    const newStatus = newRun?.status
-
-                                    try {
-                                        if (submitToolOutputs.length && newStatus === 'requires_action') {
-                                            await openai.beta.threads.runs.submitToolOutputs(runId, {
-                                                tool_outputs: submitToolOutputs,
-                                                thread_id: threadId
-                                            })
-                                            resolve(state)
-                                        } else {
-                                            await openai.beta.threads.runs.cancel(runId, { thread_id: threadId })
-                                            resolve('requires_action_retry')
-                                        }
-                                    } catch (e) {
-                                        clearInterval(timeout)
-                                        reject(
-                                            new Error(`Error submitting tool outputs: ${state}, Thread ID: ${threadId}, Run ID: ${runId}`)
-                                        )
-                                    }
-                                }
-                            } else if (state === 'cancelled' || state === 'expired' || state === 'failed') {
-                                clearInterval(timeout)
-                                reject(
-                                    new Error(
-                                        `Error processing thread: ${state}, Thread ID: ${threadId}, Run ID: ${runId}, Status: ${state}`
-                                    )
-                                )
-                            }
-                        } catch (error: any) {
-                            if (error.response?.status === 404 || error.response?.status === 429) {
-                                clearInterval(timeout)
-                                reject(new Error(`API error: ${error.response?.status} for Thread ID: ${threadId}, Run ID: ${runId}`))
-                            } else if (retries < maxRetries) {
-                                retries++
-                                delay *= 2 // Exponential backoff
-                                console.warn(`Transient error, retrying in ${delay}ms...`)
-                            } else {
-                                clearInterval(timeout)
-                                reject(new Error(`Max retries reached. Error: ${error.message}`))
-                            }
-                        }
-
-                        // Stop the loop if maximum wait time is exceeded
-                        if (Date.now() - startTime > maxWaitTime) {
-                            clearInterval(timeout)
-                            reject(new Error('Timeout waiting for thread to finish.'))
-                        }
-                    }, delay)
-                })
-            }
-
             // Polling run status
-            const runThread = await openai.beta.threads.runs.create(threadId, {
-                assistant_id: retrievedAssistant.id,
-                tool_choice: toolChoice,
-                parallel_tool_calls: parallelToolCalls
-            })
+            const runThread = await withAbortTimeout(
+                (signal) =>
+                    openai.beta.threads.runs.create(
+                        threadId,
+                        {
+                            assistant_id: retrievedAssistant.id,
+                            tools: runTools,
+                            tool_choice: toolChoice,
+                            parallel_tool_calls: parallelToolCalls
+                        },
+                        { signal }
+                    ),
+                Math.max(1, toolBudget.deadlineAt - Date.now())
+            )
             runThreadId = runThread.id
-            let state = await promise(threadId, runThread.id)
-            while (state === 'requires_action') {
-                state = await promise(threadId, runThread.id)
-            }
 
-            let retries = 3
-            while (state === 'requires_action_retry') {
-                if (retries > 0) {
-                    retries -= 1
-                    const newRunThread = await openai.beta.threads.runs.create(threadId, {
-                        assistant_id: retrievedAssistant.id,
-                        tool_choice: toolChoice,
-                        parallel_tool_calls: parallelToolCalls
-                    })
-                    runThreadId = newRunThread.id
-                    state = await promise(threadId, newRunThread.id)
-                } else {
-                    const errMsg = `Error processing thread: ${state}, Thread ID: ${threadId}`
-                    await analyticHandlers.onChainError(parentIds, errMsg, true)
-                    throw new Error(errMsg)
-                }
+            try {
+                await serialPoll({
+                    operation: async (signal) => {
+                        const run = await openai.beta.threads.runs.retrieve(runThread.id, { thread_id: threadId }, { signal })
+                        if (run.status !== 'requires_action') return run
+
+                        const toolCalls = run.required_action?.submit_tool_outputs.tool_calls
+                        const submitToolOutputs = await executeToolCalls({
+                            toolCalls,
+                            tools,
+                            budget: toolBudget,
+                            analyticHandlers,
+                            parentIds,
+                            threadId,
+                            chatId,
+                            input,
+                            usedTools,
+                            options
+                        })
+                        await openai.beta.threads.runs.submitToolOutputs(
+                            runThread.id,
+                            {
+                                tool_outputs: submitToolOutputs,
+                                thread_id: threadId
+                            },
+                            { signal }
+                        )
+                        return { ...run, status: 'in_progress' as const }
+                    },
+                    evaluate: (run) => {
+                        if (run.status === 'completed') return { done: true, value: undefined }
+                        if (['cancelled', 'expired', 'failed', 'incomplete'].includes(run.status)) {
+                            throw new Error(OPENAI_ASSISTANT_POLL_FAILED_ERROR)
+                        }
+                        if (!['queued', 'in_progress', 'cancelling'].includes(run.status)) {
+                            throw new Error(OPENAI_ASSISTANT_POLL_FAILED_ERROR)
+                        }
+                        return { done: false }
+                    },
+                    maxWaitMs: Math.max(1, toolBudget.deadlineAt - Date.now()),
+                    onRetry: () => options.logger?.warn('OpenAI Assistant polling retry scheduled')
+                })
+            } catch {
+                options.logger?.error('OpenAI Assistant run failed')
+                await cancelRunSafely(openai, threadId, runThreadId, options)
+                await analyticHandlers.onLLMError(llmIds, OPENAI_ASSISTANT_POLL_FAILED_ERROR)
+                throw new Error(OPENAI_ASSISTANT_POLL_FAILED_ERROR)
             }
 
             // List messages
@@ -825,8 +761,14 @@ class OpenAIAssistant_Agents implements INode {
                             // Gather citations based on annotation attributes
                             const file_citation = (annotation as OpenAI.Beta.Threads.Messages.FileCitationAnnotation).file_citation
 
-                            if (file_citation) {
-                                const cited_file = await openai.files.retrieve(file_citation.file_id)
+                            if (file_citation && !disableFileDownload) {
+                                const cited_file = await retrieveFileMetadata(
+                                    openai,
+                                    file_citation.file_id,
+                                    downloadBudget,
+                                    undefined,
+                                    options
+                                )
                                 // eslint-disable-next-line no-useless-escape
                                 const fileName = cited_file.filename.split(/[\/\\]/).pop() ?? cited_file.filename
                                 if (!disableFileDownload) {
@@ -837,8 +779,13 @@ class OpenAIAssistant_Agents implements INode {
                                         cited_file,
                                         fileName,
                                         options.orgId,
+                                        options,
+                                        downloadBudget,
+                                        undefined,
+                                        undefined,
+                                        undefined,
                                         options.chatflowid,
-                                        options.chatId
+                                        chatId
                                     )
                                     filePath = path
 
@@ -852,8 +799,14 @@ class OpenAIAssistant_Agents implements INode {
                                 }
                             } else {
                                 const file_path = (annotation as OpenAI.Beta.Threads.Messages.FilePathAnnotation).file_path
-                                if (file_path) {
-                                    const cited_file = await openai.files.retrieve(file_path.file_id)
+                                if (file_path && !disableFileDownload) {
+                                    const cited_file = await retrieveFileMetadata(
+                                        openai,
+                                        file_path.file_id,
+                                        downloadBudget,
+                                        undefined,
+                                        options
+                                    )
                                     // eslint-disable-next-line no-useless-escape
                                     const fileName = cited_file.filename.split(/[\/\\]/).pop() ?? cited_file.filename
                                     if (!disableFileDownload) {
@@ -865,8 +818,13 @@ class OpenAIAssistant_Agents implements INode {
                                             cited_file,
                                             fileName,
                                             options.orgId,
+                                            options,
+                                            downloadBudget,
+                                            undefined,
+                                            undefined,
+                                            undefined,
                                             options.chatflowid,
-                                            options.chatId
+                                            chatId
                                         )
                                         filePath = path
 
@@ -899,10 +857,10 @@ class OpenAIAssistant_Agents implements INode {
                     }
 
                     returnVal = returnVal.replace(lenticularBracketRegex, '')
-                } else {
+                } else if (!disableFileDownload) {
                     const content = assistantMessages[0].content[i] as OpenAI.Beta.Threads.Messages.ImageFileContentBlock
                     const fileId = content.image_file.file_id
-                    const fileObj = await openai.files.retrieve(fileId)
+                    const fileObj = await retrieveFileMetadata(openai, fileId, downloadBudget, undefined, options)
 
                     if (checkStorage) await checkStorage(options.orgId, options.subscriptionId, options.usageCacheManager)
 
@@ -910,9 +868,15 @@ class OpenAIAssistant_Agents implements INode {
                         openai,
                         fileId,
                         `${fileObj.filename}.png`,
+                        fileObj.bytes,
                         options.orgId,
+                        options,
+                        downloadBudget,
+                        undefined,
+                        undefined,
+                        undefined,
                         options.chatflowid,
-                        options.chatId
+                        chatId
                     )
 
                     if (updateStorageUsage)
@@ -935,10 +899,31 @@ class OpenAIAssistant_Agents implements INode {
                 fileAnnotations,
                 assistant: { assistantId: openAIAssistantId, threadId, runId: runThreadId, messages: messageData }
             }
-        } catch (error) {
-            await analyticHandlers.onChainError(parentIds, error, true)
-            throw new Error(error)
+        } catch {
+            const errMsg = 'OpenAI Assistant execution failed'
+            await analyticHandlers.onChainError(parentIds, errMsg, true)
+            throw new Error(errMsg)
         }
+    }
+}
+
+async function retrieveFileMetadata(
+    openai: OpenAI,
+    fileId: string,
+    downloadBudget: DownloadBudget,
+    parentSignal: AbortSignal | undefined,
+    options: ICommonObject
+): Promise<any> {
+    const remainingMs = downloadBudget.deadlineAt - Date.now()
+    if (remainingMs <= 0 || downloadBudget.files >= downloadBudget.maxFiles || downloadBudget.bytes >= downloadBudget.maxBytes) {
+        throw new Error(OPENAI_ASSISTANT_DOWNLOAD_ERROR)
+    }
+
+    try {
+        return await withAbortTimeout((signal) => openai.files.retrieve(fileId, { signal }), remainingMs, parentSignal)
+    } catch {
+        options.logger?.error('OpenAI Assistant file metadata retrieval failed')
+        throw new Error(OPENAI_ASSISTANT_DOWNLOAD_ERROR)
     }
 }
 
@@ -946,21 +931,32 @@ const downloadImg = async (
     openai: OpenAI,
     fileId: string,
     fileName: string,
+    declaredBytes: number | undefined,
     orgId: string,
+    options: ICommonObject,
+    downloadBudget: DownloadBudget,
+    parentSignal: AbortSignal | undefined,
+    commitTracker: IrreversibleCommitTracker | undefined,
+    onStored: ((totalSize: number) => Promise<void>) | undefined,
     ...paths: string[]
 ): Promise<{ filePath: string; totalSize: number }> => {
-    const response = await openai.files.content(fileId)
-
-    // Extract the binary data from the Response object
-    const image_data = await response.arrayBuffer()
-
-    // Convert the binary data to a Buffer
-    const image_data_buffer = Buffer.from(image_data)
-    const mime = 'image/png'
-
-    const { path, totalSize } = await addSingleFileToStorage(mime, image_data_buffer, fileName, orgId, ...paths)
-
-    return { filePath: path, totalSize }
+    try {
+        const { path, totalSize } = await downloadAndStoreBounded({
+            getResponse: (signal) => openai.files.content(fileId, { signal }),
+            kind: 'image',
+            store: (data) => addSingleFileToStorage('image/png', data, fileName, orgId, ...paths),
+            parentSignal,
+            deadlineAt: downloadBudget.deadlineAt,
+            budget: downloadBudget,
+            declaredBytes,
+            commitTracker,
+            onStored: onStored ? ({ totalSize }) => onStored(totalSize) : undefined
+        })
+        return { filePath: path, totalSize }
+    } catch {
+        options.logger?.error('OpenAI Assistant file download failed')
+        throw new Error(OPENAI_ASSISTANT_DOWNLOAD_ERROR)
+    }
 }
 
 const downloadFile = async (
@@ -968,32 +964,108 @@ const downloadFile = async (
     fileObj: any,
     fileName: string,
     orgId: string,
+    options: ICommonObject,
+    downloadBudget: DownloadBudget,
+    parentSignal: AbortSignal | undefined,
+    commitTracker: IrreversibleCommitTracker | undefined,
+    onStored: ((totalSize: number) => Promise<void>) | undefined,
     ...paths: string[]
 ): Promise<{ path: string; totalSize: number }> => {
     try {
-        const response = await fetch(`https://api.openai.com/v1/files/${fileObj.id}/content`, {
-            method: 'GET',
-            headers: { Accept: '*/*', Authorization: `Bearer ${openAIApiKey}` }
-        })
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`)
+        if (typeof fileObj?.bytes === 'number' && fileObj.bytes > OPENAI_ASSISTANT_MAX_DOWNLOAD_BYTES) {
+            throw new Error(OPENAI_ASSISTANT_DOWNLOAD_ERROR)
         }
-
-        // Extract the binary data from the Response object
-        const data = await response.arrayBuffer()
-
-        // Convert the binary data to a Buffer
-        const data_buffer = Buffer.from(data)
-        const mime = 'application/octet-stream'
-
-        const { path, totalSize } = await addSingleFileToStorage(mime, data_buffer, fileName, orgId, ...paths)
-
-        return { path, totalSize }
-    } catch (error) {
-        console.error('Error downloading or writing the file:', error)
-        return { path: '', totalSize: 0 }
+        return await downloadAndStoreBounded({
+            getResponse: (signal) =>
+                fetch(`https://api.openai.com/v1/files/${fileObj.id}/content`, {
+                    method: 'GET',
+                    headers: { Accept: '*/*', Authorization: `Bearer ${openAIApiKey}` },
+                    signal: signal as any
+                }),
+            kind: 'file',
+            store: (data) => addSingleFileToStorage('application/octet-stream', data, fileName, orgId, ...paths),
+            parentSignal,
+            deadlineAt: downloadBudget.deadlineAt,
+            budget: downloadBudget,
+            declaredBytes: fileObj?.bytes,
+            commitTracker,
+            onStored: onStored ? ({ totalSize }) => onStored(totalSize) : undefined
+        })
+    } catch {
+        options.logger?.error('OpenAI Assistant file download failed')
+        throw new Error(OPENAI_ASSISTANT_DOWNLOAD_ERROR)
     }
+}
+
+async function cancelRunSafely(openai: OpenAI, threadId: string, runId: string, options: ICommonObject): Promise<void> {
+    if (!threadId || !runId) return
+    try {
+        await withAbortTimeout((signal) => openai.beta.threads.runs.cancel(runId, { thread_id: threadId }, { signal }), 5_000)
+    } catch {
+        options.logger?.warn('OpenAI Assistant run cancellation failed')
+    }
+}
+
+interface ExecuteToolCallsParams {
+    toolCalls: any[] | undefined
+    tools: any[]
+    budget: ToolExecutionBudget
+    analyticHandlers: AnalyticHandler
+    parentIds: ICommonObject
+    threadId: string
+    chatId: string
+    input: string
+    usedTools: IUsedTool[]
+    options: ICommonObject
+}
+
+async function executeToolCalls(params: ExecuteToolCallsParams): Promise<Array<{ tool_call_id: string; output: string }>> {
+    const actions = prepareToolActions(params.toolCalls ?? [], params.tools, params.budget)
+    const outputs: Array<{ tool_call_id: string; output: string }> = []
+
+    for (const action of actions) {
+        const toolIds = await params.analyticHandlers.onToolStart(action.tool.name, action.toolInput, params.parentIds)
+        try {
+            const remainingMs = params.budget.deadlineAt - Date.now()
+            if (remainingMs <= 0) throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
+            const toolOutput = await withAbortTimeout<any>(
+                (signal) =>
+                    action.tool.call(action.toolInput, undefined, undefined, {
+                        sessionId: params.threadId,
+                        chatId: params.chatId,
+                        input: params.input,
+                        signal
+                    }),
+                remainingMs
+            )
+            const serializedOutput = typeof toolOutput === 'string' ? toolOutput : JSON.stringify(toolOutput)
+            if (typeof serializedOutput !== 'string') throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
+            const outputBytes = Buffer.byteLength(serializedOutput)
+            if (
+                outputBytes > params.budget.maxSingleOutputBytes ||
+                params.budget.outputBytes + outputBytes > params.budget.maxOutputBytes
+            ) {
+                throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
+            }
+            params.budget.outputBytes += outputBytes
+            await params.analyticHandlers.onToolEnd(toolIds, toolOutput)
+            outputs.push({
+                tool_call_id: action.toolCallId,
+                output: serializedOutput
+            })
+            params.usedTools.push({
+                tool: action.tool.name,
+                toolInput: action.toolInput,
+                toolOutput
+            })
+        } catch {
+            await params.analyticHandlers.onToolError(toolIds, new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR))
+            params.options.logger?.error('OpenAI Assistant tool execution failed')
+            throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
+        }
+    }
+
+    return outputs
 }
 
 interface ToolSubmissionParams {
@@ -1012,6 +1084,8 @@ interface ToolSubmissionParams {
     usedTools: IUsedTool[]
     text: string
     isStreamingStarted: boolean
+    budget: ToolExecutionBudget
+    abortSignal: AbortSignal
 }
 
 interface ToolSubmissionResult {
@@ -1033,19 +1107,31 @@ async function handleToolSubmission(params: ToolSubmissionParams): Promise<ToolS
         chatId,
         options,
         input,
-        usedTools
+        usedTools,
+        budget,
+        abortSignal
     } = params
 
     let updatedText = params.text
     let updatedIsStreamingStarted = params.isStreamingStarted
 
-    const stream = openai.beta.threads.runs.submitToolOutputsStream(runThreadId, {
-        tool_outputs: submitToolOutputs,
-        thread_id: threadId
-    })
-
     try {
+        if (abortSignal.aborted || Date.now() >= budget.deadlineAt) {
+            throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
+        }
+        const stream = openai.beta.threads.runs.submitToolOutputsStream(
+            runThreadId,
+            {
+                tool_outputs: submitToolOutputs,
+                thread_id: threadId
+            },
+            { signal: abortSignal }
+        )
+
         for await (const event of stream) {
+            if (abortSignal.aborted || Date.now() >= budget.deadlineAt) {
+                throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
+            }
             if (event.event === 'thread.message.delta') {
                 const chunk = event.data.delta.content?.[0]
                 if (chunk && 'text' in chunk && chunk.text?.value) {
@@ -1061,54 +1147,23 @@ async function handleToolSubmission(params: ToolSubmissionParams): Promise<ToolS
                     }
                 }
             } else if (event.event === 'thread.run.requires_action') {
-                if (event.data.required_action?.submit_tool_outputs.tool_calls) {
-                    const actions: ICommonObject[] = []
-
-                    event.data.required_action.submit_tool_outputs.tool_calls.forEach((item) => {
-                        const functionCall = item.function
-                        let args = {}
-                        try {
-                            args = JSON.parse(functionCall.arguments)
-                        } catch (e) {
-                            console.error('Error parsing arguments, default to empty object')
-                        }
-                        actions.push({
-                            tool: functionCall.name,
-                            toolInput: args,
-                            toolCallId: item.id
-                        })
+                const toolCalls = event.data.required_action?.submit_tool_outputs.tool_calls
+                if (toolCalls) {
+                    const nestedToolOutputs = await executeToolCalls({
+                        toolCalls,
+                        tools,
+                        budget,
+                        analyticHandlers,
+                        parentIds,
+                        threadId,
+                        chatId,
+                        input,
+                        usedTools,
+                        options
                     })
-
-                    const nestedToolOutputs = []
-                    for (let i = 0; i < actions.length; i += 1) {
-                        const tool = tools.find((tool: any) => tool.name === actions[i].tool)
-                        if (!tool) continue
-
-                        const toolIds = await analyticHandlers.onToolStart(tool.name, actions[i].toolInput, parentIds)
-
-                        try {
-                            const toolOutput = await tool.call(actions[i].toolInput, undefined, undefined, {
-                                sessionId: threadId,
-                                chatId: options.chatId,
-                                input
-                            })
-                            await analyticHandlers.onToolEnd(toolIds, toolOutput)
-                            nestedToolOutputs.push({
-                                tool_call_id: actions[i].toolCallId,
-                                output: toolOutput
-                            })
-                            usedTools.push({
-                                tool: tool.name,
-                                toolInput: actions[i].toolInput,
-                                toolOutput
-                            })
-                        } catch (e) {
-                            await analyticHandlers.onToolError(toolIds, e)
-                            console.error('Error executing tool', e)
-                            throw new Error(`Error executing tool. Tool: ${tool.name}. Thread ID: ${threadId}. Run ID: ${runThreadId}`)
-                        }
+                    if (abortSignal.aborted || Date.now() >= budget.deadlineAt) {
+                        throw new Error(OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR)
                     }
-
                     // Recursively handle nested tool submissions
                     const result = await handleToolSubmission({
                         openai,
@@ -1125,7 +1180,9 @@ async function handleToolSubmission(params: ToolSubmissionParams): Promise<ToolS
                         input,
                         usedTools,
                         text: updatedText,
-                        isStreamingStarted: updatedIsStreamingStarted
+                        isStreamingStarted: updatedIsStreamingStarted,
+                        budget,
+                        abortSignal
                     })
                     updatedText = result.text
                     updatedIsStreamingStarted = result.isStreamingStarted
@@ -1141,15 +1198,12 @@ async function handleToolSubmission(params: ToolSubmissionParams): Promise<ToolS
             text: updatedText,
             isStreamingStarted: updatedIsStreamingStarted
         }
-    } catch (error) {
-        console.error('Error submitting tool outputs:', error)
-        await openai.beta.threads.runs.cancel(runThreadId, { thread_id: threadId })
-
-        const errMsg = `Error submitting tool outputs. Thread ID: ${threadId}. Run ID: ${runThreadId}`
-
+    } catch {
+        options.logger?.error('OpenAI Assistant tool submission failed')
+        await cancelRunSafely(openai, threadId, runThreadId, options)
+        const errMsg = OPENAI_ASSISTANT_TOOL_PROTOCOL_ERROR
         await analyticHandlers.onLLMError(llmIds, errMsg)
         await analyticHandlers.onChainError(parentIds, errMsg, true)
-
         throw new Error(errMsg)
     }
 }

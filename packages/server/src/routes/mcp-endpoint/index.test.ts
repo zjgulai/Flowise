@@ -14,6 +14,8 @@
  * of the ACAO header rather than on a 403 status code.
  */
 import express, { Request, Response } from 'express'
+import fs from 'fs'
+import path from 'path'
 import request from 'supertest'
 
 // ---------------------------------------------------------------------------
@@ -87,6 +89,30 @@ describe('body size limit', () => {
         const res = await request(app).post('/mcp/test-flow').set('Content-Type', 'application/json').send(payload)
 
         expect(res.status).toBe(413)
+    })
+})
+
+describe('application middleware order contract', () => {
+    it('mounts MCP before generic parsers and parses JSON only after rate limiting and bearer authentication', () => {
+        const appSource = fs.readFileSync(path.join(__dirname, '../../index.ts'), 'utf8')
+        const apiRouterSource = fs.readFileSync(path.join(__dirname, '../index.ts'), 'utf8')
+        const routeSource = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8')
+        const canonicalGuard = appSource.indexOf('this.app.use(rejectNonCanonicalApiPath)')
+        const earlyObserver = appSource.indexOf('createMcpRequestObservability(() => this.metricsProvider)')
+        const earlyMount = appSource.indexOf("this.app.use('/api/v1/mcp', mcpEndpointRouter)")
+        const globalParser = appSource.indexOf('this.app.use(express.json({ limit: flowise_file_size_limit')
+        const postRoute = routeSource.slice(routeSource.indexOf("router.post(\n    '/:chatflowId'"))
+
+        expect(canonicalGuard).toBeGreaterThan(-1)
+        expect(earlyObserver).toBeGreaterThan(-1)
+        expect(earlyObserver).toBeLessThan(canonicalGuard)
+        expect(canonicalGuard).toBeLessThan(earlyMount)
+        expect(earlyMount).toBeGreaterThan(-1)
+        expect(earlyMount).toBeLessThan(globalParser)
+        expect(apiRouterSource).not.toContain("router.use('/mcp', mcpEndpointRouter)")
+        expect(postRoute.indexOf('getRateLimiterMiddleware')).toBeLessThan(postRoute.indexOf('authenticateToken'))
+        expect(postRoute.indexOf('authenticateToken')).toBeLessThan(postRoute.indexOf("express.json({ limit: '1mb'"))
+        expect(postRoute.indexOf("express.json({ limit: '1mb'")).toBeLessThan(postRoute.indexOf('handlePost'))
     })
 })
 

@@ -19,7 +19,11 @@ import ViewHeader from '@/layout/MainLayout/ViewHeader'
 import ErrorBoundary from '@/ErrorBoundary'
 
 // API
-import documentsApi from '@/api/documentstore'
+import documentsApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 
 // Hooks
 import useApi from '@/hooks/useApi'
@@ -27,6 +31,7 @@ import useConfirm from '@/hooks/useConfirm'
 import useNotifier from '@/utils/useNotifier'
 import { useAuth } from '@/hooks/useAuth'
 import { getFileName } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // store
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
@@ -57,7 +62,7 @@ const ShowStoredChunks = () => {
     const dispatch = useDispatch()
     const theme = useTheme()
     const { confirm } = useConfirm()
-    const { error } = useError()
+    const { error, setError } = useError()
     const { hasAssignedWorkspace } = useAuth()
 
     useNotifier()
@@ -78,6 +83,8 @@ const ShowStoredChunks = () => {
     const [expandedChunkDialogProps, setExpandedChunkDialogProps] = useState({})
     const [fileNames, setFileNames] = useState([])
     const [loaderDisplayName, setLoaderDisplayName] = useState('')
+    const [versionToken, setVersionToken] = useState()
+    const [hasVersionConflict, setHasVersionConflict] = useState(false)
 
     const chunkSelected = (chunkId) => {
         const selectedChunk = documentChunks.find((chunk) => chunk.id === chunkId)
@@ -93,19 +100,21 @@ const ShowStoredChunks = () => {
     }
 
     const onChunkEdit = async (newPageContent, newMetadata, chunk) => {
+        if (hasVersionConflict) return
         setLoading(true)
-        setShowExpandedChunkDialog(false)
         try {
             const editResp = await documentsApi.editChunkFromStore(
                 chunk.storeId,
                 chunk.docId,
                 chunk.id,
                 { pageContent: newPageContent, metadata: newMetadata },
-                true
+                versionToken
             )
             if (editResp.data) {
+                setVersionToken(requireDocumentStoreVersionToken(editResp.data))
+                setShowExpandedChunkDialog(false)
                 enqueueSnackbar({
-                    message: 'Document chunk successfully edited!',
+                    message: '文档分块编辑成功',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -121,10 +130,17 @@ const ShowStoredChunks = () => {
             setLoading(false)
         } catch (error) {
             setLoading(false)
+            if (isDocumentStoreVersionConflict(error)) {
+                setVersionToken(undefined)
+                setHasVersionConflict(true)
+                enqueueSnackbar({
+                    message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                    options: { variant: 'warning' }
+                })
+                return
+            }
             enqueueSnackbar({
-                message: `Failed to edit chunk: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `编辑分块失败：${getErrorMessage(error)}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -139,22 +155,24 @@ const ShowStoredChunks = () => {
     }
 
     const onDeleteChunk = async (chunk) => {
+        if (hasVersionConflict) return
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete chunk ${chunk.id} ? This action cannot be undone.`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除分块',
+            description: `确定删除分块 ${chunk.id} 吗？此操作无法撤销。`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
         if (isConfirmed) {
             setLoading(true)
-            setShowExpandedChunkDialog(false)
             try {
-                const delResp = await documentsApi.deleteChunkFromStore(chunk.storeId, chunk.docId, chunk.id)
+                const delResp = await documentsApi.deleteChunkFromStore(chunk.storeId, chunk.docId, chunk.id, versionToken)
                 if (delResp.data) {
+                    setVersionToken(requireDocumentStoreVersionToken(delResp.data))
+                    setShowExpandedChunkDialog(false)
                     enqueueSnackbar({
-                        message: 'Document chunk successfully deleted!',
+                        message: '文档分块删除成功',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -170,10 +188,17 @@ const ShowStoredChunks = () => {
                 setLoading(false)
             } catch (error) {
                 setLoading(false)
+                if (isDocumentStoreVersionConflict(error)) {
+                    setVersionToken(undefined)
+                    setHasVersionConflict(true)
+                    enqueueSnackbar({
+                        message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                        options: { variant: 'warning' }
+                    })
+                    return
+                }
                 enqueueSnackbar({
-                    message: `Failed to delete chunk: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `删除分块失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -208,6 +233,13 @@ const ShowStoredChunks = () => {
             }
             setTotalChunks(data.count)
             setDocumentChunks(data.chunks)
+            try {
+                setVersionToken(requireDocumentStoreVersionToken(data))
+            } catch (versionError) {
+                setVersionToken(undefined)
+                setError(versionError)
+                return
+            }
             setLoading(false)
             setCurrentPage(data.currentPage)
             setStart(data.currentPage * 50 - 49)
@@ -317,7 +349,7 @@ const ShowStoredChunks = () => {
                                             }
                                         />
                                     </IconButton>
-                                    Showing {Math.min(start, totalChunks)}-{end} of {totalChunks} chunks
+                                    正在显示第 {Math.min(start, totalChunks)}–{end} 个，共 {totalChunks} 个分块
                                     <IconButton
                                         size='small'
                                         onClick={() => changePage(currentPage + 1)}
@@ -340,7 +372,7 @@ const ShowStoredChunks = () => {
                                 </div>
                                 <div style={{ marginRight: 20, display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                                     <IconLanguage style={{ marginRight: 10 }} size={20} />
-                                    {getChunksApi.data?.characters?.toLocaleString()} characters
+                                    {getChunksApi.data?.characters?.toLocaleString()} 个字符
                                 </div>
                             </div>
                         </div>
@@ -359,10 +391,10 @@ const ShowStoredChunks = () => {
                                             <img
                                                 style={{ objectFit: 'cover', height: '16vh', width: 'auto' }}
                                                 src={chunks_emptySVG}
-                                                alt='chunks_emptySVG'
+                                                alt='暂无分块'
                                             />
                                         </Box>
-                                        <div>No Chunks</div>
+                                        <div>暂无分块</div>
                                     </div>
                                 )}
                                 {documentChunks.length > 0 &&
@@ -376,7 +408,7 @@ const ShowStoredChunks = () => {
                                                 <Card>
                                                     <CardContent sx={{ p: 2 }}>
                                                         <Typography sx={{ wordWrap: 'break-word', mb: 1 }} variant='h5'>
-                                                            {`#${row.chunkNo}. Characters: ${row.pageContent.length}`}
+                                                            {`#${row.chunkNo} · ${row.pageContent.length} 个字符`}
                                                         </Typography>
                                                         <Typography sx={{ wordWrap: 'break-word' }} variant='body2'>
                                                             {row.pageContent}
@@ -408,6 +440,9 @@ const ShowStoredChunks = () => {
                 onCancel={() => setShowExpandedChunkDialog(false)}
                 onChunkEdit={(newPageContent, newMetadata, selectedChunk) => onChunkEdit(newPageContent, newMetadata, selectedChunk)}
                 onDeleteChunk={(selectedChunk) => onDeleteChunk(selectedChunk)}
+                isReadOnly={hasVersionConflict}
+                hasVersionConflict={hasVersionConflict}
+                onReloadLatestValues={() => window.location.reload()}
             ></ExpandedChunkDialog>
             {(loading || getChunksApi.loading) && <BackdropLoader open={loading || getChunksApi.loading} />}
         </>

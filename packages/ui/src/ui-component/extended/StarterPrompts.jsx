@@ -12,6 +12,7 @@ import { StyledButton } from '@/ui-component/button/StyledButton'
 
 // store
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // API
 import chatflowsApi from '@/api/chatflows'
@@ -66,7 +67,7 @@ const StarterPrompts = ({ dialogProps, onConfirm }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Conversation Starter Prompts Saved',
+                    message: '对话开场提示已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -82,9 +83,7 @@ const StarterPrompts = ({ dialogProps, onConfirm }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to save Conversation Starter Prompts: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存对话开场提示失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -148,7 +147,7 @@ const StarterPrompts = ({ dialogProps, onConfirm }) => {
             >
                 <IconBulb size={20} color='#16a34a' style={{ flexShrink: 0 }} />
                 <Typography sx={{ color: 'text.secondary', fontSize: '0.8125rem', lineHeight: 1.5 }}>
-                    Starter prompts will only be shown when there are no messages on the chat
+                    仅当对话中还没有消息时，才会显示开场提示。
                 </Typography>
             </Box>
             <Box sx={{ '& > :not(style)': { m: 1 }, pt: 2 }}>
@@ -175,6 +174,7 @@ const StarterPrompts = ({ dialogProps, onConfirm }) => {
                                                         disabled={inputFields.length === 1}
                                                         onClick={() => removeInputFields(index)}
                                                         edge='end'
+                                                        aria-label={`删除第 ${index + 1} 条开场提示`}
                                                     >
                                                         <IconTrash />
                                                     </IconButton>
@@ -185,7 +185,7 @@ const StarterPrompts = ({ dialogProps, onConfirm }) => {
                                 </Box>
                                 <Box sx={{ width: '5%', mb: 1 }}>
                                     {index === inputFields.length - 1 && (
-                                        <IconButton color='primary' onClick={addInputField}>
+                                        <IconButton color='primary' onClick={addInputField} aria-label='添加开场提示'>
                                             <IconPlus />
                                         </IconButton>
                                     )}
@@ -197,7 +197,7 @@ const StarterPrompts = ({ dialogProps, onConfirm }) => {
             </Box>
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
                 <StyledButton variant='contained' onClick={onSave} sx={{ minWidth: 100 }}>
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </>

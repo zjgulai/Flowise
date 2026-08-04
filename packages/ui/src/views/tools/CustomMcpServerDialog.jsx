@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom'
 import PropTypes from 'prop-types'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useId, useMemo } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackbarAction } from '@/store/actions'
 
@@ -59,6 +59,8 @@ import useConfirm from '@/hooks/useConfirm'
 import useNotifier from '@/utils/useNotifier'
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 import { MCP_SERVER_STATUS, MCP_AUTH_TYPE } from '@/store/constant'
+import { getErrorMessage } from '@/utils/getErrorMessage'
+import { getMcpToolRiskHints } from '@/utils/getMcpToolRiskHints'
 import { generateRandomGradient } from '@/utils/genericHelper'
 
 // Server-side masking placeholder. Must match REDACTED_VALUE in the service.
@@ -95,6 +97,7 @@ const TYPE_CHIP_COLOR = {
 const HintChip = ({ icon: Icon, label, tooltip, bg, fg }) => (
     <Tooltip title={tooltip} arrow>
         <Chip
+            aria-label={`${label}：${tooltip}`}
             icon={<Icon size={12} />}
             label={label}
             size='small'
@@ -120,14 +123,15 @@ HintChip.propTypes = {
 }
 
 const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
+    const detailsId = useId()
     const icon = pickToolIcon(tool?.icons, isDarkMode)
-    const title = tool?.annotations?.title
+    const annotations = tool?.annotations ?? {}
+    const title = annotations.title
     const props = tool?.inputSchema?.properties || {}
     const required = Array.isArray(tool?.inputSchema?.required) ? tool.inputSchema.required : []
     const paramNames = Object.keys(props)
-    const readOnly = tool?.annotations?.readOnlyHint === true
-    const destructive = tool?.annotations?.destructiveHint === true
-    const openWorld = tool?.annotations?.openWorldHint === true
+    const { readOnly, writable, destructive, additiveWrite, idempotent, nonIdempotent, openWorld, riskUnknown } =
+        getMcpToolRiskHints(annotations)
 
     return (
         <Box
@@ -143,6 +147,18 @@ const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
             {/* Header — always visible, click to expand */}
             <Box
                 onClick={onToggle}
+                onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onToggle()
+                    }
+                }}
+                role='button'
+                tabIndex={0}
+                aria-expanded={expanded}
+                aria-controls={detailsId}
+                aria-label={`${expanded ? '折叠' : '展开'}工具 ${tool.name} 的详情`}
                 sx={{
                     display: 'flex',
                     alignItems: 'center',
@@ -207,17 +223,48 @@ const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
                     {readOnly && (
                         <HintChip
                             icon={IconEye}
-                            label='只读'
-                            tooltip='This tool does not modify any data'
+                            label='声明只读'
+                            tooltip='服务器声明此工具为只读；该注解未经验证，仍需按实际操作审查。'
                             bg={isDarkMode ? 'rgba(46,125,50,0.18)' : 'rgba(46,125,50,0.12)'}
                             fg={isDarkMode ? '#81C784' : '#2E7D32'}
+                        />
+                    )}
+                    {writable && (
+                        <HintChip
+                            icon={IconEdit}
+                            label={additiveWrite ? '声明可追加写入' : '声明可写入'}
+                            tooltip={
+                                additiveWrite
+                                    ? '服务器声明操作不具破坏性，但仍可能追加或更新数据；该注解未经验证。'
+                                    : '服务器声明此工具可能写入数据；该注解未经验证。'
+                            }
+                            bg={isDarkMode ? 'rgba(237,108,2,0.2)' : 'rgba(237,108,2,0.12)'}
+                            fg={isDarkMode ? '#FFB74D' : '#E65100'}
                         />
                     )}
                     {destructive && (
                         <HintChip
                             icon={IconAlertTriangle}
-                            label='DESTRUCTIVE'
-                            tooltip='This tool may perform destructive actions'
+                            label='声明具破坏性'
+                            tooltip='服务器声明此工具可能执行破坏性操作；请在调用前核对范围与回退方案。'
+                            bg={isDarkMode ? 'rgba(211,47,47,0.2)' : 'rgba(211,47,47,0.12)'}
+                            fg={isDarkMode ? '#EF9A9A' : '#C62828'}
+                        />
+                    )}
+                    {idempotent && !readOnly && (
+                        <HintChip
+                            icon={IconEye}
+                            label='声明幂等'
+                            tooltip='服务器声明相同参数的重复调用不会产生额外效果；该注解未经验证。'
+                            bg={isDarkMode ? 'rgba(46,125,50,0.18)' : 'rgba(46,125,50,0.12)'}
+                            fg={isDarkMode ? '#81C784' : '#2E7D32'}
+                        />
+                    )}
+                    {nonIdempotent && (
+                        <HintChip
+                            icon={IconAlertTriangle}
+                            label='声明非幂等'
+                            tooltip='服务器声明重复调用可能产生额外效果；调用前请核对重试、去重与回退策略。'
                             bg={isDarkMode ? 'rgba(211,47,47,0.2)' : 'rgba(211,47,47,0.12)'}
                             fg={isDarkMode ? '#EF9A9A' : '#C62828'}
                         />
@@ -225,13 +272,22 @@ const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
                     {openWorld && (
                         <HintChip
                             icon={IconWorld}
-                            label='EXTERNAL'
-                            tooltip='This tool interacts with external systems'
+                            label='声明访问外部系统'
+                            tooltip='服务器声明此工具可能与外部系统交互；该注解未经验证。'
                             bg={isDarkMode ? 'rgba(25,118,210,0.18)' : 'rgba(25,118,210,0.1)'}
                             fg={isDarkMode ? '#90CAF9' : '#1565C0'}
                         />
                     )}
-                    <Tooltip title={`${paramNames.length} parameter${paramNames.length === 1 ? '' : 's'}`} arrow>
+                    {riskUnknown && (
+                        <HintChip
+                            icon={IconAlertTriangle}
+                            label='风险未知'
+                            tooltip='服务器未完整声明工具风险；界面已按可能写入、具破坏性、非幂等并访问外部系统的协议默认值保守展示。'
+                            bg={isDarkMode ? 'rgba(237,108,2,0.2)' : 'rgba(237,108,2,0.12)'}
+                            fg={isDarkMode ? '#FFB74D' : '#E65100'}
+                        />
+                    )}
+                    <Tooltip title={`${paramNames.length} 个参数`} arrow>
                         <Chip
                             label={paramNames.length}
                             size='small'
@@ -245,6 +301,7 @@ const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
             {/* Body — parameter details */}
             <Collapse in={expanded} unmountOnExit>
                 <Box
+                    id={detailsId}
                     sx={{
                         px: 1.75,
                         pt: 1,
@@ -310,7 +367,7 @@ const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
                                                     <Typography
                                                         sx={{ fontSize: '0.62rem', color: theme.palette.error.main, fontWeight: 700 }}
                                                     >
-                                                        REQUIRED
+                                                        必填
                                                     </Typography>
                                                 ) : (
                                                     <Typography
@@ -321,7 +378,7 @@ const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
                                                             letterSpacing: 0.3
                                                         }}
                                                     >
-                                                        OPTIONAL
+                                                        选填
                                                     </Typography>
                                                 )}
                                                 {p.type && (
@@ -358,7 +415,7 @@ const DiscoveredToolRow = ({ tool, expanded, onToggle, isDarkMode, theme }) => {
                                                     <Typography
                                                         sx={{ fontSize: '0.62rem', color: 'text.secondary', fontFamily: 'monospace' }}
                                                     >
-                                                        default: {JSON.stringify(p.default)}
+                                                        默认值：{JSON.stringify(p.default)}
                                                     </Typography>
                                                 )}
                                             </Box>
@@ -538,8 +595,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
         })
     }
 
-    const getErrorMsg = (error) =>
-        typeof error.response?.data === 'object' ? error.response.data.message : error.response?.data || error.message
+    const getErrorMsg = (error) => getErrorMessage(error, '未知错误')
 
     const addNewServer = async () => {
         if (!validateServerUrl(serverUrl)) return
@@ -563,7 +619,7 @@ const CustomMcpServerDialog = ({ show, dialogProps, onCancel, onConfirm, onAutho
         try {
             const resp = await customMcpServersApi.createCustomMcpServer(body)
             createdId = resp?.data?.id
-            if (!createdId) throw new Error('Create returned no id')
+            if (!createdId) throw new Error('服务器创建成功但未返回 ID')
         } catch (error) {
             showSnackbar(`添加 MCP 服务器失败: ${getErrorMsg(error)}`, 'error')
             onCancel()

@@ -46,7 +46,8 @@ class Faiss_VectorStores implements INode {
                 name: 'basePath',
                 description: 'Path to load faiss.index file',
                 placeholder: `C:\\Users\\User\\Desktop`,
-                type: 'string'
+                type: 'string',
+                workspaceExportPolicy: 'rebind'
             },
             {
                 label: 'Top K',

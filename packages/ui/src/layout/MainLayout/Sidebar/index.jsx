@@ -67,7 +67,7 @@ const Sidebar = ({ drawerOpen, drawerToggle, window }) => {
                 flexShrink: { md: 0 },
                 width: matchUpMd ? drawerWidth : 'auto'
             }}
-            aria-label='mailbox folders'
+            aria-label='主导航'
         >
             {isAuthenticated && (
                 <Drawer

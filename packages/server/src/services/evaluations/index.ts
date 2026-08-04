@@ -1,26 +1,279 @@
 import { EvaluationRunner, ICommonObject } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
 import { In } from 'typeorm'
-import { v4 as uuidv4 } from 'uuid'
+import { validate as isUuid, v4 as uuidv4 } from 'uuid'
 import { ApiKey } from '../../database/entities/ApiKey'
 import { Assistant } from '../../database/entities/Assistant'
 import { ChatFlow } from '../../database/entities/ChatFlow'
-import { Credential } from '../../database/entities/Credential'
 import { Dataset } from '../../database/entities/Dataset'
 import { DatasetRow } from '../../database/entities/DatasetRow'
 import { Evaluation } from '../../database/entities/Evaluation'
 import { EvaluationRun } from '../../database/entities/EvaluationRun'
+import { Evaluator } from '../../database/entities/Evaluator'
 import { getWorkspaceSearchOptions } from '../../enterprise/utils/ControllerServiceUtils'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { getErrorMessage } from '../../errors/utils'
 import { EvaluationStatus, IEvaluationResult } from '../../Interface'
 import { getAppVersion } from '../../utils'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
-import { stripProtectedFields } from '../../utils/stripProtectedFields'
+import logger from '../../utils/logger'
 import evaluatorsService from '../evaluator'
+import credentialsService from '../credentials'
 import { calculateCost, formatCost } from './CostCalculator'
 import { runAdditionalEvaluators } from './EvaluatorRunner'
-import { LLMEvaluationRunner } from './LLMEvaluationRunner'
+import { LLMEvaluationRunner, resolveEvaluationChatModelSelection } from './LLMEvaluationRunner'
+
+const MAX_EVALUATION_JSON_BYTES = 64 * 1024
+const MAX_EVALUATION_REFERENCES = 100
+const MAX_EVALUATION_ID_LENGTH = 256
+const MAX_EVALUATION_NAME_LENGTH = 255
+const MAX_EVALUATION_LABEL_LENGTH = 512
+const MAX_EVALUATION_DELETE_IDS = 500
+const EVALUATION_TYPES = new Set(['benchmarking', 'llm'])
+const CHATFLOW_TYPES = new Set(['Agentflow v2', 'Chatflow', 'Custom Assistant'])
+const UNSAFE_METRIC_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+interface ParsedEvaluationCreateRequest {
+    name: string
+    evaluationType: 'benchmarking' | 'llm'
+    datasetId: string
+    datasetName: string
+    chatflowIds: string[]
+    chatflowNames: string[]
+    chatflowTypes: string[]
+    simpleEvaluatorIds: string[]
+    llmEvaluatorIds: string[]
+    datasetAsOneConversation: boolean
+    credentialId?: string
+    llm?: string
+    model?: string
+}
+
+const invalidEvaluationRequest = (): InternalFlowiseError => new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid evaluation request')
+
+const invalidEvaluationDeleteRequest = (): InternalFlowiseError =>
+    new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid evaluation deletion request')
+
+const parseEvaluationDeleteRequest = (ids: unknown, isDeleteAllVersion: unknown): { ids: string[]; isDeleteAllVersion: boolean } => {
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > MAX_EVALUATION_DELETE_IDS || typeof isDeleteAllVersion !== 'boolean') {
+        throw invalidEvaluationDeleteRequest()
+    }
+
+    const normalizedIds = ids.map((id) => {
+        if (typeof id !== 'string' || !isUuid(id)) throw invalidEvaluationDeleteRequest()
+        return id.toLowerCase()
+    })
+    if (new Set(normalizedIds).size !== normalizedIds.length) throw invalidEvaluationDeleteRequest()
+
+    return { ids: normalizedIds, isDeleteAllVersion }
+}
+
+const requireBoundedString = (value: unknown, maximumLength: number): string => {
+    if (typeof value !== 'string') throw invalidEvaluationRequest()
+    const normalized = value.trim()
+    if (!normalized || normalized.length > maximumLength || normalized.includes('\0')) throw invalidEvaluationRequest()
+    return normalized
+}
+
+const requireReferenceLabel = (value: unknown): string => {
+    if (typeof value !== 'string') throw new InternalFlowiseError(StatusCodes.UNPROCESSABLE_ENTITY, 'Invalid evaluation reference')
+    const normalized = value.trim()
+    if (!normalized || normalized.length > MAX_EVALUATION_LABEL_LENGTH || normalized.includes('\0')) {
+        throw new InternalFlowiseError(StatusCodes.UNPROCESSABLE_ENTITY, 'Invalid evaluation reference')
+    }
+    return normalized
+}
+
+const getAssistantReferenceName = (assistant: Assistant): string => {
+    if (typeof assistant.details !== 'string' || Buffer.byteLength(assistant.details, 'utf8') > MAX_EVALUATION_JSON_BYTES) {
+        throw new InternalFlowiseError(StatusCodes.UNPROCESSABLE_ENTITY, 'Invalid evaluation reference')
+    }
+    try {
+        const details = JSON.parse(assistant.details)
+        if (!details || typeof details !== 'object' || Array.isArray(details)) {
+            throw new Error('Invalid assistant details')
+        }
+        return requireReferenceLabel(details.name)
+    } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.UNPROCESSABLE_ENTITY, 'Invalid evaluation reference')
+    }
+}
+
+const parseStringArray = (
+    value: unknown,
+    { allowEmpty, maximumItemLength, unique }: { allowEmpty: boolean; maximumItemLength: number; unique: boolean }
+): string[] => {
+    let parsed: unknown = value
+    if (typeof value === 'string') {
+        if (!value && allowEmpty) return []
+        if (Buffer.byteLength(value, 'utf8') > MAX_EVALUATION_JSON_BYTES) throw invalidEvaluationRequest()
+        try {
+            parsed = JSON.parse(value)
+        } catch {
+            throw invalidEvaluationRequest()
+        }
+    }
+    if (!Array.isArray(parsed) || (!allowEmpty && parsed.length === 0) || parsed.length > MAX_EVALUATION_REFERENCES) {
+        throw invalidEvaluationRequest()
+    }
+    const normalized = parsed.map((item) => requireBoundedString(item, maximumItemLength))
+    if (unique && new Set(normalized).size !== normalized.length) throw invalidEvaluationRequest()
+    return normalized
+}
+
+const parseEvaluationCreateRequest = (body: ICommonObject): ParsedEvaluationCreateRequest => {
+    if (!body || typeof body !== 'object' || Array.isArray(body) || !EVALUATION_TYPES.has(body.evaluationType)) {
+        throw invalidEvaluationRequest()
+    }
+    const evaluationType = body.evaluationType as ParsedEvaluationCreateRequest['evaluationType']
+    const chatflowIds = parseStringArray(body.chatflowId, {
+        allowEmpty: false,
+        maximumItemLength: MAX_EVALUATION_ID_LENGTH,
+        unique: true
+    })
+    const chatflowNames = parseStringArray(body.chatflowName, {
+        allowEmpty: false,
+        maximumItemLength: MAX_EVALUATION_LABEL_LENGTH,
+        unique: false
+    })
+    const chatflowTypes = parseStringArray(body.chatflowType, { allowEmpty: false, maximumItemLength: 64, unique: false })
+    if (
+        chatflowNames.length !== chatflowIds.length ||
+        chatflowTypes.length !== chatflowIds.length ||
+        chatflowTypes.some((type) => !CHATFLOW_TYPES.has(type))
+    ) {
+        throw invalidEvaluationRequest()
+    }
+
+    const simpleEvaluatorIds = parseStringArray(body.selectedSimpleEvaluators ?? '', {
+        allowEmpty: true,
+        maximumItemLength: MAX_EVALUATION_ID_LENGTH,
+        unique: true
+    })
+    const llmEvaluatorIds = parseStringArray(body.selectedLLMEvaluators ?? '', {
+        allowEmpty: true,
+        maximumItemLength: MAX_EVALUATION_ID_LENGTH,
+        unique: true
+    })
+    if (simpleEvaluatorIds.some((id) => llmEvaluatorIds.includes(id))) throw invalidEvaluationRequest()
+    if (body.datasetAsOneConversation !== undefined && typeof body.datasetAsOneConversation !== 'boolean') {
+        throw invalidEvaluationRequest()
+    }
+
+    const parsed: ParsedEvaluationCreateRequest = {
+        name: requireBoundedString(body.name, MAX_EVALUATION_NAME_LENGTH),
+        evaluationType,
+        datasetId: requireBoundedString(body.datasetId, MAX_EVALUATION_ID_LENGTH),
+        datasetName: requireBoundedString(body.datasetName, MAX_EVALUATION_LABEL_LENGTH),
+        chatflowIds,
+        chatflowNames,
+        chatflowTypes,
+        simpleEvaluatorIds,
+        llmEvaluatorIds,
+        datasetAsOneConversation: body.datasetAsOneConversation === true
+    }
+
+    if (evaluationType === 'llm') {
+        if (llmEvaluatorIds.length === 0) throw invalidEvaluationRequest()
+        parsed.credentialId = requireBoundedString(body.credentialId, MAX_EVALUATION_ID_LENGTH)
+        parsed.llm = requireBoundedString(body.llm, 128)
+        parsed.model = requireBoundedString(body.model, 512)
+    } else if (llmEvaluatorIds.length > 0) {
+        throw invalidEvaluationRequest()
+    }
+    return parsed
+}
+
+const assertAllScopedReferences = async (appServer: any, request: ParsedEvaluationCreateRequest, workspaceId: string) => {
+    const dataset = await appServer.AppDataSource.getRepository(Dataset).findOneBy({
+        id: request.datasetId,
+        workspaceId
+    })
+    if (!dataset) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation references were not found')
+
+    const flowReferences = request.chatflowIds
+        .map((id, index) => ({ id, type: request.chatflowTypes[index] }))
+        .filter((reference) => reference.type !== 'Custom Assistant')
+    const assistantReferences = request.chatflowIds
+        .map((id, index) => ({ id, type: request.chatflowTypes[index] }))
+        .filter((reference) => reference.type === 'Custom Assistant')
+
+    const flows = flowReferences.length
+        ? await appServer.AppDataSource.getRepository(ChatFlow).find({
+              where: { id: In(flowReferences.map((reference) => reference.id)), workspaceId }
+          })
+        : []
+    const flowById = new Map<string, ChatFlow>(flows.map((flow: ChatFlow): [string, ChatFlow] => [flow.id, flow]))
+    for (const reference of flowReferences) {
+        const flow = flowById.get(reference.id)
+        const typeMatches =
+            reference.type === 'Agentflow v2' ? flow?.type === 'AGENTFLOW' : flow?.type === undefined || flow?.type === 'CHATFLOW'
+        if (!flow || !typeMatches) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation references were not found')
+    }
+
+    const assistants: Assistant[] = assistantReferences.length
+        ? await appServer.AppDataSource.getRepository(Assistant).find({
+              where: { id: In(assistantReferences.map((reference) => reference.id)), workspaceId }
+          })
+        : []
+    if (assistants.length !== assistantReferences.length) {
+        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation references were not found')
+    }
+    const assistantById = new Map<string, Assistant>(assistants.map((assistant): [string, Assistant] => [assistant.id, assistant]))
+    if (assistantReferences.some((reference) => assistantById.get(reference.id)?.type !== 'CUSTOM')) {
+        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation references were not found')
+    }
+
+    const evaluatorIds = [...request.simpleEvaluatorIds, ...request.llmEvaluatorIds]
+    const evaluators = evaluatorIds.length
+        ? await appServer.AppDataSource.getRepository(Evaluator).find({ where: { id: In(evaluatorIds), workspaceId } })
+        : []
+    if (evaluators.length !== evaluatorIds.length) {
+        throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation references were not found')
+    }
+    const evaluatorById = new Map<string, Evaluator>(
+        evaluators.map((evaluator: Evaluator): [string, Evaluator] => [evaluator.id, evaluator])
+    )
+    if (
+        request.simpleEvaluatorIds.some((id) => !evaluatorById.has(id) || evaluatorById.get(id)?.type === 'llm') ||
+        request.llmEvaluatorIds.some((id) => evaluatorById.get(id)?.type !== 'llm')
+    ) {
+        throw invalidEvaluationRequest()
+    }
+
+    const canonicalChatflowNames = request.chatflowIds.map((id, index) => {
+        if (request.chatflowTypes[index] === 'Custom Assistant') return getAssistantReferenceName(assistantById.get(id) as Assistant)
+        return requireReferenceLabel(flowById.get(id)?.name)
+    })
+
+    return {
+        dataset,
+        flows,
+        canonicalDatasetName: requireReferenceLabel(dataset.name),
+        canonicalChatflowNames
+    }
+}
+
+const updateEvaluationStatus = async (
+    appServer: any,
+    evaluationId: string,
+    workspaceId: string,
+    status: EvaluationStatus,
+    averageMetrics?: ICommonObject
+): Promise<void> => {
+    try {
+        const evaluationRepository = appServer.AppDataSource.getRepository(Evaluation)
+        const evaluation = await evaluationRepository.findOneBy({ id: evaluationId, workspaceId })
+        if (!evaluation) throw new Error('Evaluation status target was not found')
+
+        evaluation.status = status
+        if (averageMetrics !== undefined) evaluation.average_metrics = JSON.stringify(averageMetrics)
+        await evaluationRepository.save(evaluation)
+    } catch {
+        logger.error('evaluation_status_update_failed', { failedCount: 1 })
+    }
+}
 
 const runAgain = async (id: string, baseURL: string, orgId: string, workspaceId: string) => {
     try {
@@ -29,7 +282,7 @@ const runAgain = async (id: string, baseURL: string, orgId: string, workspaceId:
             id: id,
             workspaceId: workspaceId
         })
-        if (!evaluation) throw new Error(`Evaluation ${id} not found`)
+        if (!evaluation) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation was not found')
         const additionalConfig = evaluation.additionalConfig ? JSON.parse(evaluation.additionalConfig) : {}
         const data: ICommonObject = {
             chatflowId: evaluation.chatflowId,
@@ -59,112 +312,101 @@ const runAgain = async (id: string, baseURL: string, orgId: string, workspaceId:
         data.version = true
         return await createEvaluation(data, baseURL, orgId, workspaceId)
     } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
         throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Error: EvalsService.runAgain - ${getErrorMessage(error)}`)
     }
 }
 
 const createEvaluation = async (body: ICommonObject, baseURL: string, orgId: string, workspaceId: string) => {
     try {
+        if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Evaluation is not authorized')
+        const request = parseEvaluationCreateRequest(body)
         const appServer = getRunningExpressApp()
-        const newEval = new Evaluation()
-        Object.assign(newEval, stripProtectedFields(body))
-        newEval.workspaceId = workspaceId
-        newEval.status = EvaluationStatus.PENDING
-
-        const row = appServer.AppDataSource.getRepository(Evaluation).create(newEval)
-        row.average_metrics = JSON.stringify({})
-
-        const chatflowTypes = body.chatflowType ? JSON.parse(body.chatflowType) : []
-        if (!Array.isArray(chatflowTypes)) {
-            throw new Error('chatflowType must be a valid array')
-        }
-
-        const simpleEvaluators =
-            body.selectedSimpleEvaluators && body.selectedSimpleEvaluators.length > 0 ? JSON.parse(body.selectedSimpleEvaluators) : []
-        if (!Array.isArray(simpleEvaluators)) {
-            throw new Error('selectedSimpleEvaluators must be a valid array')
-        }
-
         const additionalConfig: ICommonObject = {
-            chatflowTypes: chatflowTypes,
-            datasetAsOneConversation: body.datasetAsOneConversation,
-            simpleEvaluators: simpleEvaluators
+            chatflowTypes: request.chatflowTypes,
+            datasetAsOneConversation: request.datasetAsOneConversation,
+            simpleEvaluators: request.simpleEvaluatorIds
         }
-
-        if (body.evaluationType === 'llm') {
-            const lLMEvaluators =
-                body.selectedLLMEvaluators && body.selectedLLMEvaluators.length > 0 ? JSON.parse(body.selectedLLMEvaluators) : []
-
-            if (!Array.isArray(lLMEvaluators)) {
-                throw new Error('selectedLLMEvaluators must be a valid array')
+        if (request.evaluationType === 'llm') {
+            let safeLLMSelection: ReturnType<typeof resolveEvaluationChatModelSelection>
+            try {
+                safeLLMSelection = resolveEvaluationChatModelSelection(
+                    appServer.nodesPool.componentNodes,
+                    request.llm,
+                    request.model,
+                    request.credentialId
+                )
+            } catch {
+                throw invalidEvaluationRequest()
             }
-
-            additionalConfig.lLMEvaluators = lLMEvaluators
+            await credentialsService.assertCredentialInWorkspace(safeLLMSelection.nodeData.credential, workspaceId)
+            additionalConfig.lLMEvaluators = request.llmEvaluatorIds
             additionalConfig.llmConfig = {
-                credentialId: body.credentialId,
-                llm: body.llm,
-                model: body.model
+                credentialId: safeLLMSelection.nodeData.credential,
+                llm: safeLLMSelection.nodeData.name,
+                model: Object.values(safeLLMSelection.nodeData.inputs)[0]
             }
         }
-        row.additionalConfig = JSON.stringify(additionalConfig)
-        const newEvaluation = await appServer.AppDataSource.getRepository(Evaluation).save(row)
 
-        await appServer.telemetry.sendTelemetry(
-            'evaluation_created',
-            {
-                version: await getAppVersion()
-            },
-            orgId
+        const { dataset, flows, canonicalDatasetName, canonicalChatflowNames } = await assertAllScopedReferences(
+            appServer,
+            request,
+            workspaceId
         )
-
-        const dataset = await appServer.AppDataSource.getRepository(Dataset).findOneBy({
-            id: body.datasetId,
-            workspaceId: workspaceId
-        })
-        if (!dataset) throw new Error(`Dataset ${body.datasetId} not found`)
-
         const items = await appServer.AppDataSource.getRepository(DatasetRow).find({
             where: { datasetId: dataset.id },
             order: { sequenceNo: 'ASC' }
         })
         ;(dataset as any).rows = items
 
-        const data: ICommonObject = {
-            chatflowId: body.chatflowId,
-            dataset: dataset,
-            evaluationType: body.evaluationType,
-            evaluationId: newEvaluation.id,
-            credentialId: body.credentialId
-        }
-        if (body.datasetAsOneConversation) {
-            data.sessionId = uuidv4()
-        }
-
-        // When chatflow has an APIKey
         const apiKeys: { chatflowId: string; apiKey: string }[] = []
-        const chatflowIds = JSON.parse(body.chatflowId)
-
-        if (!Array.isArray(chatflowIds)) {
-            throw new Error('chatflowId must be a valid array')
+        for (const flow of flows) {
+            if (!flow.apikeyid) continue
+            const apikeyObj = await appServer.AppDataSource.getRepository(ApiKey).findOneBy({
+                id: flow.apikeyid,
+                workspaceId
+            })
+            if (!apikeyObj) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation references were not found')
+            apiKeys.push({ chatflowId: flow.id, apiKey: apikeyObj.apiKey })
         }
 
-        for (let i = 0; i < chatflowIds.length; i++) {
-            const chatflowId = chatflowIds[i]
-            const cFlow = await appServer.AppDataSource.getRepository(ChatFlow).findOneBy({
-                id: chatflowId,
-                workspaceId: workspaceId
-            })
-            if (cFlow && cFlow.apikeyid) {
-                const apikeyObj = await appServer.AppDataSource.getRepository(ApiKey).findOneBy({
-                    id: cFlow.apikeyid
-                })
-                if (apikeyObj) {
-                    apiKeys.push({
-                        chatflowId: chatflowId,
-                        apiKey: apikeyObj.apiKey
-                    })
-                }
-            }
+        const newEval = new Evaluation()
+        newEval.name = request.name
+        newEval.evaluationType = request.evaluationType
+        newEval.datasetId = request.datasetId
+        newEval.datasetName = canonicalDatasetName
+        newEval.chatflowId = JSON.stringify(request.chatflowIds)
+        newEval.chatflowName = JSON.stringify(canonicalChatflowNames)
+        newEval.workspaceId = workspaceId
+        newEval.status = EvaluationStatus.PENDING
+        newEval.additionalConfig = JSON.stringify(additionalConfig)
+        newEval.average_metrics = JSON.stringify({})
+
+        const evaluationRepository = appServer.AppDataSource.getRepository(Evaluation)
+        const row = evaluationRepository.create(newEval)
+        const newEvaluation = await evaluationRepository.save(row)
+
+        try {
+            await appServer.telemetry.sendTelemetry(
+                'evaluation_created',
+                {
+                    version: await getAppVersion()
+                },
+                orgId
+            )
+        } catch {
+            logger.warn('evaluation_create_telemetry_failed', { failedCount: 1 })
+        }
+
+        const data: ICommonObject = {
+            chatflowId: newEval.chatflowId,
+            dataset: dataset,
+            evaluationType: request.evaluationType,
+            evaluationId: newEvaluation.id,
+            credentialId: request.credentialId
+        }
+        if (request.datasetAsOneConversation) {
+            data.sessionId = uuidv4()
         }
         if (apiKeys.length > 0) {
             data.apiKeys = apiKeys
@@ -172,14 +414,6 @@ const createEvaluation = async (body: ICommonObject, baseURL: string, orgId: str
 
         // save the evaluation with status as pending
         const evalRunner = new EvaluationRunner(baseURL)
-        if (body.evaluationType === 'llm') {
-            const credential = await appServer.AppDataSource.getRepository(Credential).findOneBy({
-                id: body.credentialId
-            })
-
-            if (!credential) throw new Error(`Credential ${body.credentialId} not found`)
-        }
-
         let evalMetrics = { passCount: 0, failCount: 0, errorCount: 0 }
         evalRunner
             .runEvaluations(data)
@@ -188,7 +422,7 @@ const createEvaluation = async (body: ICommonObject, baseURL: string, orgId: str
                 // let us assume that the eval is successful
                 let allRowsSuccessful = true
                 try {
-                    const llmEvaluationRunner = new LLMEvaluationRunner()
+                    const llmEvaluationRunner = new LLMEvaluationRunner(workspaceId)
                     for (const resultRow of result.rows) {
                         const metricsArray: ICommonObject[] = []
                         const actualOutputArray: string[] = []
@@ -200,7 +434,7 @@ const createEvaluation = async (body: ICommonObject, baseURL: string, orgId: str
                             }
                             actualOutputArray.push(evaluationRow.actualOutput)
                             totalTime += parseFloat(evaluationRow.latency)
-                            let metricsObjFromRun: ICommonObject = {}
+                            const metricsObjFromRun: ICommonObject = Object.create(null)
 
                             let nested_metrics = evaluationRow.nested_metrics
 
@@ -248,6 +482,7 @@ const createEvaluation = async (body: ICommonObject, baseURL: string, orgId: str
                                     if (metric) {
                                         const json = typeof metric === 'object' ? metric : JSON.parse(metric)
                                         Object.getOwnPropertyNames(json).map((key) => {
+                                            if (UNSAFE_METRIC_KEYS.has(key)) return
                                             metricsObjFromRun[key] = json[key]
                                         })
                                     }
@@ -280,7 +515,7 @@ const createEvaluation = async (body: ICommonObject, baseURL: string, orgId: str
                         evalMetrics.failCount += evaluatorMetrics.failCount
                         evalMetrics.errorCount += evaluatorMetrics.errorCount
 
-                        if (body.evaluationType === 'llm') {
+                        if (request.evaluationType === 'llm') {
                             resultRow.llmConfig = additionalConfig.llmConfig
                             resultRow.LLMEvaluators = additionalConfig.lLMEvaluators
                             const llmEvaluatorMap: { evaluatorId: string; evaluator: any }[] = []
@@ -313,57 +548,36 @@ const createEvaluation = async (body: ICommonObject, baseURL: string, orgId: str
                         passPercent =
                             (evalMetrics.passCount / (evalMetrics.passCount + evalMetrics.failCount + evalMetrics.errorCount)) * 100
                     }
-                    appServer.AppDataSource.getRepository(Evaluation)
-                        .findOneBy({ id: newEvaluation.id })
-                        .then((evaluation) => {
-                            if (evaluation) {
-                                evaluation.status = allRowsSuccessful ? EvaluationStatus.COMPLETED : EvaluationStatus.ERROR
-                                evaluation.average_metrics = JSON.stringify({
-                                    averageLatency: (totalTime / result.rows.length).toFixed(3),
-                                    totalRuns: result.rows.length,
-                                    ...evalMetrics,
-                                    passPcnt: passPercent.toFixed(2)
-                                })
-                                appServer.AppDataSource.getRepository(Evaluation).save(evaluation)
-                            }
-                        })
-                } catch (error) {
+                    await updateEvaluationStatus(
+                        appServer,
+                        newEvaluation.id,
+                        workspaceId,
+                        allRowsSuccessful ? EvaluationStatus.COMPLETED : EvaluationStatus.ERROR,
+                        {
+                            averageLatency: (totalTime / result.rows.length).toFixed(3),
+                            totalRuns: result.rows.length,
+                            ...evalMetrics,
+                            passPcnt: passPercent.toFixed(2)
+                        }
+                    )
+                } catch {
+                    logger.error('evaluation_result_processing_failed', { failedCount: 1 })
                     //update the evaluation with status as error
-                    appServer.AppDataSource.getRepository(Evaluation)
-                        .findOneBy({ id: newEvaluation.id })
-                        .then((evaluation) => {
-                            if (evaluation) {
-                                evaluation.status = EvaluationStatus.ERROR
-                                appServer.AppDataSource.getRepository(Evaluation).save(evaluation)
-                            }
-                        })
+                    await updateEvaluationStatus(appServer, newEvaluation.id, workspaceId, EvaluationStatus.ERROR)
                 }
             })
-            .catch((error) => {
+            .catch(async () => {
                 // Handle errors from runEvaluations
-                console.error('Error running evaluations:', getErrorMessage(error))
-                appServer.AppDataSource.getRepository(Evaluation)
-                    .findOneBy({ id: newEvaluation.id })
-                    .then((evaluation) => {
-                        if (evaluation) {
-                            evaluation.status = EvaluationStatus.ERROR
-                            evaluation.average_metrics = JSON.stringify({
-                                error: getErrorMessage(error)
-                            })
-                            appServer.AppDataSource.getRepository(Evaluation).save(evaluation)
-                        }
-                    })
-                    .catch((dbError) => {
-                        console.error('Error updating evaluation status:', getErrorMessage(dbError))
-                    })
+                logger.error('evaluation_execution_failed', { failedCount: 1 })
+                await updateEvaluationStatus(appServer, newEvaluation.id, workspaceId, EvaluationStatus.ERROR, {
+                    error: 'Evaluation execution failed'
+                })
             })
 
-        return getAllEvaluations(body.workspaceId)
+        return getAllEvaluations(workspaceId)
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: EvalsService.createEvaluation - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to create evaluation')
     }
 }
 
@@ -451,29 +665,7 @@ const getAllEvaluations = async (workspaceId: string, page: number = -1, limit: 
 
 // Delete evaluation and all rows via id
 const deleteEvaluation = async (id: string, activeWorkspaceId: string) => {
-    try {
-        const appServer = getRunningExpressApp()
-        const evaluationRepo = appServer.AppDataSource.getRepository(Evaluation)
-        const existing = await evaluationRepo.findOneBy({
-            id,
-            workspaceId: activeWorkspaceId
-        })
-        if (!existing) {
-            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Evaluation ${id} not found`)
-        }
-        await appServer.AppDataSource.getRepository(EvaluationRun).delete({ evaluationId: id })
-        await evaluationRepo.delete({ id, workspaceId: activeWorkspaceId })
-        const results = await evaluationRepo.findBy(getWorkspaceSearchOptions(activeWorkspaceId))
-        return results
-    } catch (error) {
-        if (error instanceof InternalFlowiseError) {
-            throw error
-        }
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: EvalsService.deleteEvaluation - ${getErrorMessage(error)}`
-        )
-    }
+    return patchDeleteEvaluations([id], activeWorkspaceId, false)
 }
 
 // check for outdated evaluations
@@ -484,7 +676,7 @@ const isOutdated = async (id: string, workspaceId: string) => {
             id: id,
             workspaceId: workspaceId
         })
-        if (!evaluation) throw new Error(`Evaluation ${id} not found`)
+        if (!evaluation) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation was not found')
         const evaluationRunDate = evaluation.runDate.getTime()
         let isOutdated = false
         const returnObj: ICommonObject = {
@@ -580,6 +772,7 @@ const isOutdated = async (id: string, workspaceId: string) => {
         returnObj.isOutdated = isOutdated
         return returnObj
     } catch (error) {
+        if (error instanceof InternalFlowiseError) throw error
         throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Error: EvalsService.isOutdated - ${getErrorMessage(error)}`)
     }
 }
@@ -591,9 +784,10 @@ const getEvaluation = async (id: string, workspaceId: string) => {
             id: id,
             workspaceId: workspaceId
         })
-        if (!evaluation) throw new Error(`Evaluation ${id} not found`)
+        if (!evaluation) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation was not found')
         const versionCount = await appServer.AppDataSource.getRepository(Evaluation).countBy({
-            name: evaluation.name
+            name: evaluation.name,
+            workspaceId
         })
         const items = await appServer.AppDataSource.getRepository(EvaluationRun).find({
             where: { evaluationId: id }
@@ -607,7 +801,8 @@ const getEvaluation = async (id: string, workspaceId: string) => {
             rows: items
         }
     } catch (error) {
-        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Error: EvalsService.getEvaluation - ${getErrorMessage(error)}`)
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to get evaluation')
     }
 }
 
@@ -618,10 +813,11 @@ const getVersions = async (id: string, workspaceId: string) => {
             id: id,
             workspaceId: workspaceId
         })
-        if (!evaluation) throw new Error(`Evaluation ${id} not found`)
+        if (!evaluation) throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation was not found')
         const versions = await appServer.AppDataSource.getRepository(Evaluation).find({
             where: {
-                name: evaluation.name
+                name: evaluation.name,
+                workspaceId
             },
             order: {
                 runDate: 'ASC'
@@ -639,49 +835,69 @@ const getVersions = async (id: string, workspaceId: string) => {
             versions: returnResults
         }
     } catch (error) {
-        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Error: EvalsService.getEvaluation - ${getErrorMessage(error)}`)
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to get evaluation versions')
     }
 }
 
-const patchDeleteEvaluations = async (ids: string[] = [], activeWorkspaceId: string, isDeleteAllVersion?: boolean) => {
+const patchDeleteEvaluations = async (ids: unknown, activeWorkspaceId: string, isDeleteAllVersion: unknown) => {
     try {
+        if (!activeWorkspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Evaluation deletion is not authorized')
+        const request = parseEvaluationDeleteRequest(ids, isDeleteAllVersion)
         const appServer = getRunningExpressApp()
-        const evalsToBeDeleted = await appServer.AppDataSource.getRepository(Evaluation).find({
-            where: {
-                id: In(ids),
-                workspaceId: activeWorkspaceId
+        return await appServer.AppDataSource.transaction(async (manager) => {
+            const evaluationRepository = manager.getRepository(Evaluation)
+            const evaluationRunRepository = manager.getRepository(EvaluationRun)
+            const scopedEvaluations = await evaluationRepository.find({
+                where: {
+                    id: In(request.ids),
+                    workspaceId: activeWorkspaceId
+                }
+            })
+            if (scopedEvaluations.length !== request.ids.length) {
+                throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Evaluation deletion targets were not found')
             }
-        })
-        await appServer.AppDataSource.getRepository(Evaluation).delete(ids)
-        for (const evaluation of evalsToBeDeleted) {
-            await appServer.AppDataSource.getRepository(EvaluationRun).delete({ evaluationId: evaluation.id })
-        }
 
-        if (isDeleteAllVersion) {
-            for (const evaluation of evalsToBeDeleted) {
-                const otherVersionEvals = await appServer.AppDataSource.getRepository(Evaluation).find({
+            let evaluationsToDelete = scopedEvaluations
+            if (request.isDeleteAllVersion) {
+                const scopedNames = [...new Set(scopedEvaluations.map((evaluation) => evaluation.name))]
+                evaluationsToDelete = await evaluationRepository.find({
                     where: {
-                        name: evaluation.name
+                        name: In(scopedNames),
+                        workspaceId: activeWorkspaceId
                     }
                 })
-                if (otherVersionEvals.length > 0) {
-                    await appServer.AppDataSource.getRepository(Evaluation).delete(
-                        [...otherVersionEvals].map((evaluation) => evaluation.id)
-                    )
-                    for (const otherVersionEval of otherVersionEvals) {
-                        await appServer.AppDataSource.getRepository(EvaluationRun).delete({ evaluationId: otherVersionEval.id })
-                    }
-                }
             }
-        }
 
-        const results = await appServer.AppDataSource.getRepository(Evaluation).findBy(getWorkspaceSearchOptions(activeWorkspaceId))
-        return results
+            const targetIds = [...new Set(evaluationsToDelete.map((evaluation) => evaluation.id))]
+            const targetIdSet = new Set(targetIds)
+            if (targetIds.length > MAX_EVALUATION_DELETE_IDS) throw invalidEvaluationDeleteRequest()
+            if (targetIds.length === 0 || request.ids.some((id) => !targetIdSet.has(id))) {
+                throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Evaluation deletion changed concurrently')
+            }
+            if (evaluationsToDelete.some((evaluation) => evaluation.status === EvaluationStatus.PENDING)) {
+                throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Running evaluations cannot be deleted')
+            }
+
+            const expectedRunCount = await evaluationRunRepository.countBy({ evaluationId: In(targetIds) })
+            const runDeleteResult = await evaluationRunRepository.delete({ evaluationId: In(targetIds) })
+            if (runDeleteResult.affected !== expectedRunCount) {
+                throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Evaluation deletion changed concurrently')
+            }
+
+            const evaluationDeleteResult = await evaluationRepository.delete({
+                id: In(targetIds),
+                workspaceId: activeWorkspaceId
+            })
+            if (evaluationDeleteResult.affected !== targetIds.length) {
+                throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Evaluation deletion changed concurrently')
+            }
+
+            return evaluationRepository.findBy(getWorkspaceSearchOptions(activeWorkspaceId))
+        })
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: EvalsService.patchDeleteEvaluations - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to delete evaluations')
     }
 }
 

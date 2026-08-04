@@ -49,7 +49,7 @@ const AgentReasoningCard = ({
                                     width: 'auto'
                                 }}
                                 src={nextAgentGIF}
-                                alt='agentPNG'
+                                alt='下一智能体'
                             />
                         </Box>
                         <div>{agent.nextAgent}</div>
@@ -78,7 +78,7 @@ const AgentReasoningCard = ({
                                 width: 'auto'
                             }}
                             src={getAgentIcon(agent.nodeName, agent.instructions)}
-                            alt='agentPNG'
+                            alt='智能体图标'
                         />
                     </Box>
                     <div>{agent.agentName}</div>
@@ -96,7 +96,7 @@ const AgentReasoningCard = ({
                                     variant='outlined'
                                     clickable
                                     icon={<IconTool size={15} />}
-                                    onClick={() => onSourceDialogClick(tool, 'Used Tools')}
+                                    onClick={() => onSourceDialogClick(tool, '已用工具')}
                                 />
                             ) : null
                         })}
@@ -106,13 +106,13 @@ const AgentReasoningCard = ({
                     <div style={{ display: 'block', flexDirection: 'row', width: '100%' }}>
                         <Chip
                             size='small'
-                            label={'State'}
+                            label='状态'
                             component='a'
                             sx={{ mr: 1, mt: 1 }}
                             variant='outlined'
                             clickable
                             icon={<IconDeviceSdCard size={15} />}
-                            onClick={() => onSourceDialogClick(agent.state, 'State')}
+                            onClick={() => onSourceDialogClick(agent.state, '状态')}
                         />
                     </div>
                 )}

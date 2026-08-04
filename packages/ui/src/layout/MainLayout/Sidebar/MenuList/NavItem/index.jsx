@@ -149,7 +149,7 @@ const NavItem = ({ item, level, navType, onClick, onUploadFile }) => {
                         background: theme.palette.teal.main,
                         color: 'white'
                     }}
-                    label={'BETA'}
+                    label='测试版'
                 />
             )}
         </ListItemButton>

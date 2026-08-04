@@ -102,14 +102,14 @@ export const defaultThemeConfig = {
     },
     tooltip: {
         showTooltip: true,
-        tooltipMessage: 'Hi There 👋!',
+        tooltipMessage: '您好 👋！',
         tooltipBackgroundColor: 'black',
         tooltipTextColor: 'white',
         tooltipFontSize: 16
     },
     disclaimer: {
-        title: 'Disclaimer',
-        message: 'By using this chatbot, you agree to the <a target="_blank" href="https://flowiseai.com/terms">Terms & Condition</a>',
+        title: '使用说明',
+        message: '使用此聊天机器人即表示您同意<a target="_blank" href="https://flowiseai.com/terms">服务条款</a>',
         textColor: 'black',
         buttonColor: '#3b82f6',
         buttonText: '开始对话',
@@ -121,19 +121,19 @@ export const defaultThemeConfig = {
     chatWindow: {
         showTitle: true,
         showAgentMessages: true,
-        title: 'Flowise Bot',
+        title: 'Flowise 助手',
         titleAvatarSrc: 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/svg/google-messages.svg',
-        welcomeMessage: 'Hello! This is custom welcome message',
+        welcomeMessage: '您好！这是自定义欢迎消息',
         errorMessage: '这是自定义错误消息',
         backgroundColor: '#ffffff',
-        backgroundImage: 'enter image path or link',
+        backgroundImage: '请输入图片路径或链接',
         height: 700,
         width: 400,
         fontSize: 16,
-        starterPrompts: ['What is a bot?', 'Who are you?'],
+        starterPrompts: ['什么是聊天机器人？', '你是谁？'],
         starterPromptFontSize: 15,
         clearChatOnReload: false,
-        sourceDocsTitle: 'Sources:',
+        sourceDocsTitle: '来源：',
         renderHTML: true,
         botMessage: {
             backgroundColor: '#f7f8ff',
@@ -153,7 +153,7 @@ export const defaultThemeConfig = {
             textColor: '#303235',
             sendButtonColor: '#3B81F6',
             maxChars: 50,
-            maxCharsWarningMessage: 'You exceeded the characters limit. Please input less than 50 characters.',
+            maxCharsWarningMessage: '输入内容已超过字符限制，请将内容控制在 50 个字符以内。',
             autoFocus: true,
             sendMessageSound: true,
             sendSoundLocation: 'send_message.mp3',
@@ -169,7 +169,7 @@ export const defaultThemeConfig = {
         },
         footer: {
             textColor: '#303235',
-            text: 'Powered by',
+            text: '技术支持：',
             company: 'Flowise',
             companyLink: 'https://flowiseai.com'
         }
@@ -287,6 +287,12 @@ const App = () => {
 
 const EmbedChat = ({ chatflowid }) => {
     const codes = ['Popup Html', 'Fullpage Html', 'Popup React', 'Fullpage React']
+    const codeLabels = {
+        'Popup Html': '弹窗式 HTML',
+        'Fullpage Html': '全页面 HTML',
+        'Popup React': '弹窗式 React',
+        'Fullpage React': '全页面 React'
+    }
     const [value, setValue] = useState(0)
     const [embedChatCheckboxVal, setEmbedChatCheckbox] = useState(false)
 
@@ -334,7 +340,7 @@ const EmbedChat = ({ chatflowid }) => {
                 <div style={{ flex: 80 }}>
                     <Tabs value={value} onChange={handleChange} aria-label='标签页'>
                         {codes.map((codeLang, index) => (
-                            <Tab key={index} label={codeLang} {...a11yProps(index)}></Tab>
+                            <Tab key={index} label={codeLabels[codeLang]} {...a11yProps(index)}></Tab>
                         ))}
                     </Tabs>
                 </div>
@@ -345,15 +351,15 @@ const EmbedChat = ({ chatflowid }) => {
                     {(value === 0 || value === 1) && (
                         <>
                             <span>
-                                Paste this anywhere in the <code>{`<body>`}</code> tag of your html file.
+                                将以下代码粘贴到 HTML 文件的 <code>{`<body>`}</code> 标签内任意位置。
                                 <p>
-                                    You can also specify a&nbsp;
+                                    您也可以指定&nbsp;
                                     <a
                                         rel='noreferrer'
                                         target='_blank'
                                         href='https://www.npmjs.com/package/flowise-embed?activeTab=versions'
                                     >
-                                        version
+                                        版本
                                     </a>
                                     :&nbsp;<code>{`https://cdn.jsdelivr.net/npm/flowise-embed@<version>/dist/web.js`}</code>
                                 </p>

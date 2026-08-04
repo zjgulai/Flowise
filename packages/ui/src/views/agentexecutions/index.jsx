@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import DatePicker from 'react-datepicker'
+import zhCN from 'date-fns/locale/zh-CN'
+import DatePicker, { registerLocale } from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 
 // material-ui
@@ -43,6 +44,8 @@ import TablePagination, { DEFAULT_ITEMS_PER_PAGE } from '@/ui-component/paginati
 import { ExecutionsListTable } from '@/ui-component/table/ExecutionsListTable'
 import { omit } from 'lodash'
 import { ExecutionDetails } from './ExecutionDetails'
+
+registerLocale('zh-CN', zhCN)
 
 // ==============================|| AGENT EXECUTIONS ||============================== //
 
@@ -185,8 +188,9 @@ const AgentExecutions = () => {
                 if (!Array.isArray(data)) return
                 setExecutions(data)
                 setTotal(total)
-            } catch (e) {
-                console.error(e)
+            } catch {
+                setExecutions([])
+                setTotal(0)
             }
         }
     }, [getAllExecutions.data])
@@ -236,7 +240,7 @@ const AgentExecutions = () => {
                 <ErrorBoundary error={error} />
             ) : (
                 <Stack flexDirection='column' sx={{ gap: 3 }}>
-                    <ViewHeader title='Agent Executions' description='Monitor and manage agentflows executions' />
+                    <ViewHeader title='执行记录' description='监控并管理智能体流程的执行情况' />
 
                     {/* Filter Section */}
                     <Box sx={{ mb: 2, width: '100%' }}>
@@ -260,7 +264,7 @@ const AgentExecutions = () => {
                                         }}
                                     >
                                         <MenuItem value=''>全部</MenuItem>
-                                        <MenuItem value='INPROGRESS'>In Progress</MenuItem>
+                                        <MenuItem value='INPROGRESS'>执行中</MenuItem>
                                         <MenuItem value='FINISHED'>已完成</MenuItem>
                                         <MenuItem value='ERROR'>错误</MenuItem>
                                         <MenuItem value='TERMINATED'>已终止</MenuItem>
@@ -273,6 +277,12 @@ const AgentExecutions = () => {
                                 <DatePicker
                                     selected={filters.startDate}
                                     onChange={(date) => onDateChange('startDate', date)}
+                                    locale='zh-CN'
+                                    dateFormat='yyyy-MM-dd'
+                                    previousMonthAriaLabel='上个月'
+                                    nextMonthAriaLabel='下个月'
+                                    previousYearAriaLabel='上一年'
+                                    nextYearAriaLabel='下一年'
                                     selectsStart
                                     startDate={filters.startDate}
                                     className='form-control'
@@ -296,6 +306,12 @@ const AgentExecutions = () => {
                                 <DatePicker
                                     selected={filters.endDate}
                                     onChange={(date) => onDateChange('endDate', date)}
+                                    locale='zh-CN'
+                                    dateFormat='yyyy-MM-dd'
+                                    previousMonthAriaLabel='上个月'
+                                    nextMonthAriaLabel='下个月'
+                                    previousYearAriaLabel='上一年'
+                                    nextYearAriaLabel='下一年'
                                     selectsEnd
                                     endDate={filters.endDate}
                                     className='form-control'
@@ -305,7 +321,7 @@ const AgentExecutions = () => {
                                     customInput={
                                         <TextField
                                             size='small'
-                                            label='End date'
+                                            label='结束日期'
                                             fullWidth
                                             sx={{
                                                 '& .MuiOutlinedInput-notchedOutline': {
@@ -352,13 +368,13 @@ const AgentExecutions = () => {
                                         onClick={() => applyFilters(currentPage, pageLimit)}
                                         size='small'
                                     >
-                                        Apply
+                                        应用
                                     </Button>
                                     <Button variant='outlined' onClick={resetFilters} size='small'>
-                                        Reset
+                                        重置
                                     </Button>
                                     <Available permissions={['executions:delete']}>
-                                        <Tooltip title='Delete selected executions'>
+                                        <Tooltip title='删除选中的执行记录'>
                                             <span>
                                                 <IconButton
                                                     sx={{ height: 30, width: 30 }}
@@ -427,19 +443,18 @@ const AgentExecutions = () => {
                         aria-labelledby='alert-dialog-title'
                         aria-describedby='alert-dialog-description'
                     >
-                        <DialogTitle id='alert-dialog-title'>Confirm Deletion</DialogTitle>
+                        <DialogTitle id='alert-dialog-title'>确认删除</DialogTitle>
                         <DialogContent>
                             <DialogContentText id='alert-dialog-description'>
-                                Are you sure you want to delete {selectedExecutionIds.length} execution
-                                {selectedExecutionIds.length !== 1 ? 's' : ''}? This action cannot be undone.
+                                确定要删除选中的 {selectedExecutionIds.length} 条执行记录吗？此操作无法撤销。
                             </DialogContentText>
                         </DialogContent>
                         <DialogActions>
                             <Button onClick={handleDeleteDialogClose} color='primary'>
-                                Cancel
+                                取消
                             </Button>
                             <Button onClick={handleDeleteExecutions} color='error'>
-                                Delete
+                                删除
                             </Button>
                         </DialogActions>
                     </Dialog>

@@ -1,5 +1,6 @@
 import type { FlowEdge, FlowNode, NodeDataSchema, ValidationError, ValidationResult } from '../types'
 import { evaluateParamVisibility } from '../utils/fieldVisibility'
+import { getMetadataDisplayText } from '../utils/metadataDisplay'
 
 /** Check if a value is empty (null, undefined, empty string, or empty rich text) */
 function isEmptyValue(value: unknown): boolean {
@@ -15,7 +16,7 @@ export function validateFlow(nodes: FlowNode[], edges: FlowEdge[], availableNode
     // Check for empty flow
     if (nodes.length === 0) {
         errors.push({
-            message: 'Flow is empty - add at least one node',
+            message: '流程为空，请至少添加一个节点',
             type: 'error'
         })
         return { valid: false, errors }
@@ -25,7 +26,7 @@ export function validateFlow(nodes: FlowNode[], edges: FlowEdge[], availableNode
     const startNode = nodes.find((n) => n.data.name === 'startAgentflow')
     if (!startNode) {
         errors.push({
-            message: 'Flow must have a start node',
+            message: '流程必须包含一个开始节点',
             type: 'error'
         })
     }
@@ -34,7 +35,7 @@ export function validateFlow(nodes: FlowNode[], edges: FlowEdge[], availableNode
     const startNodes = nodes.filter((n) => n.data.name === 'startAgentflow')
     if (startNodes.length > 1) {
         errors.push({
-            message: 'Flow can only have one start node',
+            message: '流程只能包含一个开始节点',
             type: 'error'
         })
     }
@@ -51,7 +52,7 @@ export function validateFlow(nodes: FlowNode[], edges: FlowEdge[], availableNode
         if (!connectedNodes.has(node.id)) {
             errors.push({
                 nodeId: node.id,
-                message: 'This node is not connected to anything',
+                message: '此节点尚未连接到任何节点',
                 type: 'warning'
             })
         }
@@ -61,7 +62,7 @@ export function validateFlow(nodes: FlowNode[], edges: FlowEdge[], availableNode
     const hasCycle = detectCycle(nodes, edges)
     if (hasCycle) {
         errors.push({
-            message: 'Flow contains a cycle - this may cause infinite loops',
+            message: '流程中存在循环，可能导致无限执行',
             type: 'error'
         })
     }
@@ -144,19 +145,19 @@ function detectHangingEdges(nodes: FlowNode[], edges: FlowEdge[]): ValidationErr
             if (!sourceExists && targetExists) {
                 errors.push({
                     nodeId: edge.target,
-                    message: `Connected to non-existent source node ${edge.source}`,
+                    message: `连接到了不存在的源节点 ${edge.source}`,
                     type: 'warning'
                 })
             } else if (sourceExists && !targetExists) {
                 errors.push({
                     nodeId: edge.source,
-                    message: `Connected to non-existent target node ${edge.target}`,
+                    message: `连接到了不存在的目标节点 ${edge.target}`,
                     type: 'warning'
                 })
             } else {
                 errors.push({
                     edgeId: edge.id,
-                    message: 'Disconnected edge - both source and target nodes do not exist',
+                    message: '连接已断开：源节点和目标节点均不存在',
                     type: 'warning'
                 })
             }
@@ -179,7 +180,7 @@ export function validateNode(node: FlowNode, availableNodes?: NodeDataSchema[]):
     if (!node.data.name) {
         errors.push({
             nodeId: node.id,
-            message: 'Node is missing a name',
+            message: '节点缺少名称',
             type: 'error'
         })
     }
@@ -189,12 +190,13 @@ export function validateNode(node: FlowNode, availableNodes?: NodeDataSchema[]):
     const inputValues = node.data.inputs || {}
 
     for (const param of inputParams) {
+        const paramLabel = getMetadataDisplayText(param, 'label', param.name)
         // Credential validation (skip general check to avoid duplicate errors)
         if (param.name === 'credential') {
             if (!param.optional && !inputValues[param.name]) {
                 errors.push({
                     nodeId: node.id,
-                    message: 'Credential is required',
+                    message: `${paramLabel}为必填项`,
                     type: 'warning'
                 })
             }
@@ -208,7 +210,7 @@ export function validateNode(node: FlowNode, availableNodes?: NodeDataSchema[]):
         if (!param.optional && evaluateParamVisibility(param, inputValues) && isEmptyValue(inputValues[param.name] ?? param.default)) {
             errors.push({
                 nodeId: node.id,
-                message: `${param.label || param.name} is required`,
+                message: `${paramLabel}为必填项`,
                 type: 'warning'
             })
         }
@@ -226,9 +228,10 @@ export function validateNode(node: FlowNode, availableNodes?: NodeDataSchema[]):
                         if (shouldValidate && !arrayParam.optional) {
                             const value = item[arrayParam.name]
                             if (isEmptyValue(value)) {
+                                const arrayParamLabel = getMetadataDisplayText(arrayParam, 'label', arrayParam.name)
                                 errors.push({
                                     nodeId: node.id,
-                                    message: `${param.label} item #${index + 1}: ${arrayParam.label} is required`,
+                                    message: `${paramLabel}第 ${index + 1} 项：${arrayParamLabel}为必填项`,
                                     type: 'warning'
                                 })
                             }
@@ -253,9 +256,10 @@ export function validateNode(node: FlowNode, availableNodes?: NodeDataSchema[]):
                     if (!componentParam.optional) {
                         const nestedValue = configValue[componentParam.name]
                         if (isEmptyValue(nestedValue)) {
+                            const componentParamLabel = getMetadataDisplayText(componentParam, 'label', componentParam.name)
                             errors.push({
                                 nodeId: node.id,
-                                message: `${param.label} configuration: ${componentParam.label} is required`,
+                                message: `${paramLabel}配置：${componentParamLabel}为必填项`,
                                 type: 'warning'
                             })
                         }

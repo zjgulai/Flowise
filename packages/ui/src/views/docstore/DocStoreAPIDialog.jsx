@@ -31,6 +31,10 @@ const DocStoreAPIDialog = ({ show, dialogProps, onCancel }) => {
     const [nodeConfigExpanded, setNodeConfigExpanded] = useState({})
 
     const getConfigApi = useApi(documentstoreApi.getDocumentStoreConfig)
+    // Keep live resource identities out of copyable examples. Callers must GET
+    // the document store immediately before a mutation and use its versionToken.
+    const versionToken = '"<version-token-from-document-store-GET>"'
+    const versionTokenLiteral = JSON.stringify(versionToken)
 
     const formDataRequest = () => {
         return `With the Upsert API, you can choose an existing document and reuse the same configuration for upserting.
@@ -41,6 +45,7 @@ import json
 
 API_URL = "${baseURL}/api/v1/document-store/upsert/${dialogProps.storeId}"
 API_KEY = "your_api_key_here"
+VERSION_TOKEN = ${versionTokenLiteral}
 
 # use form data to upload files
 form_data = {
@@ -62,7 +67,8 @@ body_data = {
 }
 
 headers = {
-    "Authorization": f"Bearer {BEARER_TOKEN}"
+    "Authorization": f"Bearer {API_KEY}",
+    "If-Match": VERSION_TOKEN
 }
 
 def query(form_data):
@@ -94,13 +100,16 @@ formData.append("createNewDocStore", "false");
 // formData.append("recordManager", "");
 // formData.append("docStore", "");
 
+const versionToken = ${versionTokenLiteral};
+
 async function query(formData) {
     const response = await fetch(
         "${baseURL}/api/v1/document-store/upsert/${dialogProps.storeId}",
         {
             method: "POST",
             headers: {
-                "Authorization": "Bearer <your_api_key_here>"
+                "Authorization": "Bearer <your_api_key_here>",
+                "If-Match": versionToken
             },
             body: formData
         }
@@ -117,6 +126,7 @@ query(formData).then((response) => {
 \`\`\`bash
 curl -X POST ${baseURL}/api/v1/document-store/upsert/${dialogProps.storeId} \\
   -H "Authorization: Bearer <your_api_key_here>" \\
+  -H 'If-Match: ${versionToken}' \\
   -F "files=@<file-path>" \\
   -F "docId=${dialogProps.loaderId}" \\
   -F "loaderName=Custom Loader Name" \\
@@ -142,9 +152,11 @@ import requests
 
 API_URL = "${baseURL}/api/v1/document-store/upsert/${dialogProps.storeId}"
 API_KEY = "your_api_key_here"
+VERSION_TOKEN = ${versionTokenLiteral}
 
 headers = {
-    "Authorization": f"Bearer {BEARER_TOKEN}"
+    "Authorization": f"Bearer {API_KEY}",
+    "If-Match": VERSION_TOKEN
 }
 
 def query(payload):
@@ -177,6 +189,8 @@ print(output)
 \`\`\`
 
 \`\`\`javascript
+const versionToken = ${versionTokenLiteral};
+
 async function query(data) {
     const response = await fetch(
         "${baseURL}/api/v1/document-store/upsert/${dialogProps.storeId}",
@@ -184,7 +198,8 @@ async function query(data) {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "Authorization": "Bearer <your_api_key_here>"
+                "Authorization": "Bearer <your_api_key_here>",
+                "If-Match": versionToken
             },
             body: JSON.stringify(data)
         }
@@ -223,6 +238,7 @@ query({
 curl -X POST ${baseURL}/api/v1/document-store/upsert/${dialogProps.storeId} \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer <your_api_key_here>" \\
+  -H 'If-Match: ${versionToken}' \\
   -d '{
         "docId": "${dialogProps.loaderId}",
         "metadata": "{}",
@@ -357,7 +373,7 @@ curl -X POST ${baseURL}/api/v1/document-store/upsert/${dialogProps.storeId} \\
 
                 <MemoizedReactMarkdown>{values}</MemoizedReactMarkdown>
 
-                <Typography sx={{ mt: 3, mb: 1 }}>You can override existing configurations:</Typography>
+                <Typography sx={{ mt: 3, mb: 1 }}>可以覆盖以下现有配置：</Typography>
 
                 <Stack direction='column' spacing={2} sx={{ width: '100%', my: 2 }}>
                     <Card sx={{ borderColor: theme.palette.primary[200] + 75, p: 2 }} variant='outlined'>

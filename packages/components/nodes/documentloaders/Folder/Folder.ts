@@ -38,7 +38,8 @@ class Folder_DocumentLoaders implements INode {
                 label: 'Folder Path',
                 name: 'folderPath',
                 type: 'string',
-                placeholder: ''
+                placeholder: '',
+                workspaceExportPolicy: 'rebind'
             },
             {
                 label: 'Recursive',

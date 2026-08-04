@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm'
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn, VersionColumn } from 'typeorm'
 import { DocumentStoreStatus, IDocumentStore } from '../../Interface'
 
 @Entity()
@@ -40,4 +40,10 @@ export class DocumentStore implements IDocumentStore {
 
     @Column({ nullable: false, type: 'text' })
     workspaceId: string
+
+    @Column({ nullable: false, type: 'varchar', length: 36 })
+    generationId: string
+
+    @VersionColumn({ default: 1 })
+    revision: number
 }

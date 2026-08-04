@@ -30,12 +30,12 @@ const ThinkingCard = ({ thinking, thinkingDuration, isThinking, customization })
     // Determine header text
     const getHeaderText = () => {
         if (isThinking) {
-            return 'Thinking...'
+            return '思考中……'
         }
         if (thinkingDuration !== undefined && thinkingDuration !== null) {
-            return `Thought for ${thinkingDuration} second${thinkingDuration !== 1 ? 's' : ''}`
+            return `已思考 ${thinkingDuration} 秒`
         }
-        return 'Thinking...'
+        return '思考中……'
     }
 
     return (

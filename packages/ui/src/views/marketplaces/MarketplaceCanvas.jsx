@@ -4,7 +4,7 @@ import 'reactflow/dist/style.css'
 import '@/views/canvas/index.css'
 
 import { useLocation, useNavigate } from 'react-router-dom'
-import { useSelector } from 'react-redux'
+import { useDispatch, useSelector } from 'react-redux'
 
 // material-ui
 import { Toolbar, Box, AppBar } from '@mui/material'
@@ -14,6 +14,9 @@ import { useTheme } from '@mui/material/styles'
 import MarketplaceCanvasNode from './MarketplaceCanvasNode'
 import MarketplaceCanvasHeader from './MarketplaceCanvasHeader'
 import StickyNote from '../canvas/StickyNote'
+import nodesApi from '@/api/nodes'
+import useApi from '@/hooks/useApi'
+import { SET_COMPONENT_NODES } from '@/store/actions'
 
 // icons
 import { IconMagnetFilled, IconMagnetOff, IconArtboard, IconArtboardOff } from '@tabler/icons-react'
@@ -27,6 +30,8 @@ const MarketplaceCanvas = () => {
     const theme = useTheme()
     const navigate = useNavigate()
     const customization = useSelector((state) => state.customization)
+    const dispatch = useDispatch()
+    const getNodesApi = useApi(nodesApi.getAllNodes)
 
     const { state } = useLocation()
     const { flowData, name } = state
@@ -51,6 +56,15 @@ const MarketplaceCanvas = () => {
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [flowData])
+
+    useEffect(() => {
+        getNodesApi.request()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+    useEffect(() => {
+        if (getNodesApi.data) dispatch({ type: SET_COMPONENT_NODES, componentNodes: getNodesApi.data })
+    }, [dispatch, getNodesApi.data])
 
     const onChatflowCopy = (flowData) => {
         const isAgentCanvas = (flowData?.nodes || []).some(

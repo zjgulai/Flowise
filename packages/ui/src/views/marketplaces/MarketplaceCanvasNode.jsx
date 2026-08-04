@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types'
 import { useState } from 'react'
+import { useSelector } from 'react-redux'
 
 // material-ui
 import { styled, useTheme } from '@mui/material/styles'
@@ -14,6 +15,7 @@ import AdditionalParamsDialog from '@/ui-component/dialog/AdditionalParamsDialog
 // const
 import { baseURL } from '@/store/constant'
 import LlamaindexPNG from '@/assets/images/llamaindex.png'
+import { resolveInstanceDisplayLabel } from '@/utils/componentMetadataDisplay'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -33,6 +35,8 @@ const CardWrapper = styled(MainCard)(({ theme }) => ({
 
 const MarketplaceCanvasNode = ({ data }) => {
     const theme = useTheme()
+    const componentNodes = useSelector((state) => state.canvas.componentNodes)
+    const componentNode = componentNodes.find((node) => node.name === data.name)
 
     const [showDialog, setShowDialog] = useState(false)
     const [dialogProps, setDialogProps] = useState({})
@@ -42,8 +46,8 @@ const MarketplaceCanvasNode = ({ data }) => {
             data,
             inputParams: data.inputParams.filter((param) => param.additionalParams),
             disabled: true,
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setDialogProps(dialogProps)
         setShowDialog(true)
@@ -74,7 +78,7 @@ const MarketplaceCanvasNode = ({ data }) => {
                                 <img
                                     style={{ width: '100%', height: '100%', padding: 5, objectFit: 'contain' }}
                                     src={`${baseURL}/api/v1/node-icon/${data.name}`}
-                                    alt='Notification'
+                                    alt='通知图标'
                                 />
                             </div>
                         </Box>
@@ -85,7 +89,7 @@ const MarketplaceCanvasNode = ({ data }) => {
                                     fontWeight: 500
                                 }}
                             >
-                                {data.label}
+                                {resolveInstanceDisplayLabel(data, componentNode)}
                             </Typography>
                         </Box>
                         <div style={{ flexGrow: 1 }}></div>
@@ -116,7 +120,7 @@ const MarketplaceCanvasNode = ({ data }) => {
                                         textAlign: 'center'
                                     }}
                                 >
-                                    Inputs
+                                    输入
                                 </Typography>
                             </Box>
                             <Divider />
@@ -142,7 +146,7 @@ const MarketplaceCanvasNode = ({ data }) => {
                             }}
                         >
                             <Button sx={{ borderRadius: 25, width: '90%', mb: 2 }} variant='outlined' onClick={onDialogClicked}>
-                                Additional Parameters
+                                更多参数
                             </Button>
                         </div>
                     )}
@@ -154,7 +158,7 @@ const MarketplaceCanvasNode = ({ data }) => {
                                 textAlign: 'center'
                             }}
                         >
-                            Output
+                            输出
                         </Typography>
                     </Box>
                     <Divider />

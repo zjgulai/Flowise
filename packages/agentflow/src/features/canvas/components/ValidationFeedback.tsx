@@ -8,6 +8,7 @@ import validateEmptyImage from '@/assets/images/validate_empty.svg'
 import { getAgentflowIcon } from '@/core/node-config'
 import { tokens } from '@/core/theme/tokens'
 import type { FlowEdge, FlowNode, NodeDataSchema, ValidationError } from '@/core/types'
+import { resolveInstanceDisplayLabel } from '@/core/utils'
 import { applyValidationErrorsToNodes, validateFlow } from '@/core/validation'
 import { useConfigContext } from '@/infrastructure/store'
 
@@ -28,20 +29,21 @@ export interface ValidationFeedbackProps {
     setNodes: React.Dispatch<React.SetStateAction<FlowNode[]>>
 }
 
-function groupErrorsByNode(errors: ValidationError[], nodes: FlowNode[]): NodeValidationResult[] {
+function groupErrorsByNode(errors: ValidationError[], nodes: FlowNode[], availableNodes?: NodeDataSchema[]): NodeValidationResult[] {
     const nodeMap = new Map<string, NodeValidationResult>()
 
     for (const error of errors) {
         const id = error.nodeId || error.edgeId || 'flow'
         if (!nodeMap.has(id)) {
             const node = nodes.find((n) => n.id === id)
-            let label = `Edge ${id}`
+            let label = `连接 ${id}`
             let name = 'edge'
             if (node) {
-                label = node.data.label || node.data.name
+                const component = availableNodes?.find((candidate) => candidate.name === node.data.name)
+                label = resolveInstanceDisplayLabel(node.data, component) || node.data.name
                 name = node.data.name
             } else if (id === 'flow') {
-                label = 'Flow'
+                label = '流程'
                 name = 'flow'
             }
             nodeMap.set(id, {
@@ -77,7 +79,7 @@ function ValidationFeedbackComponent({ nodes, edges, availableNodes, setNodes }:
 
     const handleValidate = useCallback(() => {
         const result = validateFlow(nodes, edges, availableNodes)
-        const grouped = groupErrorsByNode(result.errors, nodes)
+        const grouped = groupErrorsByNode(result.errors, nodes, availableNodes)
         setResults(grouped)
         setHasValidated(true)
 
@@ -147,8 +149,8 @@ function ValidationFeedbackComponent({ nodes, edges, availableNodes, setNodes }:
                 <div ref={containerRef} style={{ position: 'relative' }}>
                     <Fab
                         size='small'
-                        aria-label='validation'
-                        title='Validate flow'
+                        aria-label='验证流程'
+                        title='验证流程'
                         onClick={handleToggle}
                         sx={{
                             color: 'white',
@@ -176,7 +178,7 @@ function ValidationFeedbackComponent({ nodes, edges, availableNodes, setNodes }:
                         >
                             <Box sx={{ p: 2 }}>
                                 <Typography variant='h6' sx={{ mt: 1, mb: 2, fontWeight: tokens.typography.fontWeight.semibold }}>
-                                    Checklist ({results.reduce((sum, r) => sum + r.issues.length, 0)})
+                                    检查清单（{results.reduce((sum, r) => sum + r.issues.length, 0)}）
                                 </Typography>
 
                                 <Box sx={{ maxHeight: '60vh', overflowY: 'auto', pr: 1, mr: -1 }}>
@@ -234,7 +236,7 @@ function ValidationFeedbackComponent({ nodes, edges, availableNodes, setNodes }:
                                             <img
                                                 style={{ objectFit: 'cover', height: '15vh', width: 'auto' }}
                                                 src={validateEmptyImage}
-                                                alt='Illustration of a checklist with no items, indicating no issues found'
+                                                alt='未发现问题的检查清单插图'
                                             />
                                             {hasValidated ? (
                                                 <Typography
@@ -242,11 +244,11 @@ function ValidationFeedbackComponent({ nodes, edges, availableNodes, setNodes }:
                                                     color='success.main'
                                                     sx={{ mt: 2, fontWeight: tokens.typography.fontWeight.medium }}
                                                 >
-                                                    No issues found in your flow!
+                                                    流程中未发现问题！
                                                 </Typography>
                                             ) : (
                                                 <Typography variant='body2' color='text.secondary' sx={{ mt: 2 }}>
-                                                    Click &quot;Validate flow&quot; to check for issues
+                                                    点击“验证流程”检查问题
                                                 </Typography>
                                             )}
                                         </Box>
@@ -261,7 +263,7 @@ function ValidationFeedbackComponent({ nodes, edges, availableNodes, setNodes }:
                                         startIcon={<IconChecklist size={18} />}
                                         sx={{ minWidth: 120, textTransform: 'none' }}
                                     >
-                                        Validate flow
+                                        验证流程
                                     </Button>
                                 </Box>
                             </Box>
@@ -278,7 +280,7 @@ function ValidationFeedbackComponent({ nodes, edges, availableNodes, setNodes }:
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
             >
                 <Alert onClose={() => setSuccessSnackbar(false)} severity='success' variant='filled' sx={{ width: '100%' }}>
-                    No issues found in your flow!
+                    流程中未发现问题！
                 </Alert>
             </Snackbar>
         </>

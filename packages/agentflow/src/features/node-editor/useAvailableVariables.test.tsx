@@ -1,12 +1,15 @@
 import { renderHook } from '@testing-library/react'
 
+import type { NodeDataSchema } from '@/core/types'
+
 import { useAvailableVariables } from './useAvailableVariables'
 
 // --- Mocks ---
 
 const mockState = {
     nodes: [] as Array<{ id: string; extent?: string; parentNode?: string; data: Record<string, unknown> }>,
-    edges: [] as Array<{ source: string; target: string }>
+    edges: [] as Array<{ source: string; target: string }>,
+    componentNodes: [] as NodeDataSchema[]
 }
 
 jest.mock('@/infrastructure/store', () => ({
@@ -36,6 +39,7 @@ describe('useAvailableVariables', () => {
     beforeEach(() => {
         mockState.nodes = []
         mockState.edges = []
+        mockState.componentNodes = []
     })
 
     it('always returns global variables (chat context + flow variables)', () => {
@@ -62,10 +66,33 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('agent_0'))
 
-        const nodeOutputs = result.current.filter((i) => i.category === 'Node Outputs')
+        const nodeOutputs = result.current.filter((i) => i.category === '节点输出')
         expect(nodeOutputs).toHaveLength(1)
         expect(nodeOutputs[0].value).toBe('{{llm_0}}')
         expect(nodeOutputs[0].label).toBe('llm_0')
+    })
+
+    it('localizes only a default upstream node label while preserving the variable machine value', () => {
+        mockState.componentNodes = [{ name: 'llmAgentflow', label: 'LLM', displayLabel: '大模型' } as NodeDataSchema]
+        mockState.nodes = [
+            makeNode('llm_0', 'llmAgentflow', { label: 'LLM 0' }),
+            makeNode('custom_0', 'llmAgentflow', { label: '我的分析模型' }),
+            makeNode('agent_0', 'agentAgentflow')
+        ]
+        mockState.edges = [
+            { source: 'llm_0', target: 'custom_0' },
+            { source: 'custom_0', target: 'agent_0' }
+        ]
+
+        const { result } = renderHook(() => useAvailableVariables('agent_0'))
+        const nodeOutputs = result.current.filter((item) => item.category === '节点输出')
+
+        expect(nodeOutputs).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ description: '来自大模型 0的输出', value: '{{llm_0}}' }),
+                expect.objectContaining({ description: '来自我的分析模型的输出', value: '{{custom_0}}' })
+            ])
+        )
     })
 
     it('excludes startAgentflow from node outputs', () => {
@@ -74,7 +101,7 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('agent_0'))
 
-        const nodeOutputs = result.current.filter((i) => i.category === 'Node Outputs')
+        const nodeOutputs = result.current.filter((i) => i.category === '节点输出')
         expect(nodeOutputs).toHaveLength(0)
     })
 
@@ -84,7 +111,7 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('llm_0'))
 
-        const nodeOutputs = result.current.filter((i) => i.category === 'Node Outputs')
+        const nodeOutputs = result.current.filter((i) => i.category === '节点输出')
         expect(nodeOutputs).toHaveLength(0)
     })
 
@@ -94,7 +121,7 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('target_0'))
 
-        const nodeOutputs = result.current.filter((i) => i.category === 'Node Outputs')
+        const nodeOutputs = result.current.filter((i) => i.category === '节点输出')
         expect(nodeOutputs[0].label).toBe('myFunc')
     })
 
@@ -109,7 +136,7 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('node_0'))
 
-        const stateItems = result.current.filter((i) => i.category === 'Flow State')
+        const stateItems = result.current.filter((i) => i.category === '流程状态')
         expect(stateItems).toHaveLength(2)
         expect(stateItems[0].label).toBe('$flow.state.count')
         expect(stateItems[0].value).toBe('{{$flow.state.count}}')
@@ -121,7 +148,7 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('agent_0'))
 
-        const stateItems = result.current.filter((i) => i.category === 'Flow State')
+        const stateItems = result.current.filter((i) => i.category === '流程状态')
         expect(stateItems).toHaveLength(0)
     })
 
@@ -136,7 +163,7 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('node_0'))
 
-        const stateItems = result.current.filter((i) => i.category === 'Flow State')
+        const stateItems = result.current.filter((i) => i.category === '流程状态')
         expect(stateItems).toHaveLength(1)
         expect(stateItems[0].label).toBe('$flow.state.valid')
     })
@@ -147,7 +174,7 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('lonely_0'))
 
-        const nodeOutputs = result.current.filter((i) => i.category === 'Node Outputs')
+        const nodeOutputs = result.current.filter((i) => i.category === '节点输出')
         expect(nodeOutputs).toHaveLength(0)
     })
 
@@ -164,7 +191,7 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('child_0'))
 
-        const iterationItems = result.current.filter((i) => i.category === 'Iteration')
+        const iterationItems = result.current.filter((i) => i.category === '迭代')
         expect(iterationItems).toHaveLength(1)
         expect(iterationItems[0].label).toBe('$iteration')
         expect(iterationItems[0].value).toBe('{{$iteration}}')
@@ -175,7 +202,7 @@ describe('useAvailableVariables', () => {
 
         const { result } = renderHook(() => useAvailableVariables('agent_0'))
 
-        const iterationItems = result.current.filter((i) => i.category === 'Iteration')
+        const iterationItems = result.current.filter((i) => i.category === '迭代')
         expect(iterationItems).toHaveLength(0)
     })
 

@@ -4,14 +4,9 @@ import { RunnableConfig } from '@langchain/core/runnables'
 import { CallbackManagerForToolRun, Callbacks, CallbackManager, parseCallbackConfigArg } from '@langchain/core/callbacks/manager'
 import { StructuredTool } from '@langchain/core/tools'
 import { ICommonObject, IDatabaseEntity, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
-import {
-    getCredentialData,
-    getCredentialParam,
-    executeJavaScriptCode,
-    createCodeExecutionSandbox,
-    parseWithTypeConversion
-} from '../../../src/utils'
-import { isValidUUID, isValidURL } from '../../../src/validator'
+import { requestFlowisePrediction } from '../../../src/internalFlowRequest'
+import { getCredentialData, getCredentialParam, parseWithTypeConversion } from '../../../src/utils'
+import { isValidUUID } from '../../../src/validator'
 import { v4 as uuidv4 } from 'uuid'
 
 class ChatflowTool_Tools implements INode {
@@ -74,6 +69,7 @@ class ChatflowTool_Tools implements INode {
                 name: 'overrideConfig',
                 description: 'Override the config passed to the Chatflow.',
                 type: 'json',
+                workspaceExportPolicy: 'rebind',
                 optional: true,
                 additionalParams: true,
                 acceptVariable: true
@@ -83,8 +79,8 @@ class ChatflowTool_Tools implements INode {
                 name: 'baseURL',
                 type: 'string',
                 description:
-                    'Base URL to Flowise. By default, it is the URL of the incoming request. Useful when you need to execute the Chatflow through an alternative route.',
-                placeholder: 'http://localhost:3000',
+                    'Base URL to Flowise. By default, the server canonical APP_URL is used. Explicit external targets never receive a Flow API credential.',
+                placeholder: 'https://flowise.example.com',
                 optional: true,
                 additionalParams: true
             },
@@ -173,25 +169,17 @@ class ChatflowTool_Tools implements INode {
 
         const startNewSession = nodeData.inputs?.startNewSession as boolean
 
-        const baseURL = (nodeData.inputs?.baseURL as string) || (options.baseURL as string)
+        const configuredBaseUrl = nodeData.inputs?.baseURL
 
         // Validate selectedChatflowId is a valid UUID
         if (!selectedChatflowId || !isValidUUID(selectedChatflowId)) {
             throw new Error('Invalid chatflow ID: must be a valid UUID')
         }
 
-        // Validate baseURL is a valid URL
-        if (!baseURL || !isValidURL(baseURL)) {
-            throw new Error('Invalid base URL: must be a valid URL')
-        }
-
         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
         const chatflowApiKey = getCredentialParam('chatflowApiKey', credentialData, nodeData)
 
         if (selectedChatflowId === options.chatflowid) throw new Error('Cannot call the same chatflow!')
-
-        let headers = {}
-        if (chatflowApiKey) headers = { Authorization: `Bearer ${chatflowApiKey}` }
 
         let toolInput = ''
         if (useQuestionFromChat) {
@@ -204,12 +192,12 @@ class ChatflowTool_Tools implements INode {
 
         return new ChatflowTool({
             name,
-            baseURL,
+            baseURL: configuredBaseUrl,
             description,
             returnDirect,
             chatflowid: selectedChatflowId,
             startNewSession,
-            headers,
+            apiKey: chatflowApiKey,
             input: toolInput,
             overrideConfig
         })
@@ -231,9 +219,9 @@ class ChatflowTool extends StructuredTool {
 
     startNewSession = false
 
-    baseURL = 'http://localhost:3000'
+    baseURL?: unknown
 
-    headers = {}
+    apiKey?: unknown
 
     overrideConfig?: object
 
@@ -250,7 +238,7 @@ class ChatflowTool extends StructuredTool {
         chatflowid,
         startNewSession,
         baseURL,
-        headers,
+        apiKey,
         overrideConfig
     }: {
         name: string
@@ -259,8 +247,8 @@ class ChatflowTool extends StructuredTool {
         input: string
         chatflowid: string
         startNewSession: boolean
-        baseURL: string
-        headers: ICommonObject
+        baseURL?: unknown
+        apiKey?: unknown
         overrideConfig?: object
     }) {
         super()
@@ -269,7 +257,7 @@ class ChatflowTool extends StructuredTool {
         this.input = input
         this.baseURL = baseURL
         this.startNewSession = startNewSession
-        this.headers = headers
+        this.apiKey = apiKey
         this.chatflowid = chatflowid
         this.overrideConfig = overrideConfig
         this.returnDirect = returnDirect
@@ -341,46 +329,14 @@ class ChatflowTool extends StructuredTool {
             }
         }
 
-        const options = {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'flowise-tool': 'true',
-                ...this.headers
-            },
-            body: JSON.stringify(body)
-        }
-
-        const code = `
-const fetch = require('node-fetch');
-const url = $apiURL;
-
-const body = $callBody;
-
-const options = $callOptions;
-
-try {
-	const response = await fetch(url, options);
-	const resp = await response.json();
-	return resp.text;
-} catch (error) {
-	console.error(error);
-	return '';
-}
-`
-
-        // Create additional sandbox variables
-        const additionalSandbox: ICommonObject = {
-            $callOptions: options,
-            $callBody: body,
-            $apiURL: `${this.baseURL}/api/v1/prediction/${this.chatflowid}`
-        }
-
-        const sandbox = createCodeExecutionSandbox('', [], {}, additionalSandbox)
-
-        let response = await executeJavaScriptCode(code, sandbox, {
-            useSandbox: false
+        const responseData = await requestFlowisePrediction({
+            configuredBaseUrl: this.baseURL,
+            flowId: this.chatflowid,
+            apiKey: this.apiKey,
+            flowiseTool: true,
+            body
         })
+        let response = responseData?.text ?? ''
 
         if (typeof response === 'object') {
             response = JSON.stringify(response)

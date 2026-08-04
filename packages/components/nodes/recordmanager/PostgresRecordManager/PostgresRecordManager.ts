@@ -65,6 +65,7 @@ class PostgresRecordManager_RecordManager implements INode {
                 label: 'Additional Connection Configuration',
                 name: 'additionalConfig',
                 type: 'json',
+                workspaceExportPolicy: 'rebind',
                 description:
                     'Optional TypeORM connection options (e.g. ssl, connectTimeout). entities, subscribers, migrations, and extra are not allowed.',
                 additionalParams: true,

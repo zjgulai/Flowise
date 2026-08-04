@@ -12,6 +12,7 @@ import logger from '../utils/logger'
 import { generateAgentflowv2 as generateAgentflowv2_json } from 'flowise-components'
 import { databaseEntities } from '../utils'
 import { executeCustomNodeFunction } from '../utils/executeCustomNodeFunction'
+import { createWorkspaceOAuth2RefreshCapability } from '../services/oauth2CredentialRefresh'
 
 interface PredictionQueueOptions {
     appDataSource: DataSource
@@ -28,6 +29,7 @@ interface IGenerateAgentflowv2Params extends IExecuteFlowParams {
     toolNodes: IComponentNodes
     selectedChatModel: Record<string, any>
     question: string
+    workspaceId: string
     isAgentFlowGenerator: boolean
 }
 
@@ -91,11 +93,15 @@ export class PredictionQueue extends BaseQueue {
 
             if (isAgentFlowGenerator) {
                 logger.info(`Generating Agentflow...`)
-                const { prompt, componentNodes, toolNodes, selectedChatModel, question } = data as IGenerateAgentflowv2Params
+                const { prompt, componentNodes, toolNodes, selectedChatModel, question, workspaceId } = data as IGenerateAgentflowv2Params
+                if (!workspaceId) throw new Error('Agentflow generator workspace is required')
                 const options: Record<string, any> = {
                     appDataSource: this.appDataSource,
                     databaseEntities: databaseEntities,
-                    logger: logger
+                    logger: logger,
+                    workspaceId,
+                    skipVariables: true,
+                    refreshOAuth2Credential: createWorkspaceOAuth2RefreshCapability(workspaceId)
                 }
                 return await generateAgentflowv2_json({ prompt, componentNodes, toolNodes, selectedChatModel }, question, options)
             }

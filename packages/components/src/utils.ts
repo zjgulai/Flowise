@@ -628,8 +628,7 @@ export const decryptCredentialData = async (encryptedData: string): Promise<ICom
                 const decryptedData = AES.decrypt(encryptedData, encryptKey)
                 decryptedDataStr = decryptedData.toString(enc.Utf8)
             }
-        } catch (error) {
-            console.error(error)
+        } catch {
             throw new Error('Failed to decrypt credential data.')
         }
     } else {
@@ -642,8 +641,7 @@ export const decryptCredentialData = async (encryptedData: string): Promise<ICom
     if (!decryptedDataStr) return {}
     try {
         return JSON.parse(decryptedDataStr)
-    } catch (e) {
-        console.error(e)
+    } catch {
         throw new Error('Credentials could not be decrypted.')
     }
 }
@@ -657,24 +655,39 @@ export const decryptCredentialData = async (encryptedData: string): Promise<ICom
 export const getCredentialData = async (selectedCredentialId: string, options: ICommonObject): Promise<ICommonObject> => {
     const appDataSource = options.appDataSource as DataSource
     const databaseEntities = options.databaseEntities as IDatabaseEntity
+    const workspaceId = typeof options.workspaceId === 'string' && options.workspaceId ? options.workspaceId : undefined
 
     try {
         if (!selectedCredentialId) {
             return {}
         }
+        if (!workspaceId) throw new Error('Credential is not available in this workspace')
 
-        const credential = await appDataSource.getRepository(databaseEntities['Credential']).findOneBy({
-            id: selectedCredentialId
-        })
+        const credentialRepository = appDataSource.getRepository(databaseEntities['Credential'])
+        let credential = await credentialRepository.findOneBy({ id: selectedCredentialId, workspaceId })
+        if (!credential) {
+            const workspaceSharedEntity = databaseEntities['WorkspaceShared']
+            if (!workspaceSharedEntity) throw new Error('Credential is not available in this workspace')
 
-        if (!credential) return {}
+            const sharedCredential = await appDataSource.getRepository(workspaceSharedEntity).findOneBy({
+                workspaceId,
+                sharedItemId: selectedCredentialId,
+                itemType: 'credential'
+            })
+            if (sharedCredential) {
+                credential = await credentialRepository.findOneBy({ id: selectedCredentialId })
+            }
+        }
+
+        if (!credential) throw new Error('Credential is not available in this workspace')
 
         // Decrypt credentialData
         const decryptedCredentialData = await decryptCredentialData(credential.encryptedData)
 
         return decryptedCredentialData
-    } catch (e) {
-        throw new Error(e)
+    } catch (error) {
+        if (error instanceof Error && error.message === 'Credential is not available in this workspace') throw error
+        throw new Error('Failed to load credential data')
     }
 }
 
@@ -1446,6 +1459,8 @@ export const normalizeKeysRecursively = (data: any): any => {
     return data
 }
 
+export type OAuth2CredentialRefreshCapability = (credentialId: string) => Promise<ICommonObject>
+
 /**
  * Check if OAuth2 token is expired and refresh if needed
  * @param {string} credentialId
@@ -1460,9 +1475,13 @@ export const refreshOAuth2Token = async (
     options: ICommonObject,
     bufferTimeMs: number = 5 * 60 * 1000
 ): Promise<ICommonObject> => {
-    // Check if token is expired and refresh if needed
-    if (credentialData.expires_at) {
+    // Check if token is expired and refresh if needed. An explicit but invalid
+    // expiry cannot be treated as a non-expiring credential.
+    if (Object.prototype.hasOwnProperty.call(credentialData, 'expires_at')) {
         const expiryTime = new Date(credentialData.expires_at)
+        if (!Number.isFinite(expiryTime.getTime())) {
+            throw new Error('OAuth credential expiry is invalid. Please re-authorize the credential.')
+        }
         const currentTime = new Date()
 
         if (currentTime.getTime() > expiryTime.getTime() - bufferTimeMs) {
@@ -1471,38 +1490,16 @@ export const refreshOAuth2Token = async (
             }
 
             try {
-                // Import fetch dynamically to avoid issues
-                const fetch = (await import('node-fetch')).default
+                const refreshCredential = options.refreshOAuth2Credential as OAuth2CredentialRefreshCapability | undefined
+                if (typeof refreshCredential !== 'function') throw new Error('OAuth credential refresh capability is unavailable')
 
-                // Call the refresh API endpoint
-                const refreshResponse = await fetch(
-                    `${options.baseURL || 'http://localhost:3000'}/api/v1/oauth2-credential/refresh/${credentialId}`,
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        }
-                    }
-                )
-
-                if (!refreshResponse.ok) {
-                    const errorData = await refreshResponse.text()
-                    throw new Error(`Failed to refresh token: ${refreshResponse.status} ${refreshResponse.statusText} - ${errorData}`)
+                const updatedCredentialData = await refreshCredential(credentialId)
+                if (!updatedCredentialData || typeof updatedCredentialData !== 'object' || Array.isArray(updatedCredentialData)) {
+                    throw new Error('OAuth credential refresh capability returned invalid data')
                 }
-
-                await refreshResponse.json()
-
-                // Get the updated credential data
-                const updatedCredentialData = await getCredentialData(credentialId, options)
-
                 return updatedCredentialData
-            } catch (error) {
-                console.error('Failed to refresh access token:', error)
-                throw new Error(
-                    `Failed to refresh access token: ${
-                        error instanceof Error ? error.message : 'Unknown error'
-                    }. Please re-authorize the credential.`
-                )
+            } catch {
+                throw new Error('Failed to refresh access token. Please re-authorize the credential.')
             }
         }
     }

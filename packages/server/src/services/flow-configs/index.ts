@@ -5,6 +5,7 @@ import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import chatflowsService from '../chatflows'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { getErrorMessage } from '../../errors/utils'
+import { decorateComponentCredentials } from '../component-metadata-localization'
 
 const getSingleFlowConfig = async (chatflowId: string, workspaceId: string): Promise<any> => {
     try {
@@ -16,7 +17,7 @@ const getSingleFlowConfig = async (chatflowId: string, workspaceId: string): Pro
         const flowData = chatflow.flowData
         const parsedFlowData: IReactFlowObject = JSON.parse(flowData)
         const nodes = parsedFlowData.nodes
-        const dbResponse = findAvailableConfigs(nodes, appServer.nodesPool.componentCredentials)
+        const dbResponse = findAvailableConfigs(nodes, decorateComponentCredentials(appServer.nodesPool.componentCredentials))
         return dbResponse
     } catch (error) {
         throw new InternalFlowiseError(

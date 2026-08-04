@@ -22,6 +22,7 @@ module.exports = {
     PrimaryColumn: decorator,
     CreateDateColumn: decorator,
     UpdateDateColumn: decorator,
+    VersionColumn: decorator,
     Index: decorator,
     ManyToOne: decorator,
     OneToMany: decorator,

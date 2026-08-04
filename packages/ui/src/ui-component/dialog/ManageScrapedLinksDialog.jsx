@@ -24,6 +24,7 @@ import { BackdropLoader } from '@/ui-component/loading/BackdropLoader'
 
 import scraperApi from '@/api/scraper'
 
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 
 import {
@@ -69,7 +70,7 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
             if (fetchLinksResp.data) {
                 setSelectedLinks(fetchLinksResp.data.links)
                 enqueueSnackbar({
-                    message: 'Successfully fetched links',
+                    message: '已成功获取链接',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -83,7 +84,7 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                message: `获取链接失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -134,7 +135,7 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
             aria-describedby='manage-scraped-links-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='manage-scraped-links-dialog-title'>
-                {dialogProps.title || `Manage Scraped Links - ${url}`}
+                {dialogProps.title || `管理抓取链接 - ${url}`}
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ mb: 4 }}>
@@ -158,12 +159,12 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
                             variant='contained'
                             onClick={handleFetchLinks}
                         >
-                            Fetch Links
+                            获取链接
                         </Button>
                     </Stack>
                 </Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-                    <Typography sx={{ fontWeight: 500 }}>Scraped Links</Typography>
+                    <Typography sx={{ fontWeight: 500 }}>已抓取链接</Typography>
                     <Box sx={{ width: 'auto', flexGrow: 1 }}>
                         <IconButton
                             sx={{ height: 30, width: 30, marginLeft: '8px' }}
@@ -179,11 +180,11 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
                             sx={{ height: 'max-content', width: 'max-content' }}
                             variant='outlined'
                             color='error'
-                            title='Clear All Links'
+                            title='清除全部链接'
                             onClick={handleRemoveAllLinks}
                             startIcon={<IconEraser />}
                         >
-                            Clear All
+                            全部清除
                         </Button>
                     ) : null}
                 </Box>
@@ -229,7 +230,7 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
                         </PerfectScrollbar>
                     ) : (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Typography sx={{ my: 2 }}>Links scraped from the URL will appear here</Typography>
+                            <Typography sx={{ my: 2 }}>从 URL 抓取的链接将显示在这里</Typography>
                         </div>
                     )}
                 </>
@@ -237,7 +238,7 @@ const ManageScrapedLinksDialog = ({ show, dialogProps, onCancel, onSave }) => {
             <DialogActions>
                 <Button onClick={onCancel}>取消</Button>
                 <StyledButton variant='contained' onClick={handleSaveLinks}>
-                    Save
+                    保存
                 </StyledButton>
             </DialogActions>
         </Dialog>

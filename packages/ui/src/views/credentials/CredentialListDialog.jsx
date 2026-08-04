@@ -10,6 +10,7 @@ import { IconSearch, IconX } from '@tabler/icons-react'
 import { baseURL } from '@/store/constant'
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 import keySVG from '@/assets/images/key.svg'
+import { getMetadataDisplayText } from '@/utils/componentMetadataDisplay'
 
 const CredentialListDialog = ({ show, dialogProps, onCancel, onCredentialSelected }) => {
     const portalElement = document.getElementById('portal')
@@ -22,7 +23,12 @@ const CredentialListDialog = ({ show, dialogProps, onCancel, onCredentialSelecte
         setSearchValue(value)
         setTimeout(() => {
             if (value) {
-                const searchData = dialogProps.componentsCredentials.filter((crd) => crd.name.toLowerCase().includes(value.toLowerCase()))
+                const normalizedSearch = value.toLowerCase()
+                const searchData = dialogProps.componentsCredentials.filter((credential) =>
+                    [credential.name, credential.label, credential.displayLabel]
+                        .filter(Boolean)
+                        .some((text) => text.toLowerCase().includes(normalizedSearch))
+                )
                 setComponentsCredentials(searchData)
             } else if (value === '') {
                 setComponentsCredentials(dialogProps.componentsCredentials)
@@ -86,7 +92,7 @@ const CredentialListDialog = ({ show, dialogProps, onCancel, onCredentialSelecte
                                         color: theme.palette.grey[900]
                                     }
                                 }}
-                                title='Clear Search'
+                                title='清除搜索'
                             >
                                 <IconX
                                     stroke={1.5}
@@ -100,7 +106,7 @@ const CredentialListDialog = ({ show, dialogProps, onCancel, onCredentialSelecte
                         }
                         aria-describedby='search-helper-text'
                         inputProps={{
-                            'aria-label': 'weight'
+                            'aria-label': '搜索凭据'
                         }}
                     />
                 </Box>
@@ -155,7 +161,7 @@ const CredentialListDialog = ({ show, dialogProps, onCancel, onCredentialSelecte
                                         borderRadius: '50%',
                                         objectFit: 'contain'
                                     }}
-                                    alt={componentCredential.name}
+                                    alt={getMetadataDisplayText(componentCredential, 'label', componentCredential.name)}
                                     src={`${baseURL}/api/v1/components-credentials-icon/${componentCredential.name}`}
                                     onError={(e) => {
                                         e.target.onerror = null
@@ -164,7 +170,7 @@ const CredentialListDialog = ({ show, dialogProps, onCancel, onCredentialSelecte
                                     }}
                                 />
                             </div>
-                            <Typography>{componentCredential.label}</Typography>
+                            <Typography>{getMetadataDisplayText(componentCredential, 'label', componentCredential.label)}</Typography>
                         </ListItemButton>
                     ))}
                 </List>

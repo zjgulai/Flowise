@@ -27,6 +27,7 @@ jest.mock('@/infrastructure/store', () => ({
 
 // Mock core utilities
 jest.mock('@/core', () => ({
+    ...jest.requireActual('@/core'),
     getNodeColor: jest.fn((name: string) => (name === 'nodeA' ? '#ff0000' : '#00ff00')),
     getUniqueNodeId: jest.fn((_data: NodeData, _nodes: FlowNode[]) => 'new-node-1'),
     getUniqueNodeLabel: jest.fn((_data: NodeData, _nodes: FlowNode[]) => 'New Node 1'),
@@ -80,6 +81,68 @@ describe('useFlowHandlers', () => {
             })
         )
     }
+
+    it('sanitizes schema display metadata for drag and connect callbacks while preserving runtime and edge payloads', () => {
+        const rootDisplayLabel = '<img src=x onerror="globalThis.pwned=true">'
+        const runtimePayload = {
+            displayLabel: 'legitimate runtime display label',
+            nested: { displayDescription: 'legitimate runtime description' }
+        }
+        const edgePayload = {
+            displayLabel: 'legitimate edge display label',
+            nested: { displayDescription: 'legitimate edge description' }
+        }
+        const sourceNode = makeFlowNode('a', { data: { id: 'a', name: 'nodeA', label: 'Node A' } })
+        sourceNode.data = {
+            ...sourceNode.data,
+            displayLabel: rootDisplayLabel,
+            displayLocale: 'zh-CN',
+            inputParams: [
+                {
+                    id: 'a-input-payload-json',
+                    name: 'payload',
+                    label: 'Payload',
+                    displayLabel: '载荷',
+                    type: 'json',
+                    default: { displayLabel: 'legitimate schema default value' }
+                }
+            ],
+            inputs: { payload: runtimePayload }
+        }
+        const existingEdge = makeFlowEdge('b', 'a', { id: 'existing-edge' })
+        existingEdge.data = edgePayload
+        nodes = [sourceNode, makeFlowNode('b')]
+        edges = [existingEdge]
+
+        const assertPersistenceBoundary = (flow: FlowData) => {
+            const emittedNodeData = flow.nodes.find((node) => node.id === 'a')!.data
+            const emittedExistingEdge = flow.edges.find((edge) => edge.id === 'existing-edge')
+
+            expect(emittedNodeData.displayLabel).toBeUndefined()
+            expect(emittedNodeData.displayLocale).toBeUndefined()
+            expect(emittedNodeData.inputParams?.[0].displayLabel).toBeUndefined()
+            expect(emittedNodeData.inputParams?.[0].default).toEqual({
+                displayLabel: 'legitimate schema default value'
+            })
+            expect(emittedNodeData.inputs?.payload).toEqual(runtimePayload)
+            expect(emittedExistingEdge?.data).toEqual(edgePayload)
+            expect(sourceNode.data.displayLabel).toBe(rootDisplayLabel)
+        }
+
+        const { result } = renderUseFlowHandlers()
+        const draggedNodes = [{ id: 'a', position: { x: 200, y: 300 } }] as Node[]
+
+        act(() => {
+            result.current.handleNodeDragStop({} as React.MouseEvent, draggedNodes[0], draggedNodes)
+        })
+        assertPersistenceBoundary(onFlowChange.mock.calls[0][0] as FlowData)
+
+        onFlowChange.mockClear()
+        act(() => {
+            result.current.handleConnect({ source: 'a', target: 'b', sourceHandle: null, targetHandle: null })
+        })
+        assertPersistenceBoundary(onFlowChange.mock.calls[0][0] as FlowData)
+    })
 
     describe('handleConnect', () => {
         it('should call onFlowChange synchronously with updated edges and viewport', () => {
@@ -165,6 +228,23 @@ describe('useFlowHandlers', () => {
                 expect.objectContaining({
                     edges: expect.arrayContaining([
                         expect.objectContaining({ data: expect.objectContaining({ edgeLabel: 'proceed', isHumanInput: true }) })
+                    ])
+                })
+            )
+        })
+
+        it('should persist the raw reject machine label for the second human-input branch', () => {
+            nodes = [makeFlowNode('h', { data: { id: 'h', name: 'humanInputAgentflow', label: 'Human Input' } }), makeFlowNode('b')]
+            const { result } = renderUseFlowHandlers()
+
+            act(() => {
+                result.current.handleConnect({ source: 'h', target: 'b', sourceHandle: 'h-output-1', targetHandle: null })
+            })
+
+            expect(onFlowChange).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    edges: expect.arrayContaining([
+                        expect.objectContaining({ data: expect.objectContaining({ edgeLabel: 'reject', isHumanInput: true }) })
                     ])
                 })
             )

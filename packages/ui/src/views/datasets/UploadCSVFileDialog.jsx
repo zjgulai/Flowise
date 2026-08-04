@@ -22,14 +22,15 @@ import datasetApi from '@/api/dataset'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // const
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
-const CSVFORMAT = `Only the first 2 columns will be considered:
+const CSVFORMAT = `仅处理前两列：
 ----------------------------
-| Input      | Output      |
+| 输入       | 输出       |
 ----------------------------
-| test input | test output |
+| 示例输入   | 示例输出   |
 ----------------------------
 `
 
@@ -81,7 +82,7 @@ const UploadCSVFileDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             const createResp = await datasetApi.createDatasetRow(obj)
             if (createResp.data) {
                 enqueueSnackbar({
-                    message: 'New Row added for the given Dataset',
+                    message: '数据集条目已添加',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -96,9 +97,7 @@ const UploadCSVFileDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to add new row in the Dataset: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `添加数据集条目失败：${getErrorMessage(error)}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -144,14 +143,14 @@ const UploadCSVFileDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                             }}
                         />
                     </div>
-                    {'Upload Items to [' + datasetName + '] Dataset'}
+                    {'向数据集“' + datasetName + '”批量上传条目'}
                 </div>
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ p: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
                         <Typography>
-                            Upload CSV
+                            上传 CSV
                             <TooltipWithParser style={{ mb: 1, mt: 2 }} title={`<pre>${CSVFORMAT}</pre>`} />
                         </Typography>
                         <div style={{ flexGrow: 1 }}></div>
@@ -160,13 +159,11 @@ const UploadCSVFileDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                         disabled={false}
                         fileType='.csv'
                         onChange={(newValue) => setSelectedFile(newValue)}
-                        value={selectedFile ?? 'Choose a file to upload'}
+                        value={selectedFile ?? ''}
+                        placeholder='选择要上传的 CSV 文件'
+                        buttonText='上传 CSV 文件'
                     />
-                    <SwitchInput
-                        value={firstRowHeaders}
-                        onChange={setFirstRowHeaders}
-                        label={'Treat First Row as headers in the upload file?'}
-                    />
+                    <SwitchInput value={firstRowHeaders} onChange={setFirstRowHeaders} label='将上传文件的首行作为表头' />
                 </Box>
             </DialogContent>
             <DialogActions>

@@ -1,7 +1,7 @@
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
 import moment from 'moment/moment'
 import * as PropTypes from 'prop-types'
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 
 // material-ui
@@ -34,6 +34,7 @@ import ConfirmDialog from '@/ui-component/dialog/ConfirmDialog'
 import TablePagination, { DEFAULT_ITEMS_PER_PAGE } from '@/ui-component/pagination/TablePagination'
 import { Available } from '@/ui-component/rbac/available'
 import APIKeyDialog from './APIKeyDialog'
+import { getPermissionDisplayLabel } from './permissionLabels'
 
 // API
 import apiKeyApi from '@/api/apikey'
@@ -44,6 +45,7 @@ import useApi from '@/hooks/useApi'
 import useConfirm from '@/hooks/useConfirm'
 
 // utils
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 
 // Icons
@@ -110,7 +112,7 @@ function APIKeyRow(props) {
                         }}
                     >
                         <Typography variant='h6' sx={{ pl: 1, pr: 1, color: 'white', background: props.theme.palette.success.dark }}>
-                            Copied!
+                            已复制
                         </Typography>
                     </Popover>
                 </StyledTableCell>
@@ -128,12 +130,7 @@ function APIKeyRow(props) {
                                 WebkitBoxOrient: 'vertical'
                             }}
                         >
-                            {permissions.map((d, key) => (
-                                <React.Fragment key={key}>
-                                    {d}
-                                    {', '}
-                                </React.Fragment>
-                            ))}
+                            {permissions.map(getPermissionDisplayLabel).join('，')}
                         </Typography>
                     </Stack>
                 </StyledTableCell>
@@ -145,7 +142,7 @@ function APIKeyRow(props) {
                         </IconButton>
                     )}
                 </StyledTableCell>
-                <StyledTableCell>{moment(props.apiKey.createdAt).format('MMMM Do, YYYY')}</StyledTableCell>
+                <StyledTableCell>{moment(props.apiKey.createdAt).format('YYYY-MM-DD')}</StyledTableCell>
                 <Available permission={'apikeys:update,apikeys:create'}>
                     <StyledTableCell>
                         <IconButton title='编辑' color='primary' onClick={props.onEditClick}>
@@ -166,11 +163,11 @@ function APIKeyRow(props) {
                     <StyledTableCell sx={{ p: 2 }} colSpan={7}>
                         <Collapse in={open} timeout='auto' unmountOnExit>
                             <Box sx={{ borderRadius: 2, border: 1, borderColor: theme.palette.grey[900] + 25, overflow: 'hidden' }}>
-                                <Table aria-label='chatflow table'>
+                                <Table aria-label='关联聊天流列表'>
                                     <TableHead sx={{ height: 48 }}>
                                         <TableRow>
-                                            <StyledTableCell sx={{ width: '30%' }}>Chatflow Name</StyledTableCell>
-                                            <StyledTableCell sx={{ width: '20%' }}>Modified On</StyledTableCell>
+                                            <StyledTableCell sx={{ width: '30%' }}>聊天流名称</StyledTableCell>
+                                            <StyledTableCell sx={{ width: '20%' }}>修改时间</StyledTableCell>
                                             <StyledTableCell sx={{ width: '50%' }}>分类</StyledTableCell>
                                         </TableRow>
                                     </TableHead>
@@ -178,7 +175,7 @@ function APIKeyRow(props) {
                                         {props.apiKey.chatFlows.map((flow, index) => (
                                             <TableRow key={index}>
                                                 <StyledTableCell>{flow.flowName}</StyledTableCell>
-                                                <StyledTableCell>{moment(flow.updatedDate).format('MMMM Do, YYYY')}</StyledTableCell>
+                                                <StyledTableCell>{moment(flow.updatedDate).format('YYYY-MM-DD')}</StyledTableCell>
                                                 <StyledTableCell>
                                                     &nbsp;
                                                     {flow.category &&
@@ -285,8 +282,8 @@ const APIKey = () => {
         const dialogProp = {
             title: '添加新 API 密钥',
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加',
             customBtnId: 'btn_confirmAddingApiKey'
         }
         setDialogProps(dialogProp)
@@ -295,10 +292,10 @@ const APIKey = () => {
 
     const edit = (key) => {
         const dialogProp = {
-            title: 'Edit API Key',
+            title: '编辑 API 密钥',
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             customBtnId: 'btn_confirmEditingApiKey',
             key
         }
@@ -308,13 +305,13 @@ const APIKey = () => {
 
     const deleteKey = async (key) => {
         const confirmPayload = {
-            title: `Delete`,
+            title: '删除 API 密钥',
             description:
                 key.chatFlows.length === 0
-                    ? `Delete key [${key.keyName}] ? `
-                    : `Delete key [${key.keyName}] ?\n There are ${key.chatFlows.length} chatflows using this key.`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel',
+                    ? `确定删除 API 密钥“${key.keyName}”吗？`
+                    : `确定删除 API 密钥“${key.keyName}”吗？\n当前有 ${key.chatFlows.length} 个聊天流正在使用此密钥。`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消',
             customBtnId: 'btn_initiateDeleteApiKey'
         }
         const isConfirmed = await confirm(confirmPayload)
@@ -324,7 +321,7 @@ const APIKey = () => {
                 const deleteResp = await apiKeyApi.deleteAPI(key.id)
                 if (deleteResp.data) {
                     enqueueSnackbar({
-                        message: 'API key deleted',
+                        message: 'API 密钥已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -339,9 +336,7 @@ const APIKey = () => {
                 }
             } catch (error) {
                 enqueueSnackbar({
-                    message: `Failed to delete API key: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `删除 API 密钥失败：${getErrorMessage(error, '未知错误')}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -389,9 +384,9 @@ const APIKey = () => {
                         <ViewHeader
                             onSearchChange={onSearchChange}
                             search={true}
-                            searchPlaceholder='Search API Keys'
-                            title='API密钥'
-                            description='Flowise API & SDK authentication keys'
+                            searchPlaceholder='搜索 API 密钥'
+                            title='API 密钥'
+                            description='用于 Flowise API 与 SDK 身份验证的密钥'
                         >
                             <StyledPermissionButton
                                 permissionId={'apikeys:create'}
@@ -401,7 +396,7 @@ const APIKey = () => {
                                 startIcon={<IconPlus />}
                                 id='btn_createApiKey'
                             >
-                                Create Key
+                                创建密钥
                             </StyledPermissionButton>
                         </ViewHeader>
                         {!isLoading && apiKeys?.length <= 0 ? (
@@ -410,7 +405,7 @@ const APIKey = () => {
                                     <img
                                         style={{ objectFit: 'cover', height: '20vh', width: 'auto' }}
                                         src={APIEmptySVG}
-                                        alt='APIEmptySVG'
+                                        alt='暂无 API 密钥'
                                     />
                                 </Box>
                                 <div>暂无 API 密钥</div>
@@ -421,7 +416,7 @@ const APIKey = () => {
                                     sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }}
                                     component={Paper}
                                 >
-                                    <Table sx={{ minWidth: 650 }} aria-label='simple table'>
+                                    <Table sx={{ minWidth: 650 }} aria-label='API 密钥列表'>
                                         <TableHead
                                             sx={{
                                                 backgroundColor: customization.isDarkMode
@@ -431,11 +426,11 @@ const APIKey = () => {
                                             }}
                                         >
                                             <TableRow>
-                                                <StyledTableCell>Key Name</StyledTableCell>
-                                                <StyledTableCell>API Key</StyledTableCell>
+                                                <StyledTableCell>密钥名称</StyledTableCell>
+                                                <StyledTableCell>API 密钥</StyledTableCell>
                                                 <StyledTableCell>权限</StyledTableCell>
-                                                <StyledTableCell>使用</StyledTableCell>
-                                                <StyledTableCell>已更新</StyledTableCell>
+                                                <StyledTableCell>关联聊天流</StyledTableCell>
+                                                <StyledTableCell>创建时间</StyledTableCell>
                                                 <Available permission={'apikeys:update,apikeys:create'}>
                                                     <StyledTableCell> </StyledTableCell>
                                                 </Available>

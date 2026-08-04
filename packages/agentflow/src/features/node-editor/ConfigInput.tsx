@@ -8,7 +8,7 @@ import { IconSettings } from '@tabler/icons-react'
 import { type AsyncInputProps, NodeInputHandler } from '@/atoms'
 import { getDefaultValueForType } from '@/core/primitives'
 import type { InputParam, NodeData } from '@/core/types'
-import { evaluateFieldVisibility, initNode } from '@/core/utils'
+import { createMetadataDisplayView, evaluateFieldVisibility, getMetadataDisplayText, initNode } from '@/core/utils'
 import { useApiContext } from '@/infrastructure/store'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -156,7 +156,11 @@ export function ConfigInput({
 
                 // initNode with isAgentflow=false so it doesn't create agentflow output anchors
                 const initialized = initNode(nodeDefn, `${currentSelection}_0`, false)
-                setConfigNodeData(initialized)
+                setConfigNodeData({
+                    ...initialized,
+                    inputParams: createMetadataDisplayView(nodeDefn.inputs ?? initialized.inputParams),
+                    label: getMetadataDisplayText(nodeDefn, 'label', initialized.label)
+                })
 
                 // Persist initial config to parent
                 const paramDefs = (initialized.inputParams ?? []) as InputParam[]
@@ -210,7 +214,7 @@ export function ConfigInput({
                 <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ background: 'transparent' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
                         <IconSettings stroke={1.5} size='1.3rem' />
-                        <Typography sx={{ ml: 1 }}>{configNodeData.label} Parameters</Typography>
+                        <Typography sx={{ ml: 1 }}>{configNodeData.label} 参数</Typography>
                     </Box>
                 </AccordionSummary>
                 <AccordionDetails>

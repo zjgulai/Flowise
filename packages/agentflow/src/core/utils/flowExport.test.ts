@@ -142,4 +142,64 @@ describe('generateExportFlowData', () => {
         expect(original.nodes[0].selected).toBe(true)
         expect(original.edges[0].selected).toBe(true)
     })
+
+    it('should strip render-only schema metadata while preserving runtime inputs and edge payloads', () => {
+        const runtimePayload = {
+            displayLabel: 'legitimate runtime display label',
+            nested: { displayDescription: 'legitimate runtime description' }
+        }
+        const edgePayload = {
+            displayLabel: 'legitimate edge display label',
+            nested: { displayDescription: 'legitimate edge description' }
+        }
+        const node = makeNode('a', {
+            data: {
+                id: 'a',
+                name: 'llm',
+                label: 'LLM',
+                displayLabel: '<img src=x onerror="globalThis.pwned=true">',
+                displayHint: 'render-only hint',
+                displayLocale: 'zh-CN',
+                inputParams: [
+                    {
+                        id: 'a-input-payload-json',
+                        name: 'payload',
+                        label: 'Payload',
+                        displayLabel: '载荷',
+                        displayWarning: 'render-only field warning',
+                        type: 'json',
+                        default: { displayLabel: 'legitimate schema default value' }
+                    }
+                ],
+                outputAnchors: [
+                    {
+                        id: 'a-output-output-string',
+                        name: 'output',
+                        label: 'Output',
+                        displayLabel: '输出',
+                        type: 'string'
+                    }
+                ],
+                inputs: { payload: runtimePayload }
+            } as FlowNode['data']
+        })
+        const edge = makeEdge('a', 'b', { id: 'edge-a-b', data: edgePayload })
+
+        const result = generateExportFlowData({ nodes: [node], edges: [edge] })
+        const exportedData = result.nodes[0].data
+
+        expect(exportedData.displayLabel).toBeUndefined()
+        expect(exportedData.displayHint).toBeUndefined()
+        expect(exportedData.displayLocale).toBeUndefined()
+        expect(exportedData.inputParams?.[0].displayLabel).toBeUndefined()
+        expect(exportedData.inputParams?.[0].displayWarning).toBeUndefined()
+        expect(exportedData.outputAnchors?.[0].displayLabel).toBeUndefined()
+        expect(exportedData.inputParams?.[0].default).toEqual({
+            displayLabel: 'legitimate schema default value'
+        })
+        expect(exportedData.inputs?.payload).toEqual(runtimePayload)
+        expect(result.edges[0].data).toEqual(edgePayload)
+        expect(node.data.displayLabel).toContain('onerror')
+        expect(node.data.inputParams?.[0].displayLabel).toBe('载荷')
+    })
 })

@@ -26,8 +26,11 @@ import ExpandedChunkDialog from './ExpandedChunkDialog'
 
 // API
 import nodesApi from '@/api/nodes'
-import documentStoreApi from '@/api/documentstore'
-import documentsApi from '@/api/documentstore'
+import documentStoreApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 
 // Const
 import { baseURL, gridSpacing } from '@/store/constant'
@@ -36,7 +39,9 @@ import { useError } from '@/store/context/ErrorContext'
 
 // Utils
 import { initNode, showHideInputParams } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
+import { createDocStoreInputView, getDocStoreComponentDisplayLabel } from './componentMetadataView'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -63,12 +68,12 @@ const LoaderConfigPreviewChunks = () => {
     const customization = useSelector((state) => state.customization)
     const navigate = useNavigate()
     const theme = useTheme()
-    const { error } = useError()
+    const { error, setError } = useError()
     const { hasAssignedWorkspace } = useAuth()
 
     const getNodeDetailsApi = useApi(nodesApi.getSpecificNode)
     const getNodesByCategoryApi = useApi(nodesApi.getNodesByCategory)
-    const getSpecificDocumentStoreApi = useApi(documentsApi.getSpecificDocumentStore)
+    const getSpecificDocumentStoreApi = useApi(documentStoreApi.getSpecificDocumentStore)
 
     const { storeId, name: docLoaderNodeName } = useParams()
 
@@ -87,6 +92,7 @@ const LoaderConfigPreviewChunks = () => {
     const [currentPreviewCount, setCurrentPreviewCount] = useState(0)
     const [previewChunkCount, setPreviewChunkCount] = useState(20)
     const [existingLoaderFromDocStoreTable, setExistingLoaderFromDocStoreTable] = useState()
+    const [versionToken, setVersionToken] = useState()
 
     const [showExpandedChunkDialog, setShowExpandedChunkDialog] = useState(false)
     const [expandedChunkDialogProps, setExpandedChunkDialogProps] = useState({})
@@ -148,17 +154,17 @@ const LoaderConfigPreviewChunks = () => {
                     !selectedDocumentLoader.inputs['FLOWISE_CREDENTIAL_ID']
                 ) {
                     canSubmit = false
-                    missingFields.push(inputParam.label || inputParam.name)
+                    missingFields.push(createDocStoreInputView(inputParam, getNodeDetailsApi.data)?.label || inputParam.name)
                 } else if (inputParam.type !== 'credential' && !selectedDocumentLoader.inputs[inputParam.name]) {
                     canSubmit = false
-                    missingFields.push(inputParam.label || inputParam.name)
+                    missingFields.push(createDocStoreInputView(inputParam, getNodeDetailsApi.data)?.label || inputParam.name)
                 }
             }
         }
         if (!canSubmit) {
             const fieldsList = missingFields.join(', ')
             enqueueSnackbar({
-                message: `Please fill in the following mandatory fields: ${fieldsList}`,
+                message: `请填写以下必填字段：${fieldsList}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'warning',
@@ -190,9 +196,7 @@ const LoaderConfigPreviewChunks = () => {
             } catch (error) {
                 setLoading(false)
                 enqueueSnackbar({
-                    message: `Failed to preview chunks: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `预览分块失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -212,11 +216,16 @@ const LoaderConfigPreviewChunks = () => {
             setLoading(true)
             const config = prepareConfig()
             try {
-                const saveResp = await documentStoreApi.saveProcessingLoader(config)
-                setLoading(false)
+                const saveResp = await documentStoreApi.saveProcessingLoader(config, requireDocumentStoreVersionToken(versionToken))
                 if (saveResp.data) {
+                    const savedVersionToken = requireDocumentStoreVersionToken(saveResp.data)
+                    setVersionToken(savedVersionToken)
+                    setExistingLoaderFromDocStoreTable((current) => ({ ...current, ...saveResp.data }))
+                    // Queue mode returns only an acceptance receipt. Do not treat the
+                    // save token (or job id) as the process result's advanced token.
+                    await documentStoreApi.processLoader(config, saveResp.data.id, savedVersionToken)
                     enqueueSnackbar({
-                        message: 'File submitted for processing. Redirecting to Document Store..',
+                        message: '文件已提交处理，即将返回文档库…',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -227,16 +236,27 @@ const LoaderConfigPreviewChunks = () => {
                             )
                         }
                     })
-                    // don't wait for the process to complete, redirect to document store
-                    documentStoreApi.processLoader(config, saveResp.data?.id)
                     navigate('/document-stores/' + storeId)
                 }
+                setLoading(false)
             } catch (error) {
                 setLoading(false)
+                if (isDocumentStoreVersionConflict(error)) {
+                    setVersionToken(undefined)
+                    try {
+                        const latestResponse = await documentStoreApi.getSpecificDocumentStore(storeId)
+                        setVersionToken(requireDocumentStoreVersionToken(latestResponse.data))
+                    } catch {
+                        setVersionToken(undefined)
+                    }
+                    enqueueSnackbar({
+                        message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                        options: { variant: 'warning' }
+                    })
+                    return
+                }
                 enqueueSnackbar({
-                    message: `Failed to process chunking: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `处理分块失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -294,10 +314,8 @@ const LoaderConfigPreviewChunks = () => {
     }
 
     useEffect(() => {
-        if (uuidValidate(docLoaderNodeName)) {
-            // this is a document store edit config
-            getSpecificDocumentStoreApi.request(storeId)
-        } else {
+        getSpecificDocumentStoreApi.request(storeId)
+        if (!uuidValidate(docLoaderNodeName)) {
             getNodeDetailsApi.request(docLoaderNodeName)
         }
 
@@ -335,7 +353,7 @@ const LoaderConfigPreviewChunks = () => {
 
             // Set options
             const options = getNodesByCategoryApi.data.map((splitter) => ({
-                label: splitter.label,
+                label: getDocStoreComponentDisplayLabel(splitter, splitter.label),
                 name: splitter.name
             }))
             options.unshift({ label: '无', name: 'none' })
@@ -365,6 +383,13 @@ const LoaderConfigPreviewChunks = () => {
             const workspaceId = getSpecificDocumentStoreApi.data.workspaceId
             if (!hasAssignedWorkspace(workspaceId)) {
                 navigate('/unauthorized')
+                return
+            }
+            try {
+                setVersionToken(requireDocumentStoreVersionToken(getSpecificDocumentStoreApi.data))
+            } catch (versionError) {
+                setVersionToken(undefined)
+                setError(versionError)
                 return
             }
             if (getSpecificDocumentStoreApi.data?.loaders.length > 0) {
@@ -397,11 +422,11 @@ const LoaderConfigPreviewChunks = () => {
                                 }}
                             >
                                 <Box sx={{ display: 'flex', alignItems: 'center', flexDirection: 'row' }}>
-                                    <StyledFab size='small' color='secondary' aria-label='back' title='返回' onClick={() => navigate(-1)}>
+                                    <StyledFab size='small' color='secondary' aria-label='返回' title='返回' onClick={() => navigate(-1)}>
                                         <IconArrowLeft />
                                     </StyledFab>
                                     <Typography sx={{ ml: 2, mr: 2 }} variant='h3'>
-                                        {selectedDocumentLoader?.label}
+                                        {getDocStoreComponentDisplayLabel(getNodeDetailsApi.data, selectedDocumentLoader?.label)}
                                     </Typography>
                                     <div
                                         style={{
@@ -424,7 +449,10 @@ const LoaderConfigPreviewChunks = () => {
                                                     borderRadius: '50%',
                                                     objectFit: 'contain'
                                                 }}
-                                                alt={selectedDocumentLoader?.name ?? 'docloader'}
+                                                alt={getDocStoreComponentDisplayLabel(
+                                                    getNodeDetailsApi.data,
+                                                    selectedDocumentLoader?.label ?? '文档加载器'
+                                                )}
                                                 src={`${baseURL}/api/v1/node-icon/${selectedDocumentLoader?.name}`}
                                             />
                                         ) : (
@@ -439,7 +467,7 @@ const LoaderConfigPreviewChunks = () => {
                                         sx={{ borderRadius: 2, height: '100%' }}
                                         startIcon={<IconDatabaseImport />}
                                     >
-                                        Process
+                                        处理
                                     </StyledButton>
                                 </Box>
                             </Toolbar>
@@ -461,8 +489,14 @@ const LoaderConfigPreviewChunks = () => {
                                                 size='small'
                                                 label={
                                                     selectedDocumentLoader?.label?.toLowerCase().includes('loader')
-                                                        ? selectedDocumentLoader.label + ' name'
-                                                        : selectedDocumentLoader?.label + ' Loader Name'
+                                                        ? getDocStoreComponentDisplayLabel(
+                                                              getNodeDetailsApi.data,
+                                                              selectedDocumentLoader.label
+                                                          ) + '名称'
+                                                        : getDocStoreComponentDisplayLabel(
+                                                              getNodeDetailsApi.data,
+                                                              selectedDocumentLoader?.label
+                                                          ) + '加载器名称'
                                                 }
                                                 value={loaderName}
                                                 onChange={(e) => setLoaderName(e.target.value)}
@@ -476,6 +510,7 @@ const LoaderConfigPreviewChunks = () => {
                                                     <DocStoreInputHandler
                                                         key={index}
                                                         inputParam={inputParam}
+                                                        componentMetadata={getNodeDetailsApi.data}
                                                         data={selectedDocumentLoader}
                                                         onNodeDataChange={handleDocumentLoaderDataChange}
                                                     />
@@ -486,7 +521,7 @@ const LoaderConfigPreviewChunks = () => {
                                                     <Typography sx={{ mr: 2 }} variant='h3'>
                                                         {(splitterOptions ?? []).find(
                                                             (splitter) => splitter.name === selectedTextSplitter?.name
-                                                        )?.label ?? 'Select Text Splitter'}
+                                                        )?.label ?? '选择文本分割器'}
                                                     </Typography>
                                                     <div
                                                         style={{
@@ -509,7 +544,7 @@ const LoaderConfigPreviewChunks = () => {
                                                                     borderRadius: '50%',
                                                                     objectFit: 'contain'
                                                                 }}
-                                                                alt={selectedTextSplitter?.name ?? 'textsplitter'}
+                                                                alt={selectedTextSplitter?.name ?? '文本分割器'}
                                                                 src={`${baseURL}/api/v1/node-icon/${selectedTextSplitter?.name}`}
                                                             />
                                                         ) : (
@@ -537,6 +572,9 @@ const LoaderConfigPreviewChunks = () => {
                                                         key={index}
                                                         data={selectedTextSplitter}
                                                         inputParam={inputParam}
+                                                        componentMetadata={(getNodesByCategoryApi.data ?? []).find(
+                                                            (splitter) => splitter.name === selectedTextSplitter.name
+                                                        )}
                                                         onNodeDataChange={handleTextSplitterDataChange}
                                                     />
                                                 ))}
@@ -600,13 +638,13 @@ const LoaderConfigPreviewChunks = () => {
                                                 >
                                                     <StyledFab
                                                         color='secondary'
-                                                        aria-label='preview'
+                                                        aria-label='预览分块'
                                                         title='预览'
                                                         variant='extended'
                                                         onClick={onPreviewChunks}
                                                     >
                                                         <IconEye style={{ marginRight: '5px' }} />
-                                                        Preview Chunks
+                                                        预览分块
                                                     </StyledFab>
                                                 </div>
                                             </div>
@@ -614,10 +652,10 @@ const LoaderConfigPreviewChunks = () => {
                                     {documentChunks && documentChunks.length > 0 && (
                                         <>
                                             <Typography sx={{ wordWrap: 'break-word', textAlign: 'left', mb: 2 }} variant='h3'>
-                                                {currentPreviewCount} of {totalChunks} Chunks
+                                                已预览 {currentPreviewCount} 个，共 {totalChunks} 个分块
                                             </Typography>
                                             <Box sx={{ mb: 3 }}>
-                                                <Typography>Show Chunks in Preview</Typography>
+                                                <Typography>在预览中显示分块</Typography>
                                                 <div style={{ display: 'flex', flexDirection: 'row' }}>
                                                     <OutlinedInput
                                                         size='small'
@@ -630,13 +668,13 @@ const LoaderConfigPreviewChunks = () => {
                                                     />
                                                     <StyledFab
                                                         color='secondary'
-                                                        aria-label='preview'
+                                                        aria-label='预览'
                                                         title='预览'
                                                         variant='extended'
                                                         onClick={onPreviewChunks}
                                                     >
                                                         <IconEye style={{ marginRight: '5px' }} />
-                                                        Preview
+                                                        预览
                                                     </StyledFab>
                                                 </div>
                                             </Box>
@@ -656,7 +694,7 @@ const LoaderConfigPreviewChunks = () => {
                                                                 <Card>
                                                                     <CardContent sx={{ p: 1 }}>
                                                                         <Typography sx={{ wordWrap: 'break-word', mb: 1 }} variant='h5'>
-                                                                            {`#${index + 1}. Characters: ${row.pageContent.length}`}
+                                                                            {`#${index + 1} · ${row.pageContent.length} 个字符`}
                                                                         </Typography>
                                                                         <Typography sx={{ wordWrap: 'break-word' }} variant='body2'>
                                                                             {row.pageContent}

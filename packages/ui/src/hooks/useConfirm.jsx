@@ -1,37 +1,22 @@
-import { useContext } from 'react'
+import { useContext, useEffect, useId, useRef } from 'react'
 import ConfirmContext from '@/store/context/ConfirmContext'
-import { HIDE_CONFIRM, SHOW_CONFIRM } from '@/store/actions'
 
-let resolveCallback
 const useConfirm = () => {
-    const [confirmState, dispatch] = useContext(ConfirmContext)
+    const context = useContext(ConfirmContext)
+    const ownerId = useId()
+    const ownerIdRef = useRef(`confirm-owner-${ownerId}`)
 
-    const closeConfirm = () => {
-        dispatch({
-            type: HIDE_CONFIRM
-        })
-    }
+    if (!context) throw new Error('useConfirm must be used within ConfirmContextProvider')
 
-    const onConfirm = () => {
-        closeConfirm()
-        resolveCallback(true)
-    }
+    const { activeRendererId, cancelOwnerRequests, registerRenderer, requestConfirm, settleRequest, state: confirmState } = context
 
-    const onCancel = () => {
-        closeConfirm()
-        resolveCallback(false)
-    }
-    const confirm = (confirmPayload) => {
-        dispatch({
-            type: SHOW_CONFIRM,
-            payload: confirmPayload
-        })
-        return new Promise((res) => {
-            resolveCallback = res
-        })
-    }
+    useEffect(() => () => cancelOwnerRequests(ownerIdRef.current), [cancelOwnerRequests])
 
-    return { confirm, onConfirm, onCancel, confirmState }
+    const onConfirm = () => settleRequest(confirmState.requestId, true)
+    const onCancel = () => settleRequest(confirmState.requestId, false)
+    const confirm = (confirmPayload) => requestConfirm(confirmPayload, ownerIdRef.current)
+
+    return { activeRendererId, confirm, onConfirm, onCancel, confirmState, registerRenderer }
 }
 
 export default useConfirm

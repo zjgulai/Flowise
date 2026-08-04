@@ -1,18 +1,28 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, it } from 'node:test'
+import { runInNewContext } from 'node:vm'
 
 import {
     APPROVED_SPECS,
     assertCleanupProcessSucceeded,
+    assertIsolatedChildEnvironment,
     assertLoopbackHttpUrl,
+    assertNoPackageEnvironmentFile,
+    buildAutNetworkGuardSupportSource,
     buildChildEnvironment,
+    buildCypressArguments,
     cleanupRunResources,
+    createAutWebSocketGuard,
+    enforceAutRequestPolicy,
     formatCleanupEvent,
     formatFailureEvent,
     isOwnedTempPath,
+    isAllowedAutRequestUrl,
     parseRunnerArgs,
     resolveFinalExitCode,
     toExitCode,
@@ -22,6 +32,7 @@ import {
 const approvedSpecs = APPROVED_SPECS
 const chatflowContinuitySpec = 'cypress/e2e/3-chatflows/chatflow-continuity.cy.js'
 const pcCoreContinuitySpec = 'cypress/e2e/4-pc-core/pc-core-continuity.cy.js'
+const tenModuleShellSpec = 'cypress/e2e/5-ten-module-shell/ten-module-shell.cy.js'
 
 const processGroupExists = (processGroupId) => {
     try {
@@ -49,15 +60,194 @@ describe('assertLoopbackHttpUrl', () => {
 
 describe('isolated child environment', () => {
     it('enables local owner provisioning only inside the isolated loopback harness', () => {
-        const environment = buildChildEnvironment({
+        const expected = {
             baseUrl: 'http://127.0.0.1:3010',
             runId: 'test-run',
             tempDirectory: '/safe/tmp/flowise-e2e-test-run'
-        })
+        }
+        const environment = buildChildEnvironment(expected)
 
         assert.equal(environment.ADMIN_ONLY_MODE, 'false')
         assert.equal(environment.FLOWISE_E2E_ISOLATED, '1')
         assert.equal(environment.APP_URL, 'http://127.0.0.1:3010')
+        assert.equal(environment.DATABASE_TYPE, 'sqlite')
+        assert.equal(environment.DATABASE_PATH, expected.tempDirectory)
+        assert.equal(environment.OFFLINE, 'true')
+        assert.equal(environment.SECRETKEY_PATH, expected.tempDirectory)
+        assert.equal(environment.NODE_OPTIONS, undefined)
+        assert.doesNotThrow(() => assertIsolatedChildEnvironment(environment, expected))
+    })
+
+    it('fails closed if a critical final value is polluted before spawn', () => {
+        const expected = {
+            baseUrl: 'http://127.0.0.1:3010',
+            runId: 'test-run',
+            tempDirectory: '/safe/tmp/flowise-e2e-test-run'
+        }
+        const criticalPollutions = [
+            ['DATABASE_TYPE', 'postgres'],
+            ['DATABASE_PATH', '/not-the-owned-temp-directory'],
+            ['OFFLINE', 'false'],
+            ['SECRETKEY_PATH', '/not-the-owned-temp-directory'],
+            ['APP_URL', 'https://remote.example.invalid'],
+            ['FLOWISE_E2E_ISOLATED', '0']
+        ]
+
+        for (const [key, value] of criticalPollutions) {
+            const environment = { ...buildChildEnvironment(expected), [key]: value }
+            assert.throws(
+                () => assertIsolatedChildEnvironment(environment, expected),
+                (error) => error.message === 'child-environment-isolation-failed' && !error.message.includes(value)
+            )
+        }
+
+        const environment = { ...buildChildEnvironment(expected), DATABASE_PASSWORD: 'must-not-leak' }
+        assert.throws(
+            () => assertIsolatedChildEnvironment(environment, expected),
+            (error) => error.message === 'child-environment-isolation-failed' && !error.message.includes('must-not-leak')
+        )
+    })
+})
+
+describe('package environment file guard', () => {
+    it('fails closed when packages/server/.env exists without exposing its path or contents', async () => {
+        const directory = await mkdtemp(path.join(os.tmpdir(), 'flowise-e2e-env-test-'))
+        const environmentFile = path.join(directory, '.env')
+        const sensitiveValue = 'DATABASE_PASSWORD=must-not-appear'
+
+        try {
+            await writeFile(environmentFile, sensitiveValue, { encoding: 'utf8', mode: 0o600 })
+            await assert.rejects(
+                assertNoPackageEnvironmentFile(environmentFile),
+                (error) =>
+                    error.message === 'local-environment-file-present' &&
+                    !error.message.includes(environmentFile) &&
+                    !error.message.includes(sensitiveValue)
+            )
+        } finally {
+            await rm(directory, { recursive: true, force: true })
+        }
+    })
+
+    it('accepts only a confirmed missing environment file and masks inspection failures', async () => {
+        await assert.doesNotReject(
+            assertNoPackageEnvironmentFile('/not-present', async () => {
+                throw Object.assign(new Error('sensitive filesystem detail'), { code: 'ENOENT' })
+            })
+        )
+        await assert.rejects(
+            assertNoPackageEnvironmentFile('/unreadable', async () => {
+                throw Object.assign(new Error('sensitive filesystem detail'), { code: 'EACCES' })
+            }),
+            (error) => error.message === 'local-environment-file-check-failed' && !error.message.includes('sensitive')
+        )
+    })
+})
+
+describe('AUT network isolation guard', () => {
+    const baseUrl = 'http://127.0.0.1:3010'
+
+    it('allows exact AUT HTTP and WebSocket endpoints plus browser-internal protocols', () => {
+        assert.equal(isAllowedAutRequestUrl(`${baseUrl}/api/v1/ping`, baseUrl), true)
+        assert.equal(isAllowedAutRequestUrl('ws://127.0.0.1:3010/socket.io', baseUrl), true)
+        assert.equal(isAllowedAutRequestUrl('data:text/plain,local', baseUrl), true)
+        assert.equal(isAllowedAutRequestUrl('blob:http://127.0.0.1:3010/local-id', baseUrl), true)
+    })
+
+    it('rejects external HTTP(S) and WebSocket requests even without Origin or Referer context', () => {
+        assert.equal(isAllowedAutRequestUrl('https://external.example.invalid/no-request-headers', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('http://127.0.0.1:3011/other-local-service', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('ws://external.example.invalid/socket', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('wss://external.example.invalid/socket', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('ws://127.0.0.1:3011/other-local-service', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('wss://127.0.0.1:3010/protocol-mismatch', baseUrl), false)
+        assert.equal(isAllowedAutRequestUrl('not a URL', baseUrl), false)
+
+        let destroyed = false
+        const requestWithoutHeaders = {
+            url: 'https://external.example.invalid/no-request-headers',
+            destroy() {
+                destroyed = true
+            }
+        }
+        assert.equal(enforceAutRequestPolicy(requestWithoutHeaders, baseUrl), false)
+        assert.equal(destroyed, true)
+    })
+
+    it('preserves native WebSocket behavior for the exact AUT and blocks external endpoints', () => {
+        class FakeWebSocket {
+            constructor(url, protocols) {
+                this.url = url
+                this.protocols = protocols
+            }
+        }
+
+        const GuardedWebSocket = createAutWebSocketGuard(FakeWebSocket, baseUrl)
+        const localSocket = new GuardedWebSocket('ws://127.0.0.1:3010/socket.io', ['flowise'])
+
+        assert.ok(localSocket instanceof FakeWebSocket)
+        assert.ok(localSocket instanceof GuardedWebSocket)
+        assert.equal(localSocket.url, 'ws://127.0.0.1:3010/socket.io')
+        assert.deepEqual(localSocket.protocols, ['flowise'])
+        for (const externalUrl of ['ws://external.example.invalid/socket', 'wss://external.example.invalid/socket']) {
+            assert.throws(
+                () => new GuardedWebSocket(externalUrl),
+                (error) =>
+                    error.message === 'External WebSocket blocked by authenticated E2E network policy' &&
+                    !error.message.includes(externalUrl)
+            )
+        }
+    })
+
+    it('injects the generated support guard into every Cypress launch', () => {
+        const supportFile = '/safe/tmp/flowise-e2e-run/network-guard-support.js'
+        const originalSupportFile = '/workspace/packages/server/cypress/support/e2e.ts'
+        const supportSource = buildAutNetworkGuardSupportSource({ baseUrl, originalSupportFile })
+        const args = buildCypressArguments({
+            browser: 'chrome',
+            specs: ['cypress/e2e/4-pc-core/pc-core-continuity.cy.js'],
+            supportFile
+        })
+
+        assert.match(supportSource, new RegExp(`import ${JSON.stringify(originalSupportFile)}`))
+        assert.match(supportSource, /Cypress\.on\('window:before:load'/)
+        assert.match(supportSource, /browserWindow\.WebSocket = createAutWebSocketGuard/)
+        assert.match(supportSource, /External WebSocket blocked by authenticated E2E network policy/)
+        assert.match(supportSource, /cy\.intercept\(\{ url: '\*\*', middleware: true \}/)
+        assert.match(supportSource, /request\.destroy\(\)/)
+        assert.doesNotMatch(supportSource, /request\.continue\(\)/)
+        assert.doesNotMatch(supportSource, /request\.headers|referer/i)
+
+        const cypressEvents = new Map()
+        runInNewContext(supportSource.replace(/^\s*import [^\n]+\n/, ''), {
+            beforeEach() {},
+            Cypress: {
+                on(event, callback) {
+                    cypressEvents.set(event, callback)
+                }
+            },
+            URL
+        })
+        class FakeWebSocket {}
+        const browserWindow = { WebSocket: FakeWebSocket }
+        cypressEvents.get('window:before:load')(browserWindow)
+        assert.ok(new browserWindow.WebSocket('ws://127.0.0.1:3010/socket') instanceof FakeWebSocket)
+        assert.throws(
+            () => new browserWindow.WebSocket('wss://external.example.invalid/socket'),
+            /External WebSocket blocked by authenticated E2E network policy/
+        )
+
+        assert.deepEqual(args, [
+            'exec',
+            'cypress',
+            'run',
+            '--config',
+            `supportFile=${supportFile}`,
+            '--spec',
+            'cypress/e2e/4-pc-core/pc-core-continuity.cy.js',
+            '--browser',
+            'chrome'
+        ])
     })
 })
 
@@ -103,10 +293,13 @@ describe('Chatflow continuity specification contract', () => {
         assert.match(source, /Cypress\.config\('baseUrl'\)/)
         assert.match(source, /Cypress\.env\('runId'\)/)
         assert.match(source, /afterEach\(/)
-        assert.match(source, /Chatflow saved/)
+        assert.match(source, /对话流程已保存/)
         assert.match(source, /returnToChatflows/)
         assert.match(source, /button\[title="返回"\]/)
         assert.match(source, /新增流程/)
+        assert.match(source, /button\[title="保存对话流程"\]/)
+        assert.match(source, /cy\.contains\('button', '删除'\)/)
+        assert.match(source, /cy\.contains\('\[role="tab"\]', '工具'\)/)
         assert.match(source, /cy\.visit\('\/canvas'\)/)
         assert.equal(source.match(/cy\.visit\(/g)?.length, 1)
         for (const lifecycleAlias of ['createChatflow', 'reopenChatflow', 'copyChatflow', 'deleteChatflow']) {
@@ -128,25 +321,210 @@ describe('PC core continuity specification contract', () => {
         }
         assert.match(source, /Cypress\.config\('baseUrl'\)/)
         assert.match(source, /Cypress\.env\('runId'\)/)
-        assert.match(source, /isPageInitiatedRequest/)
-        assert.match(source, /request\.headers\.origin/)
-        assert.match(source, /request\.headers\.referer/)
+        assert.match(source, /requestUrl\.origin !== baseUrl\.origin/)
+        assert.doesNotMatch(source, /request\.headers\.(?:origin|referer)/)
         assert.match(source, /afterEach\(/)
         assert.match(source, /createdChatflowIds/)
         assert.match(source, /createdDocumentStoreIds/)
+        assert.match(source, /\/api\/v1\/nodes\?client=agentflowv2/)
+        assert.match(source, /\/api\/v1\/components-credentials/)
+        assert.match(source, /displayLabel: '智能体'/)
+        assert.match(source, /'displayHint'/)
+        assert.match(source, /__metadataHintInjection/)
+        assert.match(source, /请确保已在大模型／智能体节点中启用记忆，以保留对话历史/)
+        assert.match(source, /application\/reactflow/)
+        assert.match(source, /assertFlowMetadataClean/)
+        assert.match(source, /button\[title="保存智能体流程"\]/)
         for (const forbiddenPath of ['prediction', 'chatmessage', 'vector', 'assistant', 'webhook']) {
             assert.match(source, new RegExp(forbiddenPath))
         }
     })
 })
 
-describe('isolated Chrome launch contract', () => {
-    it('disables browser translation traffic without weakening application origin checks', async () => {
-        const source = await readFile(new URL('../../cypress.config.ts', import.meta.url), 'utf8')
+describe('ten-module PC shell specification contract', () => {
+    it('keeps all production modules navigable, read-only, loopback-only, and console-clean', async () => {
+        assert.ok(APPROVED_SPECS.includes(tenModuleShellSpec))
+        const source = await readFile(new URL('../e2e/5-ten-module-shell/ten-module-shell.cy.js', import.meta.url), 'utf8')
 
-        assert.match(source, /before:browser:launch/)
-        assert.match(source, /--disable-features=Translate,TranslateUI/)
-        assert.match(source, /translate = \{ enabled: false \}/)
+        for (const route of [
+            '/chatflows',
+            '/agentflows',
+            '/executions',
+            '/assistants',
+            '/marketplaces',
+            '/tools',
+            '/document-stores',
+            '/credentials',
+            '/variables',
+            '/apikey'
+        ]) {
+            assert.match(source, new RegExp(route.replaceAll('/', '\\/')))
+        }
+        for (const title of ['对话流程', '智能体流程', '执行记录', '助手', '模板市场', '工具', '文档库', '凭据', '变量', 'API 密钥']) {
+            assert.match(source, new RegExp(title))
+        }
+        assert.match(source, /cy\.viewport\(1440, 1000\)/)
+        assert.match(source, /Cypress\.config\('baseUrl'\)/)
+        assert.match(source, /requestUrl\.origin !== baseUrl\.origin/)
+        assert.match(source, /unsafeMethods/)
+        assert.match(source, /application console errors/)
+        assert.match(source, /application console warnings/)
+        assert.match(source, /assertNoHorizontalOverflow/)
+        assert.match(source, /a\[href="\$\{route\}"\]/)
+        assert.equal(source.match(/cy\.visit\(/g)?.length, 1)
+        const earlyInterceptIndex = source.indexOf("cy.intercept({ url: '**', middleware: true }")
+        const loginIndex = source.indexOf('cy.loginAsLocalOwner()')
+        assert.ok(earlyInterceptIndex >= 0)
+        assert.ok(loginIndex >= 0)
+        assert.ok(earlyInterceptIndex < loginIndex)
+    })
+})
+
+describe('isolated Chrome launch contract', () => {
+    it('isolates browser background traffic without weakening application origin checks', async () => {
+        const configUrl = new URL('../../cypress.config.ts', import.meta.url)
+        const isolatedEnvironment = {
+            FLOWISE_E2E_ARTIFACTS_PATH: '/safe/tmp/flowise-e2e-chrome-contract',
+            FLOWISE_E2E_BASE_URL: 'http://127.0.0.1:3010',
+            FLOWISE_E2E_ISOLATED: '1',
+            FLOWISE_E2E_RUN_ID: 'chrome-contract'
+        }
+        const previousEnvironment = Object.fromEntries(Object.keys(isolatedEnvironment).map((key) => [key, process.env[key]]))
+
+        Object.assign(process.env, isolatedEnvironment)
+        let cypressConfigModule
+        try {
+            cypressConfigModule = await import(`${configUrl.href}?contract=${Date.now()}`)
+        } finally {
+            for (const [key, value] of Object.entries(previousEnvironment)) {
+                if (value === undefined) delete process.env[key]
+                else process.env[key] = value
+            }
+        }
+
+        const launchArguments = [
+            '--remote-debugging-port=1234',
+            '--disable-background-networking',
+            '--disable-background-networking',
+            '--disable-background-networking=false',
+            '-disable-background-networking=false',
+            '  --DISABLE-BACKGROUND-NETWORKING=false  ',
+            '--disable-domain-reliability',
+            '--disable-domain-reliability=false',
+            '/disable-domain-reliability=false',
+            '--disable-features=TranslateUI,CypressFeature',
+            '--disable-features=OptimizationHints,OtherFeature,TranslateUI',
+            '-disable-features=SingleDashFeature',
+            '/disable-features=SlashFeature',
+            '--gcm-checkin-url',
+            '--gcm-checkin-url=https://android.clients.google.com/checkin',
+            '-gcm-checkin-url=https://android.clients.google.com/checkin',
+            '/gcm-checkin-url=https://android.clients.google.com/checkin',
+            '  --GCM-CHECKIN-URL=https://android.clients.google.com/checkin  ',
+            '--no-sandbox',
+            '--no-sandbox=true',
+            '-no-sandbox',
+            '/no-sandbox=true',
+            '  -NO-SANDBOX  '
+        ]
+        const mergedArguments = cypressConfigModule.mergeChromiumIsolationArguments(launchArguments)
+        const hasSwitchKey = (argument, key) =>
+            ['--', '-', '/'].some((prefix) => argument === `${prefix}${key}` || argument.startsWith(`${prefix}${key}=`))
+        const expectedDisabledFeatures = [
+            'AutofillServerCommunication',
+            'CypressFeature',
+            'MediaRouter',
+            'OptimizationHints',
+            'OtherFeature',
+            'PrivacySandboxSettings4',
+            'SingleDashFeature',
+            'SlashFeature',
+            'Translate',
+            'TranslateUI'
+        ]
+
+        for (const requiredSwitch of ['disable-background-networking', 'disable-domain-reliability']) {
+            assert.deepEqual(
+                mergedArguments.filter((argument) => hasSwitchKey(argument, requiredSwitch)),
+                [`--${requiredSwitch}`]
+            )
+        }
+        assert.deepEqual(
+            mergedArguments.filter((argument) => hasSwitchKey(argument, 'disable-features')),
+            [`--disable-features=${expectedDisabledFeatures.join(',')}`]
+        )
+        assert.deepEqual(
+            mergedArguments.filter((argument) => hasSwitchKey(argument, 'gcm-checkin-url')),
+            ['--gcm-checkin-url=http://127.0.0.1:3010/__flowise-e2e__/chromium-gcm-checkin']
+        )
+        assert.throws(
+            () => cypressConfigModule.mergeChromiumIsolationArguments(launchArguments, 'https://127.0.0.1:3010'),
+            /Unsafe Chromium GCM check-in origin/
+        )
+        assert.ok(mergedArguments.includes('--remote-debugging-port=1234'))
+        assert.equal(
+            mergedArguments.some((argument) => hasSwitchKey(argument, 'no-sandbox')),
+            false
+        )
+        for (const dangerousSwitch of ['disable-web-security', 'host-resolver-rules', 'single-argument']) {
+            for (const prefix of ['--', '-', '/']) {
+                assert.throws(
+                    () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, `${prefix}${dangerousSwitch}`]),
+                    /Unsafe Chromium launch argument detected/
+                )
+                assert.throws(
+                    () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, `${prefix}${dangerousSwitch}=value`]),
+                    /Unsafe Chromium launch argument detected/
+                )
+                assert.throws(
+                    () =>
+                        cypressConfigModule.mergeChromiumIsolationArguments([
+                            ...launchArguments,
+                            `  ${prefix}${dangerousSwitch.toUpperCase()}=value  `
+                        ]),
+                    /Unsafe Chromium launch argument detected/
+                )
+            }
+        }
+        assert.throws(
+            () => cypressConfigModule.mergeChromiumIsolationArguments([...launchArguments, '  --  ']),
+            /Unsafe Chromium launch argument detected/
+        )
+
+        const registeredEvents = new Map()
+        const runtimeConfig = { env: {} }
+        cypressConfigModule.default.e2e.setupNodeEvents((event, callback) => registeredEvents.set(event, callback), runtimeConfig)
+        const launchOptions = {
+            args: launchArguments,
+            preferences: { default: { translate: { enabled: true } } }
+        }
+        const configuredLaunch = registeredEvents.get('before:browser:launch')({ family: 'chromium', name: 'chrome' }, launchOptions)
+
+        assert.deepEqual(configuredLaunch.args, mergedArguments)
+        assert.deepEqual(configuredLaunch.preferences.default.translate, { enabled: false })
+        for (const dangerousSwitch of ['disable-web-security', 'no-sandbox', 'host-resolver-rules', 'single-argument']) {
+            assert.equal(
+                configuredLaunch.args.some((argument) => hasSwitchKey(argument, dangerousSwitch)),
+                false
+            )
+        }
+        assert.equal(configuredLaunch.args.includes('--'), false)
+
+        const [configSource, pcCoreSource, tenModuleSource] = await Promise.all([
+            readFile(configUrl, 'utf8'),
+            readFile(new URL('../e2e/4-pc-core/pc-core-continuity.cy.js', import.meta.url), 'utf8'),
+            readFile(new URL('../e2e/5-ten-module-shell/ten-module-shell.cy.js', import.meta.url), 'utf8')
+        ])
+
+        assert.match(configSource, /before:browser:launch/)
+        assert.match(configSource, /translate = \{ enabled: false \}/)
+        for (const applicationSource of [pcCoreSource, tenModuleSource]) {
+            assert.match(applicationSource, /requestUrl\.origin !== baseUrl\.origin/)
+            assert.match(applicationSource, /chromiumGcmCheckinPath/)
+            assert.match(applicationSource, /application\/x-protobuf/)
+            assert.match(applicationSource, /Invalid Chromium GCM check-in request/)
+            assert.match(applicationSource, /request\.reply\(\{ statusCode: 503, body: '' \}\)/)
+        }
     })
 })
 

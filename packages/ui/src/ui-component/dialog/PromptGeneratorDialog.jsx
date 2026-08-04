@@ -8,31 +8,32 @@ import assistantsApi from '@/api/assistants'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction } from '@/store/actions'
 import { IconX, IconWand, IconArrowLeft, IconNotebook, IconLanguage, IconMail, IconCode, IconReport, IconWorld } from '@tabler/icons-react'
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import { LoadingButton } from '@mui/lab'
 
 const defaultInstructions = [
     {
-        text: 'Summarize a document',
+        text: '总结一份文档',
         img: <IconNotebook />
     },
     {
-        text: 'Translate the language',
+        text: '翻译内容',
         img: <IconLanguage />
     },
     {
-        text: 'Write me an email',
+        text: '撰写一封邮件',
         img: <IconMail />
     },
     {
-        text: 'Convert the code to another language',
+        text: '将代码转换为另一种语言',
         img: <IconCode />
     },
     {
-        text: 'Research and generate a report',
+        text: '调研并生成报告',
         img: <IconReport />
     },
     {
-        text: 'Plan a trip',
+        text: '规划一次旅行',
         img: <IconWorld />
     }
 ]
@@ -70,7 +71,7 @@ const AssistantPromptGenerator = ({ show, dialogProps, onCancel, onConfirm }) =>
         } catch (error) {
             setLoading(false)
             enqueueSnackbar({
-                message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                message: getErrorMessage(error, '生成指令失败，请稍后重试'),
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -143,7 +144,7 @@ const AssistantPromptGenerator = ({ show, dialogProps, onCancel, onConfirm }) =>
                             rows={12}
                             disabled={loading}
                             value={customAssistantInstruction}
-                            placeholder={'Describe your task here'}
+                            placeholder={'在此描述任务'}
                             onChange={(event) => setCustomAssistantInstruction(event.target.value)}
                         />
                     )}
@@ -168,7 +169,7 @@ const AssistantPromptGenerator = ({ show, dialogProps, onCancel, onConfirm }) =>
                             }}
                             startIcon={<IconWand size={20} />}
                         >
-                            Generate
+                            生成
                         </LoadingButton>
                     )}
                     {generatedInstruction && (
@@ -179,12 +180,12 @@ const AssistantPromptGenerator = ({ show, dialogProps, onCancel, onConfirm }) =>
                                 setGeneratedInstruction('')
                             }}
                         >
-                            Back
+                            返回
                         </Button>
                     )}
                     {generatedInstruction && (
                         <StyledButton variant='contained' onClick={() => onConfirm(generatedInstruction)}>
-                            Apply
+                            应用
                         </StyledButton>
                     )}
                 </DialogActions>

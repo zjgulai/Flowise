@@ -67,6 +67,7 @@ export const FALLBACK_TIMEZONE = 'UTC'
 
 /* Schedule batch size for processing schedules in batches */
 const SCHEDULE_BATCH_SIZE = 100
+const MAX_TRIGGER_LOG_DELETE_BATCH_SIZE = 500
 
 const createOrUpdateSchedule = async (input: CreateScheduleInput): Promise<ScheduleRecord> => {
     try {
@@ -406,32 +407,79 @@ const deleteTriggerLogs = async (
     logIds: string[]
 ): Promise<{ success: boolean; deletedLogs: number; deletedExecutions: number }> => {
     try {
-        if (!Array.isArray(logIds) || logIds.length === 0) {
+        if (!Array.isArray(logIds) || logIds.length > MAX_TRIGGER_LOG_DELETE_BATCH_SIZE) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid trigger log deletion request')
+        }
+        if (logIds.length === 0) {
             return { success: true, deletedLogs: 0, deletedExecutions: 0 }
         }
+
+        const scopedTargetId = typeof targetId === 'string' ? targetId.trim() : ''
+        const scopedWorkspaceId = typeof workspaceId === 'string' ? workspaceId.trim() : ''
+        if (!scopedTargetId || !scopedWorkspaceId) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Target and workspace IDs are required')
+        }
+
+        const normalizedLogIds: string[] = []
+        for (const id of logIds) {
+            const normalizedId = typeof id === 'string' ? id.trim() : ''
+            if (!normalizedId) {
+                throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid trigger log deletion request')
+            }
+            normalizedLogIds.push(normalizedId)
+        }
+        const requestedLogIds = [...new Set(normalizedLogIds)]
 
         const appServer = getRunningExpressApp()
-        const repo = appServer.AppDataSource.getRepository(ScheduleTriggerLog)
+        const deletionResult = await appServer.AppDataSource.transaction(async (manager) => {
+            const repo = manager.getRepository(ScheduleTriggerLog)
 
-        // Load first so we can extract executionIds before delete (and respect target/workspace scope).
-        const logs = await repo.find({ where: { id: In(logIds), targetId, workspaceId } })
-        if (logs.length === 0) {
-            return { success: true, deletedLogs: 0, deletedExecutions: 0 }
-        }
+            // Resolve the owned set and keep execution + log deletion in the same transaction.
+            const logs = await repo.find({
+                where: { id: In(requestedLogIds), targetId: scopedTargetId, workspaceId: scopedWorkspaceId }
+            })
+            if (logs.length === 0) {
+                return { success: true, deletedLogs: 0, deletedExecutions: 0 }
+            }
 
-        const executionIds = logs.map((l) => l.executionId).filter((id): id is string => !!id)
-        const idsToDelete = logs.map((l) => l.id)
+            const requestedLogIdSet = new Set(requestedLogIds)
+            const idsToDelete = [
+                ...new Set(logs.map((log) => log.id).filter((id): id is string => typeof id === 'string' && requestedLogIdSet.has(id)))
+            ]
+            if (idsToDelete.length === 0) {
+                return { success: true, deletedLogs: 0, deletedExecutions: 0 }
+            }
 
-        const result = await repo.delete({ id: In(idsToDelete) })
+            const executionIds = [
+                ...new Set(
+                    logs
+                        .map((log) => log.executionId)
+                        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+                        .map((id) => id.trim())
+                )
+            ]
+            let deletedExecutions = 0
+            if (executionIds.length > 0) {
+                const execResult = await executionsService.deleteExecutions(executionIds, scopedWorkspaceId, manager)
+                deletedExecutions = execResult.deletedCount ?? 0
+            }
 
-        let deletedExecutions = 0
-        if (executionIds.length > 0) {
-            const execResult = await executionsService.deleteExecutions(executionIds, workspaceId)
-            deletedExecutions = execResult.deletedCount ?? 0
-        }
+            const result = await repo.delete({
+                id: In(idsToDelete),
+                targetId: scopedTargetId,
+                workspaceId: scopedWorkspaceId
+            })
+            if (result.affected !== idsToDelete.length) {
+                throw new InternalFlowiseError(StatusCodes.CONFLICT, 'Trigger log deletion changed concurrently')
+            }
 
-        logger.debug(`[ScheduleService]: Deleted ${result.affected ?? 0} trigger logs and ${deletedExecutions} executions`)
-        return { success: true, deletedLogs: result.affected ?? 0, deletedExecutions }
+            return { success: true, deletedLogs: result.affected, deletedExecutions }
+        })
+
+        logger.debug(
+            `[ScheduleService]: Deleted ${deletionResult.deletedLogs} trigger logs and ${deletionResult.deletedExecutions} executions`
+        )
+        return deletionResult
     } catch (error) {
         if (error instanceof InternalFlowiseError) throw error
         throw new InternalFlowiseError(

@@ -29,6 +29,7 @@ import accountApi from '@/api/account.api'
 // hooks
 import useApi from '@/hooks/useApi'
 import { useConfig } from '@/store/context/ConfigContext'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // store
 import { store } from '@/store'
@@ -200,7 +201,7 @@ const WorkspaceSwitcher = () => {
             setShowWorkspaceUnavailableDialog(false)
 
             // Set error message and show error dialog
-            setErrorMessage(switchWorkspaceApi.error.message || 'Failed to switch workspace')
+            setErrorMessage(getErrorMessage(switchWorkspaceApi.error, '切换工作区失败，请稍后重试'))
             setShowErrorDialog(true)
         }
     }, [switchWorkspaceApi.error])
@@ -211,8 +212,8 @@ const WorkspaceSwitcher = () => {
                 store.dispatch(logoutSuccess())
                 window.location.href = logoutApi.data.redirectTo
             }
-        } catch (e) {
-            console.error(e)
+        } catch {
+            // Keep the current session state when a malformed logout response is received.
         }
     }, [logoutApi.data])
 
@@ -299,7 +300,7 @@ const WorkspaceSwitcher = () => {
                     <Stack spacing={2} alignItems='center'>
                         <CircularProgress />
                         <Typography variant='body1' style={{ color: 'white' }}>
-                            Switching workspace...
+                            正在切换工作区…
                         </Typography>
                     </Stack>
                 </DialogContent>
@@ -318,10 +319,8 @@ const WorkspaceSwitcher = () => {
             >
                 <DialogContent>
                     <Stack spacing={3}>
-                        <Typography variant='h5'>Workspace Unavailable</Typography>
-                        <Typography variant='body1'>
-                            Your current workspace is no longer available. Please select another workspace to continue.
-                        </Typography>
+                        <Typography variant='h5'>工作区不可用</Typography>
+                        <Typography variant='body1'>当前工作区已不可用，请选择其他工作区后继续。</Typography>
                         <Select
                             fullWidth
                             value=''
@@ -332,7 +331,7 @@ const WorkspaceSwitcher = () => {
                             displayEmpty
                         >
                             <MenuItem disabled value=''>
-                                <em>Select Workspace</em>
+                                <em>选择工作区</em>
                             </MenuItem>
                             {assignedWorkspaces.map((workspace, index) => (
                                 <MenuItem key={index} value={workspace.id}>
@@ -345,7 +344,7 @@ const WorkspaceSwitcher = () => {
                 {assignedWorkspaces.length === 0 && (
                     <DialogActions>
                         <Button onClick={handleLogout} variant='contained' color='primary'>
-                            Logout
+                            退出登录
                         </Button>
                     </DialogActions>
                 )}
@@ -365,18 +364,18 @@ const WorkspaceSwitcher = () => {
             >
                 <DialogContent>
                     <Stack spacing={3}>
-                        <Typography variant='h5'>Workspace Switch Error</Typography>
+                        <Typography variant='h5'>工作区切换失败</Typography>
                         <Typography variant='body1'>{errorMessage}</Typography>
                         {isEnterpriseLicensed && (
                             <Typography variant='body2' color='text.secondary'>
-                                Please contact your administrator for assistance.
+                                请联系管理员协助处理。
                             </Typography>
                         )}
                     </Stack>
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleLogout} variant='contained' color='primary'>
-                        Logout
+                        退出登录
                     </Button>
                 </DialogActions>
             </Dialog>

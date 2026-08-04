@@ -34,7 +34,14 @@ jest.mock('./constants', () => ({
     ]
 }))
 
-import { getOAuth2AllowedDomains, validateOAuth2Url, extractOAuth2TokenFields } from './oauth2Security'
+import {
+    getOAuth2AllowedDomains,
+    validateOAuth2Url,
+    validateStrictOAuth2Url,
+    extractOAuth2TokenFields,
+    normalizeOAuth2TokenResponse,
+    MAX_OAUTH2_TOKEN_LENGTH
+} from './oauth2Security'
 import { ALLOWED_OAUTH2_TOKEN_FIELDS, DEFAULT_ALLOWED_OAUTH2_DOMAINS } from './constants'
 
 const originalEnv = process.env
@@ -169,6 +176,24 @@ describe('validateOAuth2Url', () => {
     })
 })
 
+describe('validateStrictOAuth2Url', () => {
+    it('always requires HTTPS and the default allowlist when legacy security switches are disabled', () => {
+        process.env.OAUTH2_SECURITY_CHECK = 'false'
+
+        expect(validateStrictOAuth2Url('https://login.microsoftonline.com/token')).toBe('https://login.microsoftonline.com/token')
+        expect(() => validateStrictOAuth2Url('http://login.microsoftonline.com/token')).toThrow('OAuth2 endpoint is not allowed')
+        expect(() => validateStrictOAuth2Url('https://127.0.0.1/token')).toThrow('OAuth2 endpoint is not allowed')
+    })
+
+    it('allows explicitly configured HTTPS domains but rejects credentials and fragments', () => {
+        process.env.OAUTH2_ALLOWED_TOKEN_DOMAINS = 'idp.example.com'
+
+        expect(validateStrictOAuth2Url('https://auth.idp.example.com/token')).toBe('https://auth.idp.example.com/token')
+        expect(() => validateStrictOAuth2Url('https://user:password@idp.example.com/token')).toThrow('OAuth2 endpoint is not allowed')
+        expect(() => validateStrictOAuth2Url('https://idp.example.com/token#secret')).toThrow('OAuth2 endpoint is not allowed')
+    })
+})
+
 // ---------------------------------------------------------------------------
 // extractOAuth2TokenFields
 // ---------------------------------------------------------------------------
@@ -246,4 +271,28 @@ describe('extractOAuth2TokenFields', () => {
             expect(() => extractOAuth2TokenFields(42 as any)).toThrow('expected an object')
         })
     })
+})
+
+describe('normalizeOAuth2TokenResponse', () => {
+    it('requires a bounded string access token and normalizes a bounded expires_in', () => {
+        expect(normalizeOAuth2TokenResponse({ access_token: 'token', expires_in: '3600', provider_debug: 'discard' })).toEqual({
+            access_token: 'token',
+            expires_in: 3600
+        })
+        expect(() => normalizeOAuth2TokenResponse({ access_token: { secret: true } })).toThrow('OAuth2 token response is invalid')
+        expect(() => normalizeOAuth2TokenResponse({ access_token: 'x'.repeat(MAX_OAUTH2_TOKEN_LENGTH + 1) })).toThrow(
+            'OAuth2 token response is invalid'
+        )
+    })
+
+    it.each([0, -1, Number.POSITIVE_INFINITY, 10 * 365 * 24 * 60 * 60 + 1])('rejects invalid expires_in %s', (expires_in) => {
+        expect(() => normalizeOAuth2TokenResponse({ access_token: 'token', expires_in })).toThrow('OAuth2 token response is invalid')
+    })
+
+    it.each(['refresh_token', 'token_type', 'scope', 'id_token', 'granted_scope'])(
+        'requires optional %s to be a bounded string',
+        (field) => {
+            expect(() => normalizeOAuth2TokenResponse({ access_token: 'token', [field]: null })).toThrow('OAuth2 token response is invalid')
+        }
+    )
 })

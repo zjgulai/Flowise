@@ -1,12 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 
-import type { InputParam, NodeData } from '@/core/types'
+import type { InputParam, NodeData, NodeDataSchema } from '@/core/types'
 
 import { EditNodeDialog } from './EditNodeDialog'
 
 // --- Mocks ---
 const mockUpdateNodeData = jest.fn()
 const mockUpdateNodeInternals = jest.fn()
+let mockComponentNodes: NodeDataSchema[] = []
 
 jest.mock('reactflow', () => ({
     ...jest.requireActual('reactflow'),
@@ -17,7 +18,7 @@ const mockCleanupOrphanedEdges = jest.fn()
 
 jest.mock('@/infrastructure/store', () => ({
     useAgentflowContext: () => ({
-        state: { nodes: [], edges: [] },
+        state: { nodes: [], edges: [], componentNodes: mockComponentNodes },
         updateNodeData: mockUpdateNodeData
     }),
     useConfigContext: () => ({
@@ -338,6 +339,7 @@ describe('EditNodeDialog', () => {
 
     beforeEach(() => {
         jest.clearAllMocks()
+        mockComponentNodes = []
     })
 
     it('should return null when show is false', () => {
@@ -350,17 +352,31 @@ describe('EditNodeDialog', () => {
         expect(screen.getByText('My LLM Node')).toBeInTheDocument()
     })
 
+    it('should localize only the system-generated default node title and preserve custom titles', () => {
+        mockComponentNodes = [{ name: 'llmAgentflow', label: 'LLM', displayLabel: '大模型' } as NodeDataSchema]
+        const defaultLabelProps = {
+            ...defaultProps,
+            dialogProps: { ...defaultProps.dialogProps, data: { ...nodeData, label: 'LLM' } }
+        }
+        const { rerender } = render(<EditNodeDialog {...defaultLabelProps} />)
+
+        expect(screen.getByText('大模型')).toBeInTheDocument()
+
+        rerender(<EditNodeDialog {...defaultProps} />)
+        expect(screen.getByText('My LLM Node')).toBeInTheDocument()
+    })
+
     it('should display the edit pencil button when data has id', () => {
         render(<EditNodeDialog {...defaultProps} />)
-        expect(screen.getByTitle('Edit Name')).toBeInTheDocument()
+        expect(screen.getByTitle('编辑名称')).toBeInTheDocument()
     })
 
     it('should toggle to editing mode when pencil is clicked', () => {
         render(<EditNodeDialog {...defaultProps} />)
         // Click the icon inside the Avatar (event bubbles to Avatar's onClick)
         fireEvent.click(screen.getByTestId('icon-pencil'))
-        expect(screen.getByTitle('Save Name')).toBeInTheDocument()
-        expect(screen.getByTitle('Cancel')).toBeInTheDocument()
+        expect(screen.getByTitle('保存名称')).toBeInTheDocument()
+        expect(screen.getByTitle('取消')).toBeInTheDocument()
     })
 
     it('should save name on Enter key and call updateNodeData', () => {
@@ -376,7 +392,7 @@ describe('EditNodeDialog', () => {
         expect(mockUpdateNodeData).toHaveBeenCalledWith('node-1', { label: expect.any(String) })
         expect(mockUpdateNodeInternals).toHaveBeenCalledWith('node-1')
         // Should exit editing mode
-        expect(screen.queryByTitle('Save Name')).not.toBeInTheDocument()
+        expect(screen.queryByTitle('保存名称')).not.toBeInTheDocument()
     })
 
     it('should cancel editing on Escape key without saving', () => {
@@ -387,7 +403,7 @@ describe('EditNodeDialog', () => {
         fireEvent.keyDown(textField, { key: 'Escape' })
 
         expect(mockUpdateNodeData).not.toHaveBeenCalled()
-        expect(screen.queryByTitle('Save Name')).not.toBeInTheDocument()
+        expect(screen.queryByTitle('保存名称')).not.toBeInTheDocument()
     })
 
     it('should cancel editing on Cancel button click', () => {
@@ -398,7 +414,7 @@ describe('EditNodeDialog', () => {
         fireEvent.click(screen.getByTestId('icon-x'))
 
         expect(mockUpdateNodeData).not.toHaveBeenCalled()
-        expect(screen.queryByTitle('Save Name')).not.toBeInTheDocument()
+        expect(screen.queryByTitle('保存名称')).not.toBeInTheDocument()
     })
 
     it('should save name on Save button click', () => {
@@ -422,6 +438,42 @@ describe('EditNodeDialog', () => {
         }
         render(<EditNodeDialog {...propsWithHint} />)
         expect(screen.getByText('This is a helpful hint')).toBeInTheDocument()
+    })
+
+    it('should render the current component display hint without changing the saved raw hint', () => {
+        const rawHint = 'Configure the loop exit condition'
+        const localizedHint = '配置循环退出条件'
+        const dataWithRawHint = { ...nodeData, name: 'loopAgentflow', hint: rawHint }
+        mockComponentNodes = [
+            {
+                name: 'loopAgentflow',
+                label: 'Loop',
+                hint: rawHint,
+                displayHint: localizedHint
+            } as NodeDataSchema
+        ]
+
+        render(<EditNodeDialog {...defaultProps} dialogProps={{ ...defaultProps.dialogProps, data: dataWithRawHint }} />)
+
+        expect(screen.getByText(localizedHint)).toBeInTheDocument()
+        expect(screen.queryByText(rawHint)).not.toBeInTheDocument()
+        expect(dataWithRawHint.hint).toBe(rawHint)
+        expect(mockUpdateNodeData).not.toHaveBeenCalled()
+    })
+
+    it('should render the current component hint even when saved node data has no hint', () => {
+        mockComponentNodes = [
+            {
+                name: 'llmAgentflow',
+                label: 'LLM',
+                hint: 'Enable memory to preserve conversation history',
+                displayHint: '启用记忆以保留对话历史'
+            } as NodeDataSchema
+        ]
+
+        render(<EditNodeDialog {...defaultProps} />)
+
+        expect(screen.getByText('启用记忆以保留对话历史')).toBeInTheDocument()
     })
 
     it('should not render hint section when data.hint is absent', () => {

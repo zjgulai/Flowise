@@ -1,11 +1,10 @@
 import PropTypes from 'prop-types'
 import { Handle, Position, useUpdateNodeInternals } from 'reactflow'
-import { useEffect, useRef, useState, useContext } from 'react'
+import { useEffect, useRef, useState, useContext, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
 import { cloneDeep } from 'lodash'
 import showdown from 'showdown'
-import parser from 'html-react-parser'
 
 // material-ui
 import { useTheme, styled } from '@mui/material/styles'
@@ -65,6 +64,8 @@ import { TimePicker } from '@/ui-component/picker/TimePicker'
 import { WeekDaysPicker } from '@/ui-component/picker/WeekDaysPicker'
 import { MonthDaysPicker } from '@/ui-component/picker/MonthDaysPicker'
 import { DatePicker } from '@/ui-component/picker/DatePicker'
+import { SafeHTML } from '@/ui-component/safe/SafeHTML'
+import { Available } from '@/ui-component/rbac/available'
 
 import ToolDialog from '@/views/tools/ToolDialog'
 import AssistantDialog from '@/views/assistants/openai/AssistantDialog'
@@ -78,6 +79,7 @@ import CredentialInputHandler from './CredentialInputHandler'
 import InputHintDialog from '@/ui-component/dialog/InputHintDialog'
 import NvidiaNIMDialog from '@/ui-component/dialog/NvidiaNIMDialog'
 import PromptGeneratorDialog from '@/ui-component/dialog/PromptGeneratorDialog'
+import { getStateKeyOptions } from './stateKeyOptions'
 
 // API
 import assistantsApi from '@/api/assistants'
@@ -92,13 +94,21 @@ import {
     isValidConnection,
     getAvailableNodesForVariable
 } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
+import {
+    createMetadataDisplayView,
+    getMetadataDisplayText,
+    localizeOptionViews,
+    resolveCurrentMetadataItem
+} from '@/utils/componentMetadataDisplay'
 
 // const
 import { baseURL, FLOWISE_CREDENTIAL_ID } from '@/store/constant'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction, SET_CHATFLOW } from '@/store/actions'
 
 const EDITABLE_OPTIONS = ['selectedTool', 'selectedAssistant']
+const CREATEABLE_OPTIONS = ['selectedTool']
 
 const CustomWidthTooltip = styled(({ className, ...props }) => <Tooltip {...props} classes={{ popper: className }} />)({
     [`& .${tooltipClasses.tooltip}`]: {
@@ -141,7 +151,15 @@ const NodeInputHandler = ({
 }) => {
     const { id: chatflowIdFromParams } = useParams()
     const canvasChatflow = useSelector((state) => state.canvas.chatflow)
+    const componentNodes = useSelector((state) => state.canvas.componentNodes)
     const chatflowId = chatflowIdFromParams || canvasChatflow?.id
+    const componentMetadata = componentNodes.find((node) => node.name === data.name)
+    const displayInputParam = inputParam ? resolveCurrentMetadataItem(componentMetadata, inputParam, parentParamForArray) : undefined
+    const displayInputAnchor = inputAnchor ? resolveCurrentMetadataItem(componentMetadata, inputAnchor) : undefined
+    const renderInputParam = useMemo(
+        () => (inputParam ? createMetadataDisplayView(inputParam, displayInputParam ?? inputParam) : inputParam),
+        [displayInputParam, inputParam]
+    )
 
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
@@ -185,12 +203,12 @@ const NodeInputHandler = ({
             setWebhookSecretPlaintext(resp.data.webhookSecret)
             dispatch({ type: SET_CHATFLOW, chatflow: { ...canvasChatflow, webhookSecretConfigured: true } })
             enqueueSnackbar({
-                message: 'Webhook secret generated.',
+                message: 'Webhook 密钥已生成',
                 options: { key: new Date().getTime() + Math.random(), variant: 'success' }
             })
         } catch (error) {
             enqueueSnackbar({
-                message: error?.response?.data?.message || 'Failed to generate webhook secret.',
+                message: getErrorMessage(error, '生成 Webhook 密钥失败，请稍后重试'),
                 options: { key: new Date().getTime() + Math.random(), variant: 'error' }
             })
         }
@@ -203,12 +221,12 @@ const NodeInputHandler = ({
             setWebhookSecretPlaintext(null)
             dispatch({ type: SET_CHATFLOW, chatflow: { ...canvasChatflow, webhookSecretConfigured: false } })
             enqueueSnackbar({
-                message: 'Webhook secret removed.',
+                message: 'Webhook 密钥已移除',
                 options: { key: new Date().getTime() + Math.random(), variant: 'success' }
             })
         } catch (error) {
             enqueueSnackbar({
-                message: error?.response?.data?.message || 'Failed to remove webhook secret.',
+                message: getErrorMessage(error, '移除 Webhook 密钥失败，请稍后重试'),
                 options: { key: new Date().getTime() + Math.random(), variant: 'error' }
             })
         }
@@ -253,8 +271,8 @@ const NodeInputHandler = ({
             nodes: reactFlowInstance?.getNodes() || [],
             edges: reactFlowInstance?.getEdges() || [],
             nodeId: data.id,
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         if (inputParam.acceptVariable) {
             setExpandRichDialogProps(dialogProps)
@@ -270,8 +288,8 @@ const NodeInputHandler = ({
             data,
             inputParam,
             disabled,
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setConditionDialogProps(dialogProps)
         setShowConditionDialog(true)
@@ -297,8 +315,8 @@ const NodeInputHandler = ({
             relativeLinksMethod,
             limit,
             selectedLinks,
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setManageScrapedLinksDialogProps(dialogProps)
         setShowManageScrapedLinksDialog(true)
@@ -324,11 +342,13 @@ const NodeInputHandler = ({
     const getDataGridColDef = (columns, inputParam) => {
         const colDef = []
         for (const column of columns) {
+            const displayColumn = displayInputParam?.datagrid?.find((candidate) => candidate.field === column.field) ?? column
             const stateNode = reactFlowInstance ? reactFlowInstance.getNodes().find((node) => node.data.name === 'seqState') : null
             if (column.type === 'asyncSingleSelect' && column.loadMethod && column.loadMethod.includes('loadStateKeys')) {
+                let valueOptions = []
                 if (stateNode) {
-                    const tabParam = stateNode.data.inputParams.find((param) => param.tabIdentifier)
-                    if (tabParam && tabParam.tabs.length > 0) {
+                    const tabParam = stateNode.data.inputParams?.find((param) => param.tabIdentifier)
+                    if (tabParam?.tabs?.length > 0) {
                         const selectedTabIdentifier = tabParam.tabIdentifier
 
                         const selectedTab =
@@ -337,35 +357,17 @@ const NodeInputHandler = ({
                             tabParam.tabs[0].name
 
                         const datagridValues = stateNode.data.inputs[selectedTab]
-                        if (datagridValues) {
-                            try {
-                                const parsedDatagridValues = JSON.parse(datagridValues)
-                                const keys = Array.isArray(parsedDatagridValues)
-                                    ? parsedDatagridValues.map((item) => item.key)
-                                    : Object.keys(parsedDatagridValues)
-                                colDef.push({
-                                    ...column,
-                                    field: column.field,
-                                    headerName: column.headerName,
-                                    type: 'singleSelect',
-                                    editable: true,
-                                    valueOptions: keys
-                                })
-                            } catch (error) {
-                                console.error('Error parsing stateMemory', error)
-                            }
-                        }
+                        valueOptions = getStateKeyOptions(datagridValues)
                     }
-                } else {
-                    colDef.push({
-                        ...column,
-                        field: column.field,
-                        headerName: column.headerName,
-                        type: 'singleSelect',
-                        editable: true,
-                        valueOptions: []
-                    })
                 }
+                colDef.push({
+                    ...column,
+                    field: column.field,
+                    headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName),
+                    type: 'singleSelect',
+                    editable: true,
+                    valueOptions
+                })
             } else if (column.type === 'freeSolo') {
                 const preLoadOptions = []
                 if (column.loadMethod && column.loadMethod.includes('getPreviousMessages')) {
@@ -378,7 +380,7 @@ const NodeInputHandler = ({
                     for (const node of nodes) {
                         preLoadOptions.push({
                             value: `$${node.id}`,
-                            label: `Output from ${node.data.id}`
+                            label: `来自 ${node.data.id} 的输出`
                         })
                     }
                 }
@@ -394,21 +396,11 @@ const NodeInputHandler = ({
                                 tabParam.tabs[0].name
 
                             const datagridValues = stateNode.data.inputs[selectedTab]
-                            if (datagridValues) {
-                                try {
-                                    const parsedDatagridValues = JSON.parse(datagridValues)
-                                    const keys = Array.isArray(parsedDatagridValues)
-                                        ? parsedDatagridValues.map((item) => item.key)
-                                        : Object.keys(parsedDatagridValues)
-                                    for (const key of keys) {
-                                        preLoadOptions.push({
-                                            value: `$flow.state.${key}`,
-                                            label: `Value from ${key}`
-                                        })
-                                    }
-                                } catch (error) {
-                                    console.error('Error parsing stateMemory', error)
-                                }
+                            for (const key of getStateKeyOptions(datagridValues)) {
+                                preLoadOptions.push({
+                                    value: `$flow.state.${key}`,
+                                    label: `来自 ${key} 的值`
+                                })
                             }
                         }
                     }
@@ -416,7 +408,7 @@ const NodeInputHandler = ({
                 colDef.push({
                     ...column,
                     field: column.field,
-                    headerName: column.headerName,
+                    headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName),
                     renderEditCell: ({ id, field, value }) => {
                         // eslint-disable-next-line react-hooks/rules-of-hooks
                         const apiRef = useGridApiContext()
@@ -460,7 +452,10 @@ const NodeInputHandler = ({
                     }
                 })
             } else {
-                colDef.push(column)
+                colDef.push({
+                    ...column,
+                    headerName: getMetadataDisplayText(displayColumn, 'headerName', column.headerName)
+                })
             }
         }
         return colDef
@@ -479,11 +474,11 @@ const NodeInputHandler = ({
                 preLoadOptions.push({
                     name: `{{ ${node.data.id} }}`,
                     label: `{{ ${node.data.id} }}`,
-                    description: `Output from ${node.data.id}`
+                    description: `来自 ${node.data.id} 的输出`
                 })
             }
         }
-        return [...preLoadOptions, ...inputParam.options]
+        return [...preLoadOptions, ...localizeOptionViews(inputParam.options, displayInputParam?.options)]
     }
 
     const getTabValue = (inputParam) => {
@@ -566,21 +561,13 @@ const NodeInputHandler = ({
     }
 
     const addAsyncOption = (inputParamName) => {
-        if (inputParamName === 'selectedTool') {
-            setAsyncOptionEditDialogProps({
-                title: '添加新工具',
-                type: 'ADD',
-                cancelButtonName: '取消',
-                confirmButtonName: '添加'
-            })
-        } else if (inputParamName === 'selectedAssistant') {
-            setAsyncOptionEditDialogProps({
-                title: '添加新助手',
-                type: 'ADD',
-                cancelButtonName: '取消',
-                confirmButtonName: '添加'
-            })
-        }
+        if (!CREATEABLE_OPTIONS.includes(inputParamName)) return
+        setAsyncOptionEditDialogProps({
+            title: '添加新工具',
+            type: 'ADD',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加'
+        })
         setAsyncOptionEditDialog(inputParamName)
     }
 
@@ -618,8 +605,9 @@ const NodeInputHandler = ({
                 setAvailableChatModels(chatModels)
                 setAvailableChatModelsOptions(chatModelsOptions)
             }
-        } catch (error) {
-            console.error('Error loading chat models:', error)
+        } catch {
+            setAvailableChatModels([])
+            setAvailableChatModelsOptions([])
         }
     }
 
@@ -715,10 +703,9 @@ const NodeInputHandler = ({
                     })
                 }
             } catch (error) {
-                console.error('Error generating doc store tool desc', error)
                 setLoading(false)
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: getErrorMessage(error, '生成文档库工具描述失败，请稍后重试'),
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -763,10 +750,9 @@ const NodeInputHandler = ({
                     })
                 }
             } catch (error) {
-                console.error('Error generating doc store tool desc', error)
                 setLoading(false)
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: getErrorMessage(error, '生成文档库工具描述失败，请稍后重试'),
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -864,9 +850,14 @@ const NodeInputHandler = ({
                     </CustomWidthTooltip>
                     <Box sx={{ p: 2 }}>
                         <Typography>
-                            {inputAnchor.label}
+                            {getMetadataDisplayText(displayInputAnchor, 'label', inputAnchor.label)}
                             {!inputAnchor.optional && <span style={{ color: 'red' }}>&nbsp;*</span>}
-                            {inputAnchor.description && <TooltipWithParser style={{ marginLeft: 10 }} title={inputAnchor.description} />}
+                            {inputAnchor.description && (
+                                <TooltipWithParser
+                                    style={{ marginLeft: 10 }}
+                                    title={getMetadataDisplayText(displayInputAnchor, 'description', inputAnchor.description)}
+                                />
+                            )}
                         </Typography>
                     </Box>
                 </>
@@ -907,7 +898,7 @@ const NodeInputHandler = ({
                                         onClick={() => onShowPromptHubButtonClicked()}
                                         endIcon={<IconAutoFixHigh />}
                                     >
-                                        Langchain Hub
+                                        LangChain Hub
                                     </Button>
                                     <PromptLangsmithHubDialog
                                         promptType={inputParam.name}
@@ -935,9 +926,14 @@ const NodeInputHandler = ({
                         )}
                         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                             <Typography>
-                                {inputParam.label}
+                                {getMetadataDisplayText(displayInputParam, 'label', inputParam.label)}
                                 {!inputParam.optional && <span style={{ color: 'red' }}>&nbsp;*</span>}
-                                {inputParam.description && <TooltipWithParser style={{ marginLeft: 10 }} title={inputParam.description} />}
+                                {inputParam.description && (
+                                    <TooltipWithParser
+                                        style={{ marginLeft: 10 }}
+                                        title={getMetadataDisplayText(displayInputParam, 'description', inputParam.description)}
+                                    />
+                                )}
                             </Typography>
                             <div style={{ flexGrow: 1 }}></div>
                             {inputParam.hint && !isAdditionalParams && (
@@ -947,9 +943,9 @@ const NodeInputHandler = ({
                                         height: 25,
                                         width: 25
                                     }}
-                                    title={inputParam.hint.label}
+                                    title={getMetadataDisplayText(displayInputParam?.hint, 'label', inputParam.hint.label)}
                                     color='secondary'
-                                    onClick={() => onInputHintDialogClicked(inputParam.hint)}
+                                    onClick={() => onInputHintDialogClicked(renderInputParam.hint)}
                                 >
                                     <IconBulb />
                                 </IconButton>
@@ -960,11 +956,11 @@ const NodeInputHandler = ({
                                     color='secondary'
                                     variant='text'
                                     onClick={() => {
-                                        onInputHintDialogClicked(inputParam.hint)
+                                        onInputHintDialogClicked(renderInputParam.hint)
                                     }}
                                     startIcon={<IconBulb size={17} />}
                                 >
-                                    {inputParam.hint.label}
+                                    {getMetadataDisplayText(displayInputParam?.hint, 'label', inputParam.hint.label)}
                                 </Button>
                             )}
                             {inputParam.acceptVariable && inputParam.type === 'string' && (
@@ -973,22 +969,24 @@ const NodeInputHandler = ({
                                 </Tooltip>
                             )}
                             {inputParam.generateDocStoreDescription && (
-                                <IconButton
-                                    title='Generate knowledge base description'
-                                    sx={{
-                                        height: 25,
-                                        width: 25
-                                    }}
-                                    size='small'
-                                    color='secondary'
-                                    onClick={() => generateDocStoreToolDesc(data.inputs['documentStore'])}
-                                >
-                                    <IconWand />
-                                </IconButton>
+                                <Available permission='documentStores:upsert-config'>
+                                    <IconButton
+                                        title='生成知识库描述'
+                                        sx={{
+                                            height: 25,
+                                            width: 25
+                                        }}
+                                        size='small'
+                                        color='secondary'
+                                        onClick={() => generateDocStoreToolDesc(data.inputs['documentStore'])}
+                                    >
+                                        <IconWand />
+                                    </IconButton>
+                                </Available>
                             )}
                             {inputParam.generateInstruction && (
                                 <IconButton
-                                    title='Generate instructions'
+                                    title='生成说明'
                                     sx={{
                                         height: 25,
                                         width: 25,
@@ -1012,7 +1010,7 @@ const NodeInputHandler = ({
                                     title='展开'
                                     color='primary'
                                     onClick={() =>
-                                        onExpandDialogClicked(data.inputs[inputParam.name] ?? inputParam.default ?? '', inputParam)
+                                        onExpandDialogClicked(data.inputs[inputParam.name] ?? inputParam.default ?? '', renderInputParam)
                                     }
                                 >
                                     <IconArrowsMaximize />
@@ -1033,14 +1031,17 @@ const NodeInputHandler = ({
                                 }}
                             >
                                 <IconAlertTriangle size={30} color='orange' />
-                                <span style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}>{parser(inputParam.warning)}</span>
+                                <SafeHTML
+                                    html={getMetadataDisplayText(displayInputParam, 'warning', inputParam.warning)}
+                                    style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}
+                                />
                             </div>
                         )}
                         {inputParam.type === 'credential' && (
                             <CredentialInputHandler
                                 disabled={disabled}
                                 data={data}
-                                inputParam={inputParam}
+                                inputParam={renderInputParam}
                                 onSelect={(newValue) => {
                                     data.credential = newValue
                                     data.inputs[FLOWISE_CREDENTIAL_ID] = newValue // in case data.credential is not updated
@@ -1061,7 +1062,13 @@ const NodeInputHandler = ({
                                 >
                                     <TabsList>
                                         {inputParam.tabs.map((inputChildParam, index) => (
-                                            <Tab key={index}>{inputChildParam.label}</Tab>
+                                            <Tab key={index}>
+                                                {getMetadataDisplayText(
+                                                    displayInputParam?.tabs?.find((tab) => tab.name === inputChildParam.name),
+                                                    'label',
+                                                    inputChildParam.label
+                                                )}
+                                            </Tab>
                                         ))}
                                     </TabsList>
                                 </Tabs>
@@ -1085,7 +1092,9 @@ const NodeInputHandler = ({
                                 disabled={disabled}
                                 fileType={inputParam.fileType || '*'}
                                 onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
-                                value={data.inputs[inputParam.name] ?? inputParam.default ?? 'Choose a file to upload'}
+                                value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
+                                placeholder='选择要上传的文件'
+                                buttonText='上传文件'
                             />
                         )}
                         {inputParam.type === 'boolean' && (
@@ -1098,7 +1107,7 @@ const NodeInputHandler = ({
                         {inputParam.type === 'datagrid' && (
                             <DataGrid
                                 disabled={disabled}
-                                columns={getDataGridColDef(inputParam.datagrid, inputParam)}
+                                columns={getDataGridColDef(renderInputParam.datagrid, inputParam)}
                                 hideFooter={true}
                                 rows={data.inputs[inputParam.name] ?? JSON.stringify(inputParam.default) ?? []}
                                 onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
@@ -1115,7 +1124,7 @@ const NodeInputHandler = ({
                                                 setReloadTimestamp(Date.now().toString())
                                             }}
                                         >
-                                            See Example
+                                            查看示例
                                         </Button>
                                     )}
                                 </div>
@@ -1135,7 +1144,7 @@ const NodeInputHandler = ({
                                         height={inputParam.rows ? '100px' : '200px'}
                                         theme={customization.isDarkMode ? 'dark' : 'light'}
                                         lang={'js'}
-                                        placeholder={inputParam.placeholder}
+                                        placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                         onValueChange={(code) => (data.inputs[inputParam.name] = code)}
                                         basicSetup={{ highlightActiveLine: false, highlightActiveLineGutter: false }}
                                     />
@@ -1154,14 +1163,14 @@ const NodeInputHandler = ({
                                     readOnly: true,
                                     endAdornment: chatflowId ? (
                                         <InputAdornment position='end'>
-                                            <Tooltip title='Copy URL'>
+                                            <Tooltip title='复制 URL'>
                                                 <IconButton
                                                     size='small'
                                                     onClick={() => {
                                                         navigator.clipboard.writeText(webhookUrlBase).then(
                                                             () =>
                                                                 enqueueSnackbar({
-                                                                    message: 'URL copied!',
+                                                                    message: 'URL 已复制',
                                                                     options: {
                                                                         key: new Date().getTime() + Math.random(),
                                                                         variant: 'success'
@@ -1169,7 +1178,7 @@ const NodeInputHandler = ({
                                                                 }),
                                                             () =>
                                                                 enqueueSnackbar({
-                                                                    message: 'Failed to copy URL.',
+                                                                    message: '复制 URL 失败',
                                                                     options: { key: new Date().getTime() + Math.random(), variant: 'error' }
                                                                 })
                                                         )
@@ -1206,15 +1215,15 @@ const NodeInputHandler = ({
                                                 }
                                             }}
                                         >
-                                            Generate a secret below — without one, every incoming webhook request will be rejected.
+                                            请在下方生成密钥；未配置密钥时，系统将拒绝所有传入的 Webhook 请求。
                                         </Alert>
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                             <Typography variant='body2' sx={{ color: 'text.secondary', flexGrow: 1 }}>
-                                                No secret configured
+                                                尚未配置密钥
                                             </Typography>
                                             {chatflowId && (
                                                 <Button size='small' variant='outlined' onClick={handleSetWebhookSecret}>
-                                                    Generate Secret
+                                                    生成密钥
                                                 </Button>
                                             )}
                                         </Box>
@@ -1232,14 +1241,14 @@ const NodeInputHandler = ({
                                             endAdornment: (
                                                 <InputAdornment position='end' sx={{ gap: 0.5 }}>
                                                     {webhookSecretPlaintext && (
-                                                        <Tooltip title='Copy secret'>
+                                                        <Tooltip title='复制密钥'>
                                                             <IconButton
                                                                 size='small'
                                                                 onClick={() => {
                                                                     navigator.clipboard.writeText(webhookSecretPlaintext).then(
                                                                         () =>
                                                                             enqueueSnackbar({
-                                                                                message: 'Secret copied!',
+                                                                                message: '密钥已复制',
                                                                                 options: {
                                                                                     key: new Date().getTime() + Math.random(),
                                                                                     variant: 'success'
@@ -1247,7 +1256,7 @@ const NodeInputHandler = ({
                                                                             }),
                                                                         () =>
                                                                             enqueueSnackbar({
-                                                                                message: 'Failed to copy secret.',
+                                                                                message: '复制密钥失败',
                                                                                 options: {
                                                                                     key: new Date().getTime() + Math.random(),
                                                                                     variant: 'error'
@@ -1285,9 +1294,9 @@ const NodeInputHandler = ({
                             (window.location.href.includes('v2/agentcanvas') || window.location.href.includes('v2/marketplace')) ? (
                                 <RichInput
                                     key={data.inputs[inputParam.name]}
-                                    placeholder={inputParam.placeholder}
+                                    placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                     disabled={disabled}
-                                    inputParam={inputParam}
+                                    inputParam={renderInputParam}
                                     onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
                                     value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
                                     nodes={reactFlowInstance ? reactFlowInstance.getNodes() : []}
@@ -1297,9 +1306,9 @@ const NodeInputHandler = ({
                             ) : (
                                 <Input
                                     key={data.inputs[inputParam.name]}
-                                    placeholder={inputParam.placeholder}
+                                    placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                     disabled={disabled}
-                                    inputParam={inputParam}
+                                    inputParam={renderInputParam}
                                     onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
                                     value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
                                     nodes={[]}
@@ -1334,9 +1343,9 @@ const NodeInputHandler = ({
                                             }}
                                             variant='outlined'
                                             disabled={disabled}
-                                            onClick={() => onEditJSONClicked(data.inputs[inputParam.name] ?? '', inputParam)}
+                                            onClick={() => onEditJSONClicked(data.inputs[inputParam.name] ?? '', renderInputParam)}
                                         >
-                                            {inputParam.label}
+                                            {getMetadataDisplayText(displayInputParam, 'label', inputParam.label)}
                                         </Button>
                                         <FormatPromptValuesDialog
                                             show={showFormatPromptValuesDialog}
@@ -1385,12 +1394,14 @@ const NodeInputHandler = ({
                                         value={data.inputs[inputParam.name] ?? inputParam.default ?? 'choose an option'}
                                         freeSolo={inputParam.freeSolo}
                                         multiple={inputParam.type === 'asyncMultiOptions'}
-                                        isCreateNewOption={EDITABLE_OPTIONS.includes(inputParam.name)}
+                                        isCreateNewOption={CREATEABLE_OPTIONS.includes(inputParam.name)}
                                         onSelect={(newValue) => {
                                             if (inputParam.loadConfig) setReloadTimestamp(Date.now().toString())
                                             handleDataChange({ inputParam, newValue })
                                         }}
-                                        onCreateNew={() => addAsyncOption(inputParam.name)}
+                                        onCreateNew={
+                                            CREATEABLE_OPTIONS.includes(inputParam.name) ? () => addAsyncOption(inputParam.name) : undefined
+                                        }
                                     />
                                     {EDITABLE_OPTIONS.includes(inputParam.name) && data.inputs[inputParam.name] && (
                                         <IconButton
@@ -1419,7 +1430,7 @@ const NodeInputHandler = ({
                             <TimePicker
                                 disabled={disabled}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
-                                placeholder={inputParam.placeholder}
+                                placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                 onChange={(newValue) => handleDataChange({ inputParam, newValue })}
                             />
                         )}
@@ -1427,7 +1438,7 @@ const NodeInputHandler = ({
                             <WeekDaysPicker
                                 disabled={disabled}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
-                                options={inputParam.options}
+                                options={localizeOptionViews(inputParam.options, displayInputParam?.options)}
                                 onChange={(newValue) => handleDataChange({ inputParam, newValue })}
                             />
                         )}
@@ -1442,11 +1453,13 @@ const NodeInputHandler = ({
                             <DatePicker
                                 disabled={disabled}
                                 value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
-                                placeholder={inputParam.placeholder}
+                                placeholder={getMetadataDisplayText(displayInputParam, 'placeholder', inputParam.placeholder)}
                                 onChange={(newValue) => handleDataChange({ inputParam, newValue })}
                             />
                         )}
-                        {inputParam.type === 'array' && <ArrayRenderer inputParam={inputParam} data={data} disabled={disabled} />}
+                        {inputParam.type === 'array' && (
+                            <ArrayRenderer inputParam={inputParam} displayLabel={renderInputParam.label} data={data} disabled={disabled} />
+                        )}
                         {/* CUSTOM INPUT LOGIC */}
                         {inputParam.type.includes('conditionFunction') && (
                             <>
@@ -1460,7 +1473,7 @@ const NodeInputHandler = ({
                                     variant='outlined'
                                     onClick={() => onConditionDialogClicked(inputParam)}
                                 >
-                                    {inputParam.label}
+                                    {getMetadataDisplayText(displayInputParam, 'label', inputParam.label)}
                                 </Button>
                             </>
                         )}
@@ -1487,7 +1500,7 @@ const NodeInputHandler = ({
                                             )
                                         }
                                     >
-                                        Manage Links
+                                        管理链接
                                     </Button>
                                     <ManageScrapedLinksDialog
                                         show={showManageScrapedLinksDialog}

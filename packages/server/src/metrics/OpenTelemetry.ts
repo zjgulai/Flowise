@@ -1,10 +1,11 @@
-import { FLOWISE_METRIC_COUNTERS, IMetricsProvider } from '../Interface.Metrics'
+import { FLOWISE_METRIC_COUNTERS, IHttpRequestMetricObservation, IMetricsProvider } from '../Interface.Metrics'
 import { Resource } from '@opentelemetry/resources'
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions'
 import { MeterProvider, PeriodicExportingMetricReader, Histogram } from '@opentelemetry/sdk-metrics'
 import { diag, DiagLogLevel, DiagConsoleLogger, Attributes, Counter } from '@opentelemetry/api'
 import { getVersion } from 'flowise-components'
 import express from 'express'
+import { EARLY_HTTP_METRICS_OBSERVED } from '../middlewares/mcpRequestObservability'
 
 // Create a static map to track created metrics and prevent duplicates
 const createdMetrics = new Map<string, boolean>()
@@ -230,8 +231,14 @@ export class OpenTelemetry implements IMetricsProvider {
                     try {
                         if (res.locals.startEpoch) {
                             const responseTimeInMs = Date.now() - res.locals.startEpoch
-                            this.recordHttpRequest(req.method, req.path, res.statusCode)
-                            this.recordHttpRequestDuration(responseTimeInMs, req.method, req.path, res.statusCode)
+                            if (!res.locals[EARLY_HTTP_METRICS_OBSERVED]) {
+                                this.observeHttpRequest({
+                                    method: req.method,
+                                    route: req.path,
+                                    statusCode: res.statusCode,
+                                    durationMs: responseTimeInMs
+                                })
+                            }
                         }
                     } catch (error) {
                         console.error('Error in metrics middleware:', error)
@@ -242,6 +249,11 @@ export class OpenTelemetry implements IMetricsProvider {
         } catch (error) {
             console.error('Error setting up metrics endpoint:', error)
         }
+    }
+
+    public observeHttpRequest({ method, route, statusCode, durationMs }: IHttpRequestMetricObservation): void {
+        this.recordHttpRequest(method, route, statusCode)
+        this.recordHttpRequestDuration(durationMs, method, route, statusCode)
     }
 
     async incrementCounter(counter: string, payload: any): Promise<void> {

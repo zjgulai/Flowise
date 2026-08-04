@@ -14,6 +14,7 @@ import MainCard from '@/ui-component/cards/MainCard'
 
 // const
 import { flowContext } from '@/store/context/ReactFlowContext'
+import { resolveStickyNoteInputView } from '@/views/canvas/stickyNoteMetadata'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -35,11 +36,12 @@ const StyledNodeToolbar = styled(NodeToolbar)(({ theme }) => ({
 
 const StickyNote = ({ data }) => {
     const theme = useTheme()
+    const canvas = useSelector((state) => state.canvas)
     const customization = useSelector((state) => state.customization)
     const ref = useRef(null)
 
     const { reactFlowInstance, deleteNode, duplicateNode } = useContext(flowContext)
-    const [inputParam] = data.inputParams
+    const { inputParam, renderInputParam } = resolveStickyNoteInputView(data, canvas.componentNodes)
     const [isHovered, setIsHovered] = useState(false)
 
     const defaultColor = '#666666' // fallback color if data.color is not present
@@ -62,7 +64,7 @@ const StickyNote = ({ data }) => {
     return (
         <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
             <StyledNodeToolbar>
-                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
+                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='基础操作按钮组'>
                     <IconButton
                         size={'small'}
                         title='复制'
@@ -115,8 +117,7 @@ const StickyNote = ({ data }) => {
                 <Box>
                     <Input
                         key={data.id}
-                        placeholder={inputParam.placeholder}
-                        inputParam={inputParam}
+                        inputParam={renderInputParam}
                         onChange={(newValue) => (data.inputs[inputParam.name] = newValue)}
                         value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}
                         nodes={reactFlowInstance ? reactFlowInstance.getNodes() : []}

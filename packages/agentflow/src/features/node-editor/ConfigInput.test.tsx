@@ -76,7 +76,7 @@ describe('ConfigInput', () => {
             render(<ConfigInput data={makeParentData()} inputParam={makeInputParam()} onConfigChange={mockOnConfigChange} />)
 
             await waitFor(() => {
-                expect(screen.getByText('ChatAlibabaTongyi Parameters')).toBeTruthy()
+                expect(screen.getByText('ChatAlibabaTongyi 参数')).toBeTruthy()
             })
         })
 
@@ -234,7 +234,7 @@ describe('ConfigInput', () => {
             })
 
             // Expand the accordion
-            fireEvent.click(screen.getByText('ChatAlibabaTongyi Parameters'))
+            fireEvent.click(screen.getByText('ChatAlibabaTongyi 参数'))
 
             // Find and change the temperature field
             const temperatureInputs = screen.getAllByRole('spinbutton')

@@ -78,7 +78,10 @@ const getSingleNodeAsyncOptions = async (req: Request, res: Response, next: Next
         const body = req.body
         body.searchOptions = getWorkspaceSearchOptionsFromReq(req)
         const workspaceId = req.user?.activeWorkspaceId
-        const apiResponse = await nodesService.getSingleNodeAsyncOptions(req.params.name, body, workspaceId)
+        const apiResponse = await nodesService.getSingleNodeAsyncOptions(req.params.name, body, workspaceId, {
+            permissions: req.user?.permissions || [],
+            isOrganizationAdmin: req.user?.isOrganizationAdmin
+        })
         return res.json(apiResponse)
     } catch (error) {
         next(error)

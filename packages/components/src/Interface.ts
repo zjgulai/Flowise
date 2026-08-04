@@ -115,6 +115,11 @@ export interface INodeParams {
     generateInstruction?: boolean
     minItems?: number
     maxItems?: number
+    /**
+     * Marks a trusted component input as environment-local. Workspace export
+     * removes its value so a fresh target must explicitly rebind it.
+     */
+    workspaceExportPolicy?: 'rebind'
 }
 
 export interface INodeExecutionData {

@@ -5,9 +5,18 @@ import { getMulterStorage } from '../../utils'
 
 const router = express.Router()
 
-router.post(['/upsert/', '/upsert/:id'], getMulterStorage().array('files'), documentStoreController.upsertDocStoreMiddleware)
+router.post(
+    ['/upsert/', '/upsert/:id'],
+    checkPermission('documentStores:upsert-config'),
+    getMulterStorage().array('files'),
+    documentStoreController.upsertDocStoreMiddleware
+)
 
-router.post(['/refresh/', '/refresh/:id'], documentStoreController.refreshDocStoreMiddleware)
+router.post(
+    ['/refresh/', '/refresh/:id'],
+    checkPermission('documentStores:upsert-config'),
+    documentStoreController.refreshDocStoreMiddleware
+)
 
 /** Document Store Routes */
 // Create document store
@@ -21,7 +30,7 @@ router.get(
     documentStoreController.getDocumentStoreById
 )
 // Update documentStore
-router.put('/store/:id', checkAnyPermission('documentStores:create,documentStores:update'), documentStoreController.updateDocumentStore)
+router.put('/store/:id', checkPermission('documentStores:update'), documentStoreController.updateDocumentStore)
 // Delete documentStore
 router.delete('/store/:id', checkPermission('documentStores:delete'), documentStoreController.deleteDocumentStore)
 // Get document store configs
@@ -79,6 +88,11 @@ router.get('/components/recordmanager', checkPermission('documentStores:upsert-c
 router.post('/vectorstore/update', checkPermission('documentStores:upsert-config'), documentStoreController.updateVectorStoreConfigOnly)
 
 // generate docstore tool description
-router.post('/generate-tool-desc/:id', checkPermission('documentStores:view'), documentStoreController.generateDocStoreToolDesc)
+router.post(
+    '/generate-tool-desc/:id',
+    checkPermission('documentStores:upsert-config'),
+    checkPermission('credentials:view'),
+    documentStoreController.generateDocStoreToolDesc
+)
 
 export default router

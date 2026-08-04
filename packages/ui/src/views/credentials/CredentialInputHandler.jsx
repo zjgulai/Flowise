@@ -13,6 +13,7 @@ import { SensitiveInput } from '@/ui-component/input/SensitiveInput'
 import { SwitchInput } from '@/ui-component/switch/Switch'
 import { JsonEditorInput } from '@/ui-component/json/JsonEditor'
 import { TooltipWithParser } from '@/ui-component/tooltip/TooltipWithParser'
+import { getMetadataDisplayText, localizeOptionViews } from '@/utils/componentMetadataDisplay'
 
 // ===========================|| NodeInputHandler ||=========================== //
 
@@ -22,14 +23,24 @@ const CredentialInputHandler = ({ inputParam, data, disabled = false, onReveal }
 
     const [showExpandDialog, setShowExpandDialog] = useState(false)
     const [expandDialogProps, setExpandDialogProps] = useState({})
+    const displayInputParam = inputParam
+        ? {
+              ...inputParam,
+              label: getMetadataDisplayText(inputParam, 'label', inputParam.label),
+              description: getMetadataDisplayText(inputParam, 'description', inputParam.description),
+              warning: getMetadataDisplayText(inputParam, 'warning', inputParam.warning),
+              placeholder: getMetadataDisplayText(inputParam, 'placeholder', inputParam.placeholder),
+              options: localizeOptionViews(inputParam.options, inputParam.options)
+          }
+        : inputParam
 
     const onExpandDialogClicked = (value, inputParam) => {
         const dialogProp = {
             value,
             inputParam,
             disabled,
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setExpandDialogProps(dialogProp)
         setShowExpandDialog(true)
@@ -47,9 +58,11 @@ const CredentialInputHandler = ({ inputParam, data, disabled = false, onReveal }
                     <Box sx={{ p: 2 }}>
                         <div style={{ display: 'flex', flexDirection: 'row' }}>
                             <Typography>
-                                {inputParam.label}
+                                {displayInputParam.label}
                                 {!inputParam.optional && <span style={{ color: 'red' }}>&nbsp;*</span>}
-                                {inputParam.description && <TooltipWithParser style={{ marginLeft: 10 }} title={inputParam.description} />}
+                                {inputParam.description && (
+                                    <TooltipWithParser style={{ marginLeft: 10 }} title={displayInputParam.description} />
+                                )}
                             </Typography>
                             <div style={{ flexGrow: 1 }}></div>
                             {inputParam.type === 'string' && inputParam.rows && (
@@ -61,7 +74,9 @@ const CredentialInputHandler = ({ inputParam, data, disabled = false, onReveal }
                                     }}
                                     title='展开'
                                     color='primary'
-                                    onClick={() => onExpandDialogClicked(data[inputParam.name] ?? inputParam.default ?? '', inputParam)}
+                                    onClick={() =>
+                                        onExpandDialogClicked(data[inputParam.name] ?? inputParam.default ?? '', displayInputParam)
+                                    }
                                 >
                                     <IconArrowsMaximize />
                                 </IconButton>
@@ -80,7 +95,7 @@ const CredentialInputHandler = ({ inputParam, data, disabled = false, onReveal }
                                 }}
                             >
                                 <IconAlertTriangle size={36} color='orange' />
-                                <span style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}>{inputParam.warning}</span>
+                                <span style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}>{displayInputParam.warning}</span>
                             </div>
                         )}
 
@@ -94,7 +109,7 @@ const CredentialInputHandler = ({ inputParam, data, disabled = false, onReveal }
                         {(inputParam.type === 'url' || inputParam.type === 'password') && (
                             <SensitiveInput
                                 key={inputParam.name}
-                                inputParam={inputParam}
+                                inputParam={displayInputParam}
                                 value={data[inputParam.name] ?? inputParam.default ?? ''}
                                 onChange={(newValue) => (data[inputParam.name] = newValue)}
                                 disabled={disabled}
@@ -105,7 +120,7 @@ const CredentialInputHandler = ({ inputParam, data, disabled = false, onReveal }
                             <Input
                                 key={data[inputParam.name]}
                                 disabled={disabled}
-                                inputParam={inputParam}
+                                inputParam={displayInputParam}
                                 onChange={(newValue) => (data[inputParam.name] = newValue)}
                                 value={data[inputParam.name] ?? inputParam.default ?? ''}
                                 showDialog={showExpandDialog}
@@ -126,7 +141,7 @@ const CredentialInputHandler = ({ inputParam, data, disabled = false, onReveal }
                             <Dropdown
                                 disabled={disabled}
                                 name={inputParam.name}
-                                options={inputParam.options}
+                                options={displayInputParam.options}
                                 onSelect={(newValue) => (data[inputParam.name] = newValue)}
                                 value={data[inputParam.name] ?? inputParam.default ?? 'choose an option'}
                             />

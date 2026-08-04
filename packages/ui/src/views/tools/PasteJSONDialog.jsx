@@ -46,12 +46,12 @@ const PasteJSONDialog = ({ show, onCancel, onConfirm, customization }) => {
     const component = show ? (
         <Dialog fullWidth maxWidth='md' open={show} onClose={onCancel} aria-labelledby='paste-json-dialog-title'>
             <DialogTitle sx={{ fontSize: '1rem' }} id='paste-json-dialog-title'>
-                粘贴 JSON Schema
+                粘贴 JSON 架构
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ mt: 2 }}>
                     <Button variant='outlined' size='small' onClick={() => setJsonInput(exampleJSON)} sx={{ mb: 2 }}>
-                        See Example
+                        填入示例
                     </Button>
                     <CodeEditor
                         value={jsonInput}

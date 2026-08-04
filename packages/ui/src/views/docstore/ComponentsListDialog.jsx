@@ -12,6 +12,11 @@ import { IconSearch, IconX } from '@tabler/icons-react'
 import { baseURL } from '@/store/constant'
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 import useApi from '@/hooks/useApi'
+import {
+    getDocStoreComponentDisplayDescription,
+    getDocStoreComponentDisplayLabel,
+    matchesDocStoreComponentSearch
+} from './componentMetadataView'
 
 const ComponentsListDialog = ({ show, dialogProps, onCancel, apiCall, onSelected }) => {
     const portalElement = document.getElementById('portal')
@@ -28,7 +33,7 @@ const ComponentsListDialog = ({ show, dialogProps, onCancel, apiCall, onSelected
     }
 
     function filterFlows(data) {
-        return data?.name?.toLowerCase().indexOf(searchValue.toLowerCase()) > -1
+        return matchesDocStoreComponentSearch(data, searchValue)
     }
 
     useEffect(() => {
@@ -99,7 +104,7 @@ const ComponentsListDialog = ({ show, dialogProps, onCancel, apiCall, onSelected
                                         color: theme.palette.grey[900]
                                     }
                                 }}
-                                title='Clear Search'
+                                title='清除搜索'
                             >
                                 <IconX
                                     stroke={1.5}
@@ -113,7 +118,7 @@ const ComponentsListDialog = ({ show, dialogProps, onCancel, apiCall, onSelected
                         }
                         aria-describedby='search-helper-text'
                         inputProps={{
-                            'aria-label': 'weight'
+                            'aria-label': '搜索组件'
                         }}
                     />
                 </Box>
@@ -168,11 +173,27 @@ const ComponentsListDialog = ({ show, dialogProps, onCancel, apiCall, onSelected
                                         borderRadius: '50%',
                                         objectFit: 'contain'
                                     }}
-                                    alt={loader.name}
+                                    alt={getDocStoreComponentDisplayLabel(loader, loader.name)}
                                     src={`${baseURL}/api/v1/node-icon/${loader.name}`}
                                 />
                             </div>
-                            <Typography>{loader.label}</Typography>
+                            <Box sx={{ minWidth: 0 }}>
+                                <Typography variant='h5'>{getDocStoreComponentDisplayLabel(loader, loader.name)}</Typography>
+                                {getDocStoreComponentDisplayDescription(loader) && (
+                                    <Typography
+                                        variant='body2'
+                                        sx={{
+                                            color: customization.isDarkMode ? theme.palette.grey[400] : theme.palette.text.secondary,
+                                            display: '-webkit-box',
+                                            WebkitLineClamp: 2,
+                                            WebkitBoxOrient: 'vertical',
+                                            overflow: 'hidden'
+                                        }}
+                                    >
+                                        {getDocStoreComponentDisplayDescription(loader)}
+                                    </Typography>
+                                )}
+                            </Box>
                         </ListItemButton>
                     ))}
                 </List>

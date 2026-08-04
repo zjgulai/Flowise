@@ -3,13 +3,31 @@ import { useSelector } from 'react-redux'
 
 // material-ui
 import { styled } from '@mui/material/styles'
-import { Box, Grid, Tooltip, Typography, useTheme } from '@mui/material'
+import { Box, CardActionArea, Grid, Tooltip, Typography, useTheme } from '@mui/material'
 
 // project imports
 import MainCard from '@/ui-component/cards/MainCard'
 import MoreItemsTooltip from '../tooltip/MoreItemsTooltip'
 import ScheduleStatusBadge from '@/ui-component/extended/ScheduleStatusBadge'
 import NodeIconFallback from '@/assets/images/flowise_logo.png'
+
+export const getSafeItemCardIconSrc = (iconSrc, origin = globalThis.location?.origin ?? 'http://localhost') => {
+    if (
+        typeof iconSrc !== 'string' ||
+        !iconSrc.startsWith('/') ||
+        iconSrc.startsWith('//') ||
+        /[\u0000-\u001f\u007f"'\\]|url\s*\(/i.test(iconSrc)
+    ) {
+        return NodeIconFallback
+    }
+    try {
+        const parsed = new URL(iconSrc, origin)
+        if (parsed.origin !== origin) return NodeIconFallback
+        return `${parsed.pathname}${parsed.search}${parsed.hash}`
+    } catch (_error) {
+        return NodeIconFallback
+    }
+}
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -35,16 +53,15 @@ const CardWrapper = styled(MainCard)(({ theme }) => ({
 const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
-    const cardIconSrc =
-        typeof data.iconSrc === 'string' && data.iconSrc.startsWith('/') && !data.iconSrc.startsWith('//') ? data.iconSrc : NodeIconFallback
+    const cardIconSrc = getSafeItemCardIconSrc(data.iconSrc)
 
     const useNodeIconFallback = (event) => {
         event.currentTarget.onerror = null
         event.currentTarget.src = NodeIconFallback
     }
 
-    return (
-        <CardWrapper content={false} onClick={onClick} sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }}>
+    const cardContent = (
+        <>
             <Box sx={{ height: '100%', p: 2.25 }}>
                 <Grid container justifyContent='space-between' direction='column' sx={{ height: '100%', gap: 3 }}>
                     <Box display='flex' flexDirection='column' sx={{ width: '100%' }}>
@@ -66,12 +83,16 @@ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
                                         flexShrink: 0,
                                         marginRight: 10,
                                         borderRadius: '50%',
-                                        backgroundImage: `url(${cardIconSrc})`,
-                                        backgroundSize: 'contain',
-                                        backgroundRepeat: 'no-repeat',
-                                        backgroundPosition: 'center center'
+                                        overflow: 'hidden'
                                     }}
-                                ></div>
+                                >
+                                    <img
+                                        alt=''
+                                        src={cardIconSrc}
+                                        onError={useNodeIconFallback}
+                                        style={{ height: '100%', objectFit: 'contain', width: '100%' }}
+                                    />
+                                </div>
                             )}
                             {!data.iconSrc && data.color && (
                                 <div
@@ -193,7 +214,7 @@ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
                                                 fontWeight: 200
                                             }}
                                         >
-                                            + {(images?.length || 0) + (icons?.length || 0) - 3} More
+                                            + {(images?.length || 0) + (icons?.length || 0) - 3} 项
                                         </Typography>
                                     </MoreItemsTooltip>
                                 )}
@@ -203,6 +224,22 @@ const ItemCard = ({ data, images, icons, scheduleStatus, onClick }) => {
                     )}
                 </Grid>
             </Box>
+        </>
+    )
+
+    return (
+        <CardWrapper content={false} sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }}>
+            {onClick ? (
+                <CardActionArea
+                    aria-label={`打开${data.templateName || data.name || '项目'}`}
+                    onClick={onClick}
+                    sx={{ height: '100%', textAlign: 'left' }}
+                >
+                    {cardContent}
+                </CardActionArea>
+            ) : (
+                cardContent
+            )}
         </CardWrapper>
     )
 }

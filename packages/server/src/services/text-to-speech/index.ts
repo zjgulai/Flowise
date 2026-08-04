@@ -1,7 +1,6 @@
 import { StatusCodes } from 'http-status-codes'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
-import { getErrorMessage } from '../../errors/utils'
 import { getVoices } from 'flowise-components'
 import { databaseEntities } from '../../utils'
 
@@ -23,27 +22,27 @@ export interface TTSResponse {
     contentType: string
 }
 
-const getVoicesForProvider = async (provider: string, credentialId?: string): Promise<any[]> => {
+const getVoicesForProvider = async (provider: string, credentialId: string, workspaceId: string): Promise<any[]> => {
     try {
-        if (!credentialId) {
-            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Credential ID required for this provider')
-        }
+        if (!Object.values(TextToSpeechProvider).includes(provider as TextToSpeechProvider))
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Unsupported TTS provider')
+        if (!credentialId) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Credential ID required for this provider')
+        if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'TTS request is not authorized')
 
         const appServer = getRunningExpressApp()
         const options = {
             orgId: '',
             chatflowid: '',
             chatId: '',
+            workspaceId,
             appDataSource: appServer.AppDataSource,
             databaseEntities: databaseEntities
         }
 
         return await getVoices(provider, credentialId, options)
     } catch (error) {
-        throw new InternalFlowiseError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            `Error: textToSpeechService.getVoices - ${getErrorMessage(error)}`
-        )
+        if (error instanceof InternalFlowiseError) throw error
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to load TTS voices')
     }
 }
 

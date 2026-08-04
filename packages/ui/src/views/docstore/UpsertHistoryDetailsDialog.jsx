@@ -54,14 +54,14 @@ const UpsertHistoryDetailsDialog = ({ show, dialogProps, onCancel }) => {
                         marginTop: '10px'
                     }}
                 >
-                    <StatsCard title='Added' stat={dialogProps.numAdded ?? 0} />
+                    <StatsCard title='新增' stat={dialogProps.numAdded ?? 0} />
                     <StatsCard title='已更新' stat={dialogProps.numUpdated ?? 0} />
                     <StatsCard title='已跳过' stat={dialogProps.numSkipped ?? 0} />
-                    <StatsCard title='Deleted' stat={dialogProps.numDeleted ?? 0} />
+                    <StatsCard title='删除' stat={dialogProps.numDeleted ?? 0} />
                 </div>
                 <div>
                     <TableContainer component={Paper}>
-                        <Table sx={{ minWidth: 650 }} aria-label='simple table'>
+                        <Table sx={{ minWidth: 650 }} aria-label='更新插入详情表'>
                             <TableBody>
                                 <TableRow sx={{ '& td': { border: 0 } }}>
                                     <TableCell sx={{ pb: 0, pt: 0 }} colSpan={6}>

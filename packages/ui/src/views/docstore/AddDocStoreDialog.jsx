@@ -10,7 +10,18 @@ import {
 } from '@/store/actions'
 
 // Material
-import { Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, OutlinedInput, Typography } from '@mui/material'
+import {
+    Alert,
+    Box,
+    Button,
+    CircularProgress,
+    Dialog,
+    DialogActions,
+    DialogContent,
+    DialogTitle,
+    OutlinedInput,
+    Typography
+} from '@mui/material'
 
 // Project imports
 import { StyledButton } from '@/ui-component/button/StyledButton'
@@ -20,23 +31,15 @@ import ConfirmDialog from '@/ui-component/dialog/ConfirmDialog'
 import { IconX, IconFiles } from '@tabler/icons-react'
 
 // API
-import documentStoreApi from '@/api/documentstore'
+import documentStoreApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 
 // utils
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
-
-const getDocumentStoreErrorMessage = (error) => {
-    const responseData = error?.response?.data
-    if (typeof responseData === 'string' && responseData.trim()) return responseData
-    if (responseData && typeof responseData === 'object') {
-        const responseMessage = responseData.message || responseData.error
-        if (typeof responseMessage === 'string' && responseMessage.trim()) return responseMessage
-    }
-    const status = error?.response?.status
-    if (status) return `服务请求失败（${status}）`
-    if (typeof error?.message === 'string' && error.message.trim()) return error.message
-    return '未知错误'
-}
 
 const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     const portalElement = document.getElementById('portal')
@@ -54,6 +57,8 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     const [documentStoreDesc, setDocumentStoreDesc] = useState('')
     const [dialogType, setDialogType] = useState('ADD')
     const [docStoreId, setDocumentStoreId] = useState()
+    const [versionToken, setVersionToken] = useState()
+    const [hasVersionConflict, setHasVersionConflict] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const submitErrorSnackbarKey = useRef()
 
@@ -69,14 +74,22 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             setDocumentStoreName(dialogProps.data.name)
             setDocumentStoreDesc(dialogProps.data.description)
             setDocumentStoreId(dialogProps.data.id)
+            setVersionToken(dialogProps.data.versionToken)
+            setHasVersionConflict(false)
         } else if (dialogProps.type === 'ADD') {
             setDocumentStoreName('')
             setDocumentStoreDesc('')
+            setDocumentStoreId(undefined)
+            setVersionToken(undefined)
+            setHasVersionConflict(false)
         }
 
         return () => {
             setDocumentStoreName('')
             setDocumentStoreDesc('')
+            setDocumentStoreId(undefined)
+            setVersionToken(undefined)
+            setHasVersionConflict(false)
         }
     }, [dialogProps])
 
@@ -119,7 +132,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             const key = new Date().getTime() + Math.random()
             submitErrorSnackbarKey.current = key
             enqueueSnackbar({
-                message: `新增文档库失败：${getDocumentStoreErrorMessage(error)}`,
+                message: `新增文档库失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key,
                     variant: 'error',
@@ -137,7 +150,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
     }
 
     const updateDocumentStore = async () => {
-        if (isSubmitting) return
+        if (isSubmitting || hasVersionConflict) return
         setIsSubmitting(true)
         try {
             const saveObj = {
@@ -145,7 +158,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 description: documentStoreDesc
             }
 
-            const saveResp = await documentStoreApi.updateDocumentStore(docStoreId, saveObj)
+            const saveResp = await documentStoreApi.updateDocumentStore(docStoreId, saveObj, versionToken)
             if (saveResp.data) {
                 dismissSubmitError()
                 enqueueSnackbar({
@@ -167,10 +180,21 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 })
             }
         } catch (error) {
+            if (isDocumentStoreVersionConflict(error)) {
+                setVersionToken(undefined)
+                setHasVersionConflict(true)
+                const key = new Date().getTime() + Math.random()
+                submitErrorSnackbarKey.current = key
+                enqueueSnackbar({
+                    message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                    options: { key, variant: 'warning' }
+                })
+                return
+            }
             const key = new Date().getTime() + Math.random()
             submitErrorSnackbarKey.current = key
             enqueueSnackbar({
-                message: `更新文档库失败：${getDocumentStoreErrorMessage(error)}`,
+                message: `更新文档库失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key,
                     variant: 'error',
@@ -181,6 +205,33 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                         </Button>
                     )
                 }
+            })
+        } finally {
+            setIsSubmitting(false)
+        }
+    }
+
+    const reloadLatestValues = async () => {
+        if (isSubmitting || !docStoreId) return
+        setIsSubmitting(true)
+        try {
+            const latestResponse = await documentStoreApi.getSpecificDocumentStore(docStoreId)
+            const latestVersionToken = requireDocumentStoreVersionToken(latestResponse.data)
+            setDocumentStoreName(latestResponse.data.name || '')
+            setDocumentStoreDesc(latestResponse.data.description || '')
+            setVersionToken(latestVersionToken)
+            setHasVersionConflict(false)
+            dismissSubmitError()
+            enqueueSnackbar({
+                message: '已重新载入最新值，请确认后提交',
+                options: { variant: 'info' }
+            })
+        } catch (error) {
+            setVersionToken(undefined)
+            setHasVersionConflict(true)
+            enqueueSnackbar({
+                message: `重新载入失败：${getErrorMessage(error, '未知错误')}`,
+                options: { variant: 'error' }
             })
         } finally {
             setIsSubmitting(false)
@@ -203,6 +254,19 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 </div>
             </DialogTitle>
             <DialogContent>
+                {hasVersionConflict && (
+                    <Alert
+                        severity='warning'
+                        sx={{ mt: 2 }}
+                        action={
+                            <Button color='inherit' size='small' disabled={isSubmitting} onClick={reloadLatestValues}>
+                                重新载入最新值
+                            </Button>
+                        }
+                    >
+                        当前草稿已保留，但不能与新版本令牌混用。请重新载入后再编辑和提交。
+                    </Alert>
+                )}
                 <Box sx={{ p: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
                         <Typography>
@@ -248,7 +312,7 @@ const AddDocStoreDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
                 </Button>
                 <StyledButton
                     id='btn_submitDocumentStore'
-                    disabled={isSubmitting || !documentStoreName.trim()}
+                    disabled={isSubmitting || hasVersionConflict || !documentStoreName.trim()}
                     variant='contained'
                     onClick={() => (dialogType === 'ADD' ? createDocumentStore() : updateDocumentStore())}
                 >

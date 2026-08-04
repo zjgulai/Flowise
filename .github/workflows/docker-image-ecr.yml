@@ -29,6 +29,7 @@ jobs:
                   after="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
                   test "$before" = "$after"
                   pnpm test:release
+                  pnpm metadata:i18n:validate
                   bash scripts/verify-release-source.sh
                   bash scripts/verify-security.sh
             - name: Set up Docker Buildx

@@ -21,6 +21,7 @@ import variablesApi from '@/api/variables'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // const
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
@@ -30,12 +31,12 @@ const variableTypes = [
     {
         label: '静态',
         name: 'static',
-        description: 'Variable value will be read from the value entered below'
+        description: '变量值将读取下方输入的内容'
     },
     {
         label: '运行时',
         name: 'runtime',
-        description: 'Variable value will be read from .env file'
+        description: '变量值将从 .env 文件读取'
     }
 ]
 
@@ -97,7 +98,7 @@ const AddEditVariableDialog = ({ show, dialogProps, onCancel, onConfirm, setErro
             const createResp = await variablesApi.createVariable(obj)
             if (createResp.data) {
                 enqueueSnackbar({
-                    message: 'New Variable added',
+                    message: '已添加新变量',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -113,9 +114,7 @@ const AddEditVariableDialog = ({ show, dialogProps, onCancel, onConfirm, setErro
         } catch (err) {
             if (setError) setError(err)
             enqueueSnackbar({
-                message: `Failed to add new Variable: ${
-                    typeof err.response.data === 'object' ? err.response.data.message : err.response.data
-                }`,
+                message: `添加变量失败：${getErrorMessage(err)}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -142,7 +141,7 @@ const AddEditVariableDialog = ({ show, dialogProps, onCancel, onConfirm, setErro
             const saveResp = await variablesApi.updateVariable(variable.id, saveObj)
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Variable saved',
+                    message: '变量已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -158,9 +157,7 @@ const AddEditVariableDialog = ({ show, dialogProps, onCancel, onConfirm, setErro
         } catch (err) {
             if (setError) setError(err)
             enqueueSnackbar({
-                message: `Failed to save Variable: ${
-                    typeof err.response.data === 'object' ? err.response.data.message : err.response.data
-                }`,
+                message: `保存变量失败：${getErrorMessage(err)}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -188,14 +185,14 @@ const AddEditVariableDialog = ({ show, dialogProps, onCancel, onConfirm, setErro
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
                 <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                     <IconVariable style={{ marginRight: '10px' }} />
-                    {dialogProps.type === 'ADD' ? 'Add Variable' : 'Edit Variable'}
+                    {dialogProps.type === 'ADD' ? '添加变量' : '编辑变量'}
                 </div>
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ p: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'row' }}>
                         <Typography>
-                            变量 名称<span style={{ color: 'red' }}>&nbsp;*</span>
+                            变量名称<span style={{ color: 'red' }}>&nbsp;*</span>
                         </Typography>
 
                         <div style={{ flexGrow: 1 }}></div>

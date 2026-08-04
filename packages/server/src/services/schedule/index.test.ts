@@ -17,8 +17,13 @@ const mockRepo = {
     merge: jest.fn()
 }
 
-const mockAppDataSource = {
+const mockTransactionManager = {
     getRepository: jest.fn().mockReturnValue(mockRepo)
+}
+
+const mockAppDataSource = {
+    getRepository: jest.fn().mockReturnValue(mockRepo),
+    transaction: jest.fn(async (callback: (manager: typeof mockTransactionManager) => unknown) => callback(mockTransactionManager))
 }
 
 const mockAppServer = {
@@ -63,6 +68,7 @@ jest.mock('../../utils/logger', () => ({
 
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
+import { StatusCodes } from 'http-status-codes'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { ScheduleTriggerType } from '../../database/entities/ScheduleRecord'
 import { ScheduleTriggerStatus } from '../../database/entities/ScheduleTriggerLog'
@@ -114,6 +120,8 @@ beforeEach(() => {
     jest.clearAllMocks()
     mockGetApp.mockReturnValue(mockAppServer)
     mockAppDataSource.getRepository.mockReturnValue(mockRepo)
+    mockAppDataSource.transaction.mockImplementation(async (callback) => callback(mockTransactionManager))
+    mockTransactionManager.getRepository.mockReturnValue(mockRepo)
 })
 
 // ─── createOrUpdateSchedule ───────────────────────────────────────────────────
@@ -651,6 +659,7 @@ describe('deleteTriggerLogs', () => {
     it('returns zero counts when logIds is empty', async () => {
         const result = await scheduleService.deleteTriggerLogs('flow-1', 'ws-1', [])
         expect(result).toEqual({ success: true, deletedLogs: 0, deletedExecutions: 0 })
+        expect(mockAppDataSource.transaction).not.toHaveBeenCalled()
         expect(mockRepo.find).not.toHaveBeenCalled()
         expect(mockRepo.delete).not.toHaveBeenCalled()
     })
@@ -686,7 +695,13 @@ describe('deleteTriggerLogs', () => {
 
         expect(result.deletedLogs).toBe(3)
         expect(result.deletedExecutions).toBe(2)
-        expect(mockDeleteExecutions).toHaveBeenCalledWith(['exec-1', 'exec-3'], 'ws-1')
+        expect(mockDeleteExecutions).toHaveBeenCalledWith(['exec-1', 'exec-3'], 'ws-1', mockTransactionManager)
+        expect(mockDeleteExecutions.mock.invocationCallOrder[0]).toBeLessThan((mockRepo.delete as jest.Mock).mock.invocationCallOrder[0])
+        expect(mockRepo.delete).toHaveBeenCalledWith({
+            id: { type: 'in', value: ['log-1', 'log-2', 'log-3'] },
+            targetId: 'flow-1',
+            workspaceId: 'ws-1'
+        })
     })
 
     it('skips execution cascade when no logs have an executionId', async () => {
@@ -704,5 +719,52 @@ describe('deleteTriggerLogs', () => {
         ;(mockRepo.find as jest.Mock).mockRejectedValue(new Error('db down'))
 
         await expect(scheduleService.deleteTriggerLogs('flow-1', 'ws-1', ['log-1'])).rejects.toBeInstanceOf(InternalFlowiseError)
+    })
+
+    it.each([undefined, '', '   '])('fails closed without a workspace before opening a transaction (%p)', async (workspaceId) => {
+        await expect(scheduleService.deleteTriggerLogs('flow-1', workspaceId as any, ['log-1'])).rejects.toMatchObject({
+            statusCode: StatusCodes.BAD_REQUEST,
+            message: 'Target and workspace IDs are required'
+        })
+        expect(mockAppDataSource.transaction).not.toHaveBeenCalled()
+        expect(mockRepo.find).not.toHaveBeenCalled()
+        expect(mockRepo.delete).not.toHaveBeenCalled()
+        expect(mockDeleteExecutions).not.toHaveBeenCalled()
+    })
+
+    it('rejects oversized batches before opening a transaction or deleting logs', async () => {
+        await expect(scheduleService.deleteTriggerLogs('flow-1', 'ws-1', Array(501).fill('log-1'))).rejects.toMatchObject({
+            statusCode: StatusCodes.BAD_REQUEST,
+            message: 'Invalid trigger log deletion request'
+        })
+        expect(mockAppDataSource.transaction).not.toHaveBeenCalled()
+        expect(mockRepo.find).not.toHaveBeenCalled()
+        expect(mockRepo.delete).not.toHaveBeenCalled()
+        expect(mockDeleteExecutions).not.toHaveBeenCalled()
+    })
+
+    it('does not delete logs when execution deletion fails inside the shared transaction', async () => {
+        ;(mockRepo.find as jest.Mock).mockResolvedValue([makeLog('log-1', '00000000-0000-4000-8000-000000000001')])
+        mockDeleteExecutions.mockRejectedValue(new InternalFlowiseError(StatusCodes.CONFLICT, 'execution conflict'))
+
+        await expect(scheduleService.deleteTriggerLogs('flow-1', 'ws-1', ['log-1'])).rejects.toMatchObject({
+            statusCode: StatusCodes.CONFLICT,
+            message: 'execution conflict'
+        })
+        expect(mockDeleteExecutions).toHaveBeenCalledWith(['00000000-0000-4000-8000-000000000001'], 'ws-1', mockTransactionManager)
+        expect(mockRepo.delete).not.toHaveBeenCalled()
+    })
+
+    it('raises a conflict so the shared transaction rolls back when not every owned log is deleted', async () => {
+        ;(mockRepo.find as jest.Mock).mockResolvedValue([makeLog('log-1', '00000000-0000-4000-8000-000000000001')])
+        ;(mockRepo.delete as jest.Mock).mockResolvedValue({ affected: 0 })
+        mockDeleteExecutions.mockResolvedValue({ success: true, deletedCount: 1 })
+
+        await expect(scheduleService.deleteTriggerLogs('flow-1', 'ws-1', ['log-1'])).rejects.toMatchObject({
+            statusCode: StatusCodes.CONFLICT,
+            message: 'Trigger log deletion changed concurrently'
+        })
+        expect(mockDeleteExecutions).toHaveBeenCalledTimes(1)
+        expect(mockRepo.delete).toHaveBeenCalledTimes(1)
     })
 })

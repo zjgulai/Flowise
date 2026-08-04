@@ -26,6 +26,7 @@ import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackba
 
 // Utils
 import { getLocalStorageChatflow, removeLocalStorageChatHistory } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 const ChatPopUp = ({ chatflowid, isAgentCanvas, onOpenChange }) => {
     const theme = useTheme()
@@ -86,10 +87,10 @@ const ChatPopUp = ({ chatflowid, isAgentCanvas, onOpenChange }) => {
 
     const clearChat = async () => {
         const confirmPayload = {
-            title: `Clear Chat History`,
-            description: `Are you sure you want to clear all chat history?`,
-            confirmButtonName: 'Clear',
-            cancelButtonName: 'Cancel'
+            title: '清空对话记录',
+            description: '确定要清空全部对话记录吗？此操作无法撤销。',
+            confirmButtonName: '清空',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -101,7 +102,7 @@ const ChatPopUp = ({ chatflowid, isAgentCanvas, onOpenChange }) => {
                 removeLocalStorageChatHistory(chatflowid)
                 resetChatDialog()
                 enqueueSnackbar({
-                    message: 'Successfully cleared all chat history',
+                    message: '已清空全部对话记录',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -114,7 +115,7 @@ const ChatPopUp = ({ chatflowid, isAgentCanvas, onOpenChange }) => {
                 })
             } catch (error) {
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: getErrorMessage(error, '清空对话记录失败，请稍后重试'),
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -147,7 +148,7 @@ const ChatPopUp = ({ chatflowid, isAgentCanvas, onOpenChange }) => {
                 ref={anchorRef}
                 size='small'
                 color='secondary'
-                aria-label='chat'
+                aria-label='对话'
                 title='对话'
                 onClick={handleToggle}
             >
@@ -160,8 +161,8 @@ const ChatPopUp = ({ chatflowid, isAgentCanvas, onOpenChange }) => {
                     onClick={clearChat}
                     size='small'
                     color='error'
-                    aria-label='clear'
-                    title='Clear Chat History'
+                    aria-label='清空对话记录'
+                    title='清空对话记录'
                 >
                     <IconEraser />
                 </StyledFab>
@@ -172,8 +173,8 @@ const ChatPopUp = ({ chatflowid, isAgentCanvas, onOpenChange }) => {
                     onClick={expandChat}
                     size='small'
                     color='primary'
-                    aria-label='expand'
-                    title='Expand Chat'
+                    aria-label='展开对话'
+                    title='展开对话'
                 >
                     <IconArrowsMaximize />
                 </StyledFab>

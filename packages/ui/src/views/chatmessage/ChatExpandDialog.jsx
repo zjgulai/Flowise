@@ -26,19 +26,13 @@ const ChatExpandDialog = ({ show, dialogProps, isAgentCanvas, onClear, onCancel,
                     {dialogProps.title}
                     <div style={{ flex: 1 }}></div>
                     {customization.isDarkMode && (
-                        <StyledButton
-                            variant='outlined'
-                            color='error'
-                            title='Clear Conversation'
-                            onClick={onClear}
-                            startIcon={<IconEraser />}
-                        >
-                            Clear Chat
+                        <StyledButton variant='outlined' color='error' title='清空对话' onClick={onClear} startIcon={<IconEraser />}>
+                            清空对话
                         </StyledButton>
                     )}
                     {!customization.isDarkMode && (
-                        <Button variant='outlined' color='error' title='Clear Conversation' onClick={onClear} startIcon={<IconEraser />}>
-                            Clear Chat
+                        <Button variant='outlined' color='error' title='清空对话' onClick={onClear} startIcon={<IconEraser />}>
+                            清空对话
                         </Button>
                     )}
                 </div>

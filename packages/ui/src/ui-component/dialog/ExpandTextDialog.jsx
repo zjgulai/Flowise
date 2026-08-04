@@ -19,6 +19,7 @@ import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 // API
 import nodesApi from '@/api/nodes'
 import useApi from '@/hooks/useApi'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 import './ExpandTextDialog.css'
 
@@ -82,11 +83,7 @@ const ExpandTextDialog = ({ show, dialogProps, onCancel, onInputHintDialogClicke
 
     useEffect(() => {
         if (executeCustomFunctionNodeApi.error) {
-            if (typeof executeCustomFunctionNodeApi.error === 'object' && executeCustomFunctionNodeApi.error?.response?.data) {
-                setCodeExecutedResult(executeCustomFunctionNodeApi.error?.response?.data)
-            } else if (typeof executeCustomFunctionNodeApi.error === 'string') {
-                setCodeExecutedResult(executeCustomFunctionNodeApi.error)
-            }
+            setCodeExecutedResult(getErrorMessage(executeCustomFunctionNodeApi.error, '代码执行失败，请检查输入和运行环境'))
         }
     }, [executeCustomFunctionNodeApi.error])
 
@@ -169,7 +166,7 @@ const ExpandTextDialog = ({ show, dialogProps, onCancel, onInputHintDialogClicke
                             executeCustomFunctionNodeApi.request({ javascriptFunction: inputValue })
                         }}
                     >
-                        Execute
+                        执行
                     </PermissionLoadingButton>
                 )}
                 {codeExecutedResult && (

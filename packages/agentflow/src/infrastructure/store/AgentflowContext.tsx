@@ -18,7 +18,14 @@ import type {
     NodeData,
     NodeDataSchema
 } from '@/core/types'
-import { getDefinedStateKeys, getUniqueNodeId, isNodeOutdated, upgradeNodeData } from '@/core/utils'
+import {
+    emitSanitizedFlowChange,
+    getDefinedStateKeys,
+    getUniqueNodeId,
+    isNodeOutdated,
+    sanitizeFlowDisplayMetadata,
+    upgradeNodeData
+} from '@/core/utils'
 
 import { agentflowReducer, initialState, normalizeNodes } from './agentflowReducer'
 
@@ -205,7 +212,7 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
             // Notify parent of flow change so the deletion is persisted
             if (onFlowChangeRef.current) {
                 const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
-                onFlowChangeRef.current({ nodes: newNodes, edges: newEdges, viewport })
+                emitSanitizedFlowChange(onFlowChangeRef.current, { nodes: newNodes, edges: newEdges, viewport })
             }
         },
         [state.nodes, state.edges, state.reactFlowInstance, syncStateUpdate]
@@ -264,7 +271,7 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
             // Notify parent of flow change so the duplication is persisted
             if (onFlowChangeRef.current) {
                 const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
-                onFlowChangeRef.current({ nodes: normalizeNodes(newNodes), edges: state.edges, viewport })
+                emitSanitizedFlowChange(onFlowChangeRef.current, { nodes: normalizeNodes(newNodes), edges: state.edges, viewport })
             }
         },
         [state.nodes, state.edges, state.reactFlowInstance, syncStateUpdate]
@@ -288,7 +295,7 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
             // Notify parent of flow change (e.g. node data edits from EditNodeDialog)
             if (onFlowChangeRef.current) {
                 const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
-                onFlowChangeRef.current({ nodes: newNodes, edges: effectiveEdges, viewport })
+                emitSanitizedFlowChange(onFlowChangeRef.current, { nodes: newNodes, edges: effectiveEdges, viewport })
             }
         },
         [state.nodes, state.edges, state.reactFlowInstance, syncStateUpdate]
@@ -303,7 +310,7 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
             // Notify parent of flow change so the deletion is persisted
             if (onFlowChangeRef.current) {
                 const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
-                onFlowChangeRef.current({ nodes: state.nodes, edges: newEdges, viewport })
+                emitSanitizedFlowChange(onFlowChangeRef.current, { nodes: state.nodes, edges: newEdges, viewport })
             }
         },
         [state.nodes, state.edges, state.reactFlowInstance, syncStateUpdate]
@@ -332,11 +339,11 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
     // Get flow data
     const getFlowData = useCallback((): FlowData => {
         const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
-        return {
+        return sanitizeFlowDisplayMetadata({
             nodes: state.nodes,
             edges: state.edges,
             viewport
-        }
+        })
     }, [state.nodes, state.edges, state.reactFlowInstance])
 
     // Flow state keys
@@ -399,7 +406,7 @@ export function AgentflowStateProvider({ children, initialFlow }: AgentflowState
 
         if (onFlowChangeRef.current) {
             const viewport = state.reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
-            onFlowChangeRef.current({ nodes: clonedNodes, edges: newEdges, viewport })
+            emitSanitizedFlowChange(onFlowChangeRef.current, { nodes: clonedNodes, edges: newEdges, viewport })
         }
     }, [state.nodes, state.edges, state.componentNodes, state.reactFlowInstance, syncStateUpdate])
 

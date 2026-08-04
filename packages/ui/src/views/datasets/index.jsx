@@ -39,6 +39,7 @@ import datasetsApi from '@/api/dataset'
 // Hooks
 import useApi from '@/hooks/useApi'
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // icons
 import empty_datasetSVG from '@/assets/images/empty_datasets.svg'
@@ -101,8 +102,8 @@ const EvalDatasets = () => {
     const addNew = () => {
         const dialogProp = {
             type: 'ADD',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加',
             data: {}
         }
         setDatasetDialogProps(dialogProp)
@@ -112,8 +113,8 @@ const EvalDatasets = () => {
     const edit = (dataset) => {
         const dialogProp = {
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Save',
+            cancelButtonName: '取消',
+            confirmButtonName: '保存',
             data: dataset
         }
         setDatasetDialogProps(dialogProp)
@@ -122,10 +123,10 @@ const EvalDatasets = () => {
 
     const deleteDataset = async (dataset) => {
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete dataset ${dataset.name}?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除数据集',
+            description: `确定删除数据集“${dataset.name}”吗？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -134,7 +135,7 @@ const EvalDatasets = () => {
                 const deleteResp = await datasetsApi.deleteDataset(dataset.id)
                 if (deleteResp.data) {
                     enqueueSnackbar({
-                        message: 'Dataset deleted',
+                        message: '数据集已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -149,9 +150,7 @@ const EvalDatasets = () => {
                 }
             } catch (error) {
                 enqueueSnackbar({
-                    message: `Failed to delete dataset: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `删除数据集失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -215,7 +214,7 @@ const EvalDatasets = () => {
                                 onClick={addNew}
                                 startIcon={<IconPlus />}
                             >
-                                Add New
+                                新增数据集
                             </StyledPermissionButton>
                         </ViewHeader>
                         {!isLoading && datasets.length <= 0 ? (
@@ -224,7 +223,7 @@ const EvalDatasets = () => {
                                     <img
                                         style={{ objectFit: 'cover', height: '20vh', width: 'auto' }}
                                         src={empty_datasetSVG}
-                                        alt='empty_datasetSVG'
+                                        alt='暂无数据集'
                                     />
                                 </Box>
                                 <div>暂无数据集</div>
@@ -248,7 +247,7 @@ const EvalDatasets = () => {
                                                 <TableCell>名称</TableCell>
                                                 <TableCell>描述</TableCell>
                                                 <TableCell>行</TableCell>
-                                                <TableCell>Last Updated</TableCell>
+                                                <TableCell>最近更新时间</TableCell>
                                                 <Available permission={'datasets:update,datasets:create'}>
                                                     <TableCell> </TableCell>
                                                 </Available>
@@ -320,7 +319,7 @@ const EvalDatasets = () => {
                                                             </TableCell>
                                                             <TableCell onClick={() => goToRows(ds)}>{ds?.rowCount}</TableCell>
                                                             <TableCell onClick={() => goToRows(ds)}>
-                                                                {moment(ds.updatedDate).format('MMMM Do YYYY, hh:mm A')}
+                                                                {moment(ds.updatedDate).format('YYYY-MM-DD HH:mm:ss')}
                                                             </TableCell>
                                                             <Available permission={'datasets:update,datasets:create'}>
                                                                 <TableCell>

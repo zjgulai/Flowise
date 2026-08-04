@@ -14,9 +14,8 @@ export const ErrorProvider = ({ children }) => {
     const navigate = useNavigate()
 
     const handleError = async (err) => {
-        console.error(err)
         if (err?.response?.status === 429 && err?.response?.data?.type === 'authentication_rate_limit') {
-            setAuthRateLimitError("You're making a lot of requests. Please wait and try again later.")
+            setAuthRateLimitError('请求过于频繁，请稍后重试。')
         } else if (err?.response?.status === 429 && err?.response?.data?.type !== 'authentication_rate_limit') {
             const retryAfterHeader = err?.response?.headers?.['retry-after']
             let retryAfter = 60 // Default in seconds

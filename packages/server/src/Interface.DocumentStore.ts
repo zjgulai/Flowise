@@ -5,6 +5,7 @@ import { IComponentNodes } from './Interface'
 import { Telemetry } from './utils/telemetry'
 import { CachePool } from './CachePool'
 import { UsageCacheManager } from './UsageCacheManager'
+import { createDocumentStoreVersionToken, type DocumentStoreOperationIdentity } from './services/documentstore/documentStoreVersion'
 
 export enum DocumentStoreStatus {
     EMPTY_SYNC = 'EMPTY',
@@ -29,6 +30,8 @@ export interface IDocumentStore {
     embeddingConfig: string | null // JSON string
     recordManagerConfig: string | null // JSON string
     workspaceId?: string
+    generationId: string
+    revision: number
 }
 
 export interface IDocumentStoreFileChunk {
@@ -50,6 +53,7 @@ export interface IDocumentStoreFileChunkPagedResponse {
     description: string
     docId: string
     workspaceId?: string
+    versionToken: string
 }
 
 export interface IDocumentStoreLoader {
@@ -67,6 +71,10 @@ export interface IDocumentStoreLoader {
     files?: IDocumentStoreLoaderFile[]
     source?: string
     credential?: string
+}
+
+export interface IDocumentStoreLoaderResponse extends IDocumentStoreLoader {
+    versionToken: string
 }
 
 export interface IDocumentStoreLoaderForPreview extends IDocumentStoreLoader {
@@ -138,6 +146,7 @@ export interface IExecuteDocStoreUpsert extends IUpsertQueueAppServer {
     totalItems: IDocumentStoreUpsertData[]
     files: Express.Multer.File[]
     isRefreshAPI: boolean
+    operationIdentity?: DocumentStoreOperationIdentity
 }
 
 export interface IExecutePreviewLoader extends Omit<IUpsertQueueAppServer, 'telemetry'> {
@@ -150,12 +159,14 @@ export interface IExecuteProcessLoader extends IUpsertQueueAppServer {
     data: IDocumentStoreLoaderForPreview
     docLoaderId: string
     isProcessWithoutUpsert: boolean
+    operationIdentity: DocumentStoreOperationIdentity
 }
 
 export interface IExecuteVectorStoreInsert extends IUpsertQueueAppServer {
     data: ICommonObject
     isStrictSave: boolean
     isVectorStoreInsert: boolean
+    operationIdentity: DocumentStoreOperationIdentity
 }
 
 const getFileName = (fileBase64: string) => {
@@ -244,20 +255,31 @@ export class DocumentStoreDTO {
     vectorStoreConfig: any
     embeddingConfig: any
     recordManagerConfig: any
+    /** Server-managed revision used for optimistic-concurrency diagnostics. */
+    revision: number
+    /** Strong opaque ETag. Send this value unchanged in the If-Match header. */
+    versionToken: string
 
     constructor() {}
 
     static fromEntity(entity: DocumentStore): DocumentStoreDTO {
         let documentStoreDTO = new DocumentStoreDTO()
 
-        Object.assign(documentStoreDTO, entity)
         documentStoreDTO.id = entity.id
         documentStoreDTO.name = entity.name
         documentStoreDTO.description = entity.description
         documentStoreDTO.status = entity.status
         documentStoreDTO.workspaceId = entity.workspaceId
+        documentStoreDTO.createdDate = entity.createdDate
+        documentStoreDTO.updatedDate = entity.updatedDate
+        documentStoreDTO.revision = entity.revision
+        documentStoreDTO.versionToken = createDocumentStoreVersionToken(entity)
         documentStoreDTO.totalChars = 0
         documentStoreDTO.totalChunks = 0
+        documentStoreDTO.loaders = []
+        documentStoreDTO.vectorStoreConfig = null
+        documentStoreDTO.embeddingConfig = null
+        documentStoreDTO.recordManagerConfig = null
 
         if (entity.whereUsed) {
             documentStoreDTO.whereUsed = JSON.parse(entity.whereUsed)
@@ -299,14 +321,15 @@ export class DocumentStoreDTO {
 
     static toEntity(body: any): DocumentStore {
         const docStore = new DocumentStore()
-        // Explicit allowlist — never accept id or timestamps from client
+        // Public create is metadata-only. Loaders, usage, vector configuration,
+        // status and concurrency identity are owned by their dedicated services.
         docStore.name = body.name
         docStore.description = body.description ?? null
-        docStore.loaders = body.loaders ?? '[]'
-        docStore.whereUsed = body.whereUsed ?? '[]'
-        docStore.vectorStoreConfig = body.vectorStoreConfig ?? null
-        docStore.embeddingConfig = body.embeddingConfig ?? null
-        docStore.recordManagerConfig = body.recordManagerConfig ?? null
+        docStore.loaders = '[]'
+        docStore.whereUsed = '[]'
+        docStore.vectorStoreConfig = null
+        docStore.embeddingConfig = null
+        docStore.recordManagerConfig = null
         // when a new document store is created, it is empty and in sync
         docStore.status = DocumentStoreStatus.EMPTY_SYNC
         return docStore

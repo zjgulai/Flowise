@@ -98,7 +98,7 @@ const ExportAsTemplateDialog = ({ show, dialogProps, onCancel }) => {
     const onConfirm = () => {
         if (name.trim() === '') {
             enqueueSnackbar({
-                message: 'Template Name is mandatory!',
+                message: '模板名称为必填项！',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -136,7 +136,7 @@ const ExportAsTemplateDialog = ({ show, dialogProps, onCancel }) => {
     useEffect(() => {
         if (saveCustomTemplateApi.data) {
             enqueueSnackbar({
-                message: 'Saved as template successfully!',
+                message: '已成功保存为模板！',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'success',
@@ -156,7 +156,7 @@ const ExportAsTemplateDialog = ({ show, dialogProps, onCancel }) => {
     useEffect(() => {
         if (saveCustomTemplateApi.error) {
             enqueueSnackbar({
-                message: 'Failed to save as template!',
+                message: '保存为模板失败！',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -183,13 +183,13 @@ const ExportAsTemplateDialog = ({ show, dialogProps, onCancel }) => {
             aria-describedby='alert-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
-                {dialogProps.title || 'Export As Template'}
+                {dialogProps.title || '导出为模板'}
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ pt: 2, pb: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
                         <Typography sx={{ mb: 1 }}>
-                            Name<span style={{ color: 'red' }}>&nbsp;*</span>
+                            名称<span style={{ color: 'red' }}>&nbsp;*</span>
                         </Typography>
                         <OutlinedInput
                             id={'name'}
@@ -224,7 +224,7 @@ const ExportAsTemplateDialog = ({ show, dialogProps, onCancel }) => {
                 </Box>
                 <Box sx={{ pt: 2, pb: 2 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                        <Typography sx={{ mb: 1 }}>Badge</Typography>
+                        <Typography sx={{ mb: 1 }}>徽标</Typography>
                         <OutlinedInput
                             id={'badge'}
                             type={'string'}
@@ -261,15 +261,15 @@ const ExportAsTemplateDialog = ({ show, dialogProps, onCancel }) => {
                             variant='outlined'
                         />
                         <Typography variant='body2' sx={{ fontStyle: 'italic', mt: 1 }} color='text.secondary'>
-                            Type a usecase and press enter to add it to the list. You can add as many items as you want.
+                            输入用例后按回车键添加；可根据需要添加多个用例。
                         </Typography>
                     </div>
                 </Box>
             </DialogContent>
             <DialogActions>
-                <Button onClick={onCancel}>{dialogProps.cancelButtonName || 'Cancel'}</Button>
+                <Button onClick={onCancel}>{dialogProps.cancelButtonName || '取消'}</Button>
                 <StyledButton disabled={dialogProps.disabled} variant='contained' onClick={onConfirm}>
-                    {dialogProps.confirmButtonName || 'Save Template'}
+                    {dialogProps.confirmButtonName || '保存模板'}
                 </StyledButton>
             </DialogActions>
         </Dialog>

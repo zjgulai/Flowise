@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, useCallback, useContext } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useContext } from 'react'
 import ReactFlow, { addEdge, Controls, MiniMap, Background, useNodesState, useEdgesState } from 'reactflow'
 import 'reactflow/dist/style.css'
 import './index.css'
 import { useReward } from 'react-rewards'
 
 import { useDispatch, useSelector } from 'react-redux'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useParams } from 'react-router-dom'
 import {
     REMOVE_DIRTY,
     SET_DIRTY,
@@ -57,6 +57,15 @@ import {
 } from '@/utils/genericHelper'
 import useNotifier from '@/utils/useNotifier'
 import { usePrompt } from '@/utils/usePrompt'
+import { getErrorMessage } from '@/utils/getErrorMessage'
+import { sanitizeFlowDisplayMetadata } from '@/utils/componentMetadataDisplay'
+import {
+    applyImportedAgentflowCanvasData,
+    applyParsedAgentflowCanvasData,
+    isCurrentAgentflowSaveRequest,
+    isExpectedAgentflowResource,
+    isExpectedAgentflowSaveResponse
+} from './canvasFlowData'
 
 // const
 import { FLOWISE_CREDENTIAL_ID, AGENTFLOW_ICONS } from '@/store/constant'
@@ -75,9 +84,13 @@ const AgentflowCanvas = () => {
     const templateFlowData = state ? state.templateFlowData : ''
 
     const URLpath = document.location.pathname.toString().split('/')
-    const chatflowId =
-        URLpath[URLpath.length - 1] === 'canvas' || URLpath[URLpath.length - 1] === 'agentcanvas' ? '' : URLpath[URLpath.length - 1]
-    const canvasTitle = URLpath.includes('agentcanvas') ? 'Agent' : 'Chatflow'
+    const { id: chatflowId = '' } = useParams()
+    const activeChatflowIdRef = useRef(chatflowId)
+    activeChatflowIdRef.current = chatflowId
+    const routeGenerationRef = useRef(0)
+    const saveRequestContextRef = useRef(null)
+    const isAgentCanvas = URLpath.includes('agentcanvas')
+    const canvasTitle = isAgentCanvas ? '智能体流程' : '对话流程'
 
     const { confirm } = useConfirm()
 
@@ -85,6 +98,8 @@ const AgentflowCanvas = () => {
     const canvas = useSelector((state) => state.canvas)
     const [canvasDataStore, setCanvasDataStore] = useState(canvas)
     const [chatflow, setChatflow] = useState(null)
+    const [isFlowDataWriteBlocked, setIsFlowDataWriteBlocked] = useState(true)
+    const isCurrentFlowResourceReady = !isFlowDataWriteBlocked && isExpectedAgentflowResource(chatflowId, chatflow)
     const { reactFlowInstance, setReactFlowInstance } = useContext(flowContext)
 
     // ==============================|| Snackbar ||============================== //
@@ -172,35 +187,38 @@ const AgentflowCanvas = () => {
     }
 
     const handleLoadFlow = (file) => {
-        try {
-            const flowData = JSON.parse(file)
-            const nodes = flowData.nodes || []
-
-            setNodes(nodes)
-            setEdges(flowData.edges || [])
-            setTimeout(() => setDirty(), 0)
-        } catch (e) {
-            console.error(e)
-        }
+        applyImportedAgentflowCanvasData({
+            serializedFlowData: file,
+            setNodes,
+            setEdges,
+            onDirty: () => setTimeout(() => setDirty(), 0),
+            onError: errorFailed
+        })
     }
 
     const handleDeleteFlow = async () => {
+        if (!isExpectedAgentflowResource(chatflowId, chatflow)) {
+            errorFailed('流程数据未能安全加载，禁止删除。请重新加载页面后重试。')
+            return
+        }
+        const targetFlowId = chatflow.id
         const confirmPayload = {
             title: `删除`,
-            description: `删除 ${canvasTitle === 'Agent' ? '智能体' : '对话流程'} ${chatflow.name}？`,
+            description: `删除${canvasTitle} ${chatflow.name}？`,
             confirmButtonName: '删除',
             cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
-        if (isConfirmed) {
+        if (isConfirmed && activeChatflowIdRef.current === targetFlowId) {
             try {
-                await chatflowsApi.deleteChatflow(chatflow.id)
-                localStorage.removeItem(`${chatflow.id}_INTERNAL`)
+                await chatflowsApi.deleteChatflow(targetFlowId)
+                if (activeChatflowIdRef.current !== targetFlowId) return
+                localStorage.removeItem(`${targetFlowId}_INTERNAL`)
                 navigate('/agentflows')
             } catch (error) {
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: getErrorMessage(error, '删除流程失败，请稍后重试'),
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -217,6 +235,10 @@ const AgentflowCanvas = () => {
     }
 
     const handleSaveFlow = (chatflowName) => {
+        if (isFlowDataWriteBlocked || !isExpectedAgentflowResource(chatflowId, chatflow)) {
+            errorFailed('流程数据未能安全加载，禁止保存。请重新加载页面后重试。')
+            return
+        }
         if (reactFlowInstance) {
             const nodes = reactFlowInstance.getNodes().map((node) => {
                 const nodeData = cloneDeep(node.data)
@@ -234,9 +256,9 @@ const AgentflowCanvas = () => {
 
             const rfInstanceObject = reactFlowInstance.toObject()
             rfInstanceObject.nodes = nodes
-            const flowData = JSON.stringify(rfInstanceObject)
+            const flowData = JSON.stringify(sanitizeFlowDisplayMetadata(rfInstanceObject))
 
-            if (!chatflow.id) {
+            if (!chatflowId) {
                 const newChatflowBody = {
                     name: chatflowName,
                     deployed: false,
@@ -244,13 +266,23 @@ const AgentflowCanvas = () => {
                     flowData,
                     type: 'AGENTFLOW'
                 }
+                saveRequestContextRef.current = {
+                    kind: 'create',
+                    routeId: chatflowId,
+                    routeGeneration: routeGenerationRef.current
+                }
                 createNewChatflowApi.request(newChatflowBody)
             } else {
                 const updateBody = {
                     name: chatflowName,
                     flowData
                 }
-                updateChatflowApi.request(chatflow.id, updateBody)
+                saveRequestContextRef.current = {
+                    kind: 'update',
+                    routeId: chatflowId,
+                    routeGeneration: routeGenerationRef.current
+                }
+                updateChatflowApi.request(chatflowId, updateBody)
             }
         }
     }
@@ -301,7 +333,6 @@ const AgentflowCanvas = () => {
     const onDrop = useCallback(
         (event) => {
             event.preventDefault()
-            const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect()
             let nodeData = event.dataTransfer.getData('application/reactflow')
 
             // check if the dropped element is valid
@@ -311,15 +342,13 @@ const AgentflowCanvas = () => {
 
             nodeData = JSON.parse(nodeData)
 
-            const position = reactFlowInstance.project({
-                x: event.clientX - reactFlowBounds.left - 100,
-                y: event.clientY - reactFlowBounds.top - 50
-            })
+            const cursorPosition = reactFlowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+            const position = { x: cursorPosition.x - 100, y: cursorPosition.y - 50 }
             const nodes = reactFlowInstance.getNodes()
 
             if (nodeData.name === 'startAgentflow' && nodes.find((node) => node.data.name === 'startAgentflow')) {
                 enqueueSnackbar({
-                    message: 'Only one start node is allowed',
+                    message: '仅允许添加一个开始节点',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -373,7 +402,7 @@ const AgentflowCanvas = () => {
                     // We can't have nested iteration nodes
                     if (nodeData.name === 'iterationAgentflow') {
                         enqueueSnackbar({
-                            message: 'Nested iteration node is not supported yet',
+                            message: '暂不支持嵌套迭代节点',
                             options: {
                                 key: new Date().getTime() + Math.random(),
                                 variant: 'error',
@@ -391,7 +420,7 @@ const AgentflowCanvas = () => {
                     // We can't have human input node inside iteration node
                     if (nodeData.name === 'humanInputAgentflow') {
                         enqueueSnackbar({
-                            message: 'Human input node is not supported inside Iteration node',
+                            message: '迭代节点内暂不支持人工输入节点',
                             options: {
                                 key: new Date().getTime() + Math.random(),
                                 variant: 'error',
@@ -487,7 +516,7 @@ const AgentflowCanvas = () => {
     const saveChatflowSuccess = () => {
         dispatch({ type: REMOVE_DIRTY })
         enqueueSnackbar({
-            message: `${canvasTitle} saved`,
+            message: `${canvasTitle}已保存`,
             options: {
                 key: new Date().getTime() + Math.random(),
                 variant: 'success',
@@ -541,77 +570,187 @@ const AgentflowCanvas = () => {
     useEffect(() => {
         if (getSpecificChatflowApi.data) {
             const chatflow = getSpecificChatflowApi.data
-            const initialFlow = chatflow.flowData ? JSON.parse(chatflow.flowData) : []
-            setNodes(initialFlow.nodes || [])
-            setEdges(initialFlow.edges || [])
-            dispatch({ type: SET_CHATFLOW, chatflow })
+            if (!isExpectedAgentflowResource(chatflowId, chatflow) || (chatflowId && !chatflow.flowData)) {
+                setNodes([])
+                setEdges([])
+                setChatflow(null)
+                setIsFlowDataWriteBlocked(true)
+                errorFailed('加载的流程与当前页面不匹配，已禁止保存。请重新加载页面后重试。')
+                return
+            }
+            const applied = applyParsedAgentflowCanvasData({
+                serializedFlowData: chatflow.flowData,
+                setNodes,
+                setEdges,
+                onParsed: (initialFlow) => {
+                    const sanitizedChatflow = chatflow.flowData ? { ...chatflow, flowData: JSON.stringify(initialFlow) } : chatflow
+                    setNodes(initialFlow.nodes || [])
+                    setEdges(initialFlow.edges || [])
+                    setChatflow(sanitizedChatflow)
+                    dispatch({ type: SET_CHATFLOW, chatflow: sanitizedChatflow })
+                },
+                onError: (message) => {
+                    setChatflow(null)
+                    errorFailed(message)
+                }
+            })
+            setIsFlowDataWriteBlocked(!applied)
         } else if (getSpecificChatflowApi.error) {
-            errorFailed(`Failed to retrieve ${canvasTitle}: ${getSpecificChatflowApi.error.response.data.message}`)
+            setNodes([])
+            setEdges([])
+            setChatflow(null)
+            setIsFlowDataWriteBlocked(true)
+            errorFailed(getErrorMessage(getSpecificChatflowApi.error, '获取流程失败，请稍后重试'))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [getSpecificChatflowApi.data, getSpecificChatflowApi.error])
+    }, [getSpecificChatflowApi.data, getSpecificChatflowApi.error, chatflowId])
 
     // Create new chatflow successful
     useEffect(() => {
-        if (createNewChatflowApi.data) {
+        const context = saveRequestContextRef.current
+        const isCurrentRequest = isCurrentAgentflowSaveRequest({
+            context,
+            kind: 'create',
+            activeRouteId: chatflowId,
+            activeGeneration: routeGenerationRef.current
+        })
+        if (createNewChatflowApi.data && isCurrentRequest) {
             const chatflow = createNewChatflowApi.data
+            if (
+                !isExpectedAgentflowSaveResponse({
+                    context,
+                    activeRouteId: chatflowId,
+                    activeGeneration: routeGenerationRef.current,
+                    response: chatflow
+                })
+            ) {
+                saveRequestContextRef.current = null
+                createNewChatflowApi.reset()
+                setIsFlowDataWriteBlocked(true)
+                errorFailed('保存结果与当前页面不匹配，已禁止继续保存。请重新加载页面后重试。')
+                return
+            }
+            saveRequestContextRef.current = null
             dispatch({ type: SET_CHATFLOW, chatflow })
             saveChatflowSuccess()
-            window.history.replaceState(state, null, `/v2/agentcanvas/${chatflow.id}`)
-        } else if (createNewChatflowApi.error) {
-            errorFailed(`Failed to save ${canvasTitle}: ${createNewChatflowApi.error.response.data.message}`)
+            navigate(`/v2/agentcanvas/${chatflow.id}`, { replace: true, state })
+        } else if (createNewChatflowApi.error && isCurrentRequest) {
+            saveRequestContextRef.current = null
+            errorFailed(getErrorMessage(createNewChatflowApi.error, '保存流程失败，请稍后重试'))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [createNewChatflowApi.data, createNewChatflowApi.error])
+    }, [createNewChatflowApi.data, createNewChatflowApi.error, chatflowId])
 
     // Update chatflow successful
     useEffect(() => {
-        if (updateChatflowApi.data) {
+        const context = saveRequestContextRef.current
+        const isCurrentRequest = isCurrentAgentflowSaveRequest({
+            context,
+            kind: 'update',
+            activeRouteId: chatflowId,
+            activeGeneration: routeGenerationRef.current
+        })
+        if (updateChatflowApi.data && isCurrentRequest) {
+            if (
+                !isExpectedAgentflowSaveResponse({
+                    context,
+                    activeRouteId: chatflowId,
+                    activeGeneration: routeGenerationRef.current,
+                    response: updateChatflowApi.data
+                })
+            ) {
+                saveRequestContextRef.current = null
+                updateChatflowApi.reset()
+                setIsFlowDataWriteBlocked(true)
+                errorFailed('保存结果与当前页面不匹配，已禁止继续保存。请重新加载页面后重试。')
+                return
+            }
+            saveRequestContextRef.current = null
             dispatch({ type: SET_CHATFLOW, chatflow: updateChatflowApi.data })
             saveChatflowSuccess()
-        } else if (updateChatflowApi.error) {
-            errorFailed(`Failed to save ${canvasTitle}: ${updateChatflowApi.error.response.data.message}`)
+        } else if (updateChatflowApi.error && isCurrentRequest) {
+            saveRequestContextRef.current = null
+            errorFailed(getErrorMessage(updateChatflowApi.error, '保存流程失败，请稍后重试'))
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [updateChatflowApi.data, updateChatflowApi.error])
+    }, [updateChatflowApi.data, updateChatflowApi.error, chatflowId])
 
     useEffect(() => {
-        setChatflow(canvasDataStore.chatflow)
-        if (canvasDataStore.chatflow) {
-            const flowData = canvasDataStore.chatflow.flowData ? JSON.parse(canvasDataStore.chatflow.flowData) : []
-            checkIfSyncNodesAvailable(flowData.nodes || [])
+        const storeChatflow = canvasDataStore.chatflow
+        if (!isExpectedAgentflowResource(chatflowId, storeChatflow) || (chatflowId && !storeChatflow?.flowData)) {
+            setNodes([])
+            setEdges([])
+            setChatflow(null)
+            setIsFlowDataWriteBlocked(true)
+            return
+        }
+
+        setChatflow(storeChatflow)
+        if (storeChatflow?.flowData) {
+            const applied = applyParsedAgentflowCanvasData({
+                serializedFlowData: storeChatflow.flowData,
+                setNodes,
+                setEdges,
+                onParsed: (flowData) => checkIfSyncNodesAvailable(flowData.nodes || []),
+                onError: (message) => {
+                    setChatflow(null)
+                    setIsSyncNodesButtonEnabled(false)
+                    errorFailed(message)
+                }
+            })
+            setIsFlowDataWriteBlocked(!applied)
+        } else {
+            setIsFlowDataWriteBlocked(false)
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [canvasDataStore.chatflow])
+    }, [canvasDataStore.chatflow, chatflowId])
 
-    // Initialization
-    useEffect(() => {
+    // Load route-scoped flow data. Reset before paint so a previous route can never remain actionable.
+    useLayoutEffect(() => {
+        routeGenerationRef.current += 1
+        saveRequestContextRef.current = null
+        createNewChatflowApi.reset()
+        updateChatflowApi.reset()
+        getSpecificChatflowApi.reset()
         setIsSyncNodesButtonEnabled(false)
+        setSelectedNode(null)
+        setEditNodeDialogOpen(false)
+        setNodes([])
+        setEdges([])
+        setChatflow(null)
+        setIsFlowDataWriteBlocked(true)
+        dispatch({ type: SET_CHATFLOW, chatflow: null })
+        dispatch({ type: REMOVE_DIRTY })
         if (chatflowId) {
             getSpecificChatflowApi.request(chatflowId)
         } else {
+            const newAgentflowDraft = {
+                name: `未命名${canvasTitle}`,
+                type: 'AGENTFLOW'
+            }
             if (localStorage.getItem('duplicatedFlowData')) {
                 handleLoadFlow(localStorage.getItem('duplicatedFlowData'))
                 setTimeout(() => localStorage.removeItem('duplicatedFlowData'), 0)
-            } else {
-                setNodes([])
-                setEdges([])
             }
+            setChatflow(newAgentflowDraft)
+            setIsFlowDataWriteBlocked(false)
             dispatch({
                 type: SET_CHATFLOW,
-                chatflow: {
-                    name: `Untitled ${canvasTitle}`
-                }
+                chatflow: newAgentflowDraft
             })
         }
 
+        // useApi request/reset are intentionally scoped by this route generation.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chatflowId])
+
+    useEffect(() => {
         getNodesApi.request()
 
-        // Clear dirty state before leaving and remove any ongoing test triggers and webhooks
         return () => {
             setTimeout(() => dispatch({ type: REMOVE_DIRTY }), 0)
         }
@@ -622,24 +761,6 @@ const AgentflowCanvas = () => {
     useEffect(() => {
         setCanvasDataStore(canvas)
     }, [canvas])
-
-    useEffect(() => {
-        function handlePaste(e) {
-            const pasteData = e.clipboardData.getData('text')
-            //TODO: prevent paste event when input focused, temporary fix: catch chatflow syntax
-            if (pasteData.includes('{"nodes":[') && pasteData.includes('],"edges":[')) {
-                handleLoadFlow(pasteData)
-            }
-        }
-
-        window.addEventListener('paste', handlePaste)
-
-        return () => {
-            window.removeEventListener('paste', handlePaste)
-        }
-
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
 
     useEffect(() => {
         if (templateFlowData && templateFlowData.includes('"nodes":[') && templateFlowData.includes('],"edges":[')) {
@@ -711,6 +832,7 @@ const AgentflowCanvas = () => {
                             handleLoadFlow={handleLoadFlow}
                             isAgentCanvas={true}
                             isAgentflowV2={true}
+                            isSaveDisabled={isFlowDataWriteBlocked}
                         />
                     </Toolbar>
                 </AppBar>
@@ -810,14 +932,18 @@ const AgentflowCanvas = () => {
                                         <IconRefreshAlert />
                                     </Fab>
                                 )}
-                                {isScheduleFlow ? (
-                                    <ScheduleHistoryFAB chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
-                                ) : isWebhookFlow ? (
-                                    <WebhookListenerFAB chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
-                                ) : (
-                                    <ChatPopUp isAgentCanvas={true} chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
+                                {isCurrentFlowResourceReady && (
+                                    <>
+                                        {isScheduleFlow ? (
+                                            <ScheduleHistoryFAB chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
+                                        ) : isWebhookFlow ? (
+                                            <WebhookListenerFAB chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
+                                        ) : (
+                                            <ChatPopUp isAgentCanvas={true} chatflowid={chatflowId} onOpenChange={setChatPopupOpen} />
+                                        )}
+                                        {!chatPopupOpen && <ValidationPopUp isAgentCanvas={true} chatflowid={chatflowId} />}
+                                    </>
                                 )}
-                                {!chatPopupOpen && <ValidationPopUp isAgentCanvas={true} chatflowid={chatflowId} />}
                             </ReactFlow>
                         </div>
                     </div>

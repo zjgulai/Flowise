@@ -1,15 +1,18 @@
 import { createPortal } from 'react-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useSelector } from 'react-redux'
 import PropTypes from 'prop-types'
 import { Box, Dialog, DialogContent, DialogTitle, Typography } from '@mui/material'
 import ReactJson from 'flowise-react-json-view'
+
+import { redactErrorDetails } from '@/utils/redactErrorDetails'
 
 const SourceDocDialog = ({ show, dialogProps, onCancel }) => {
     const portalElement = document.getElementById('portal')
     const customization = useSelector((state) => state.customization)
 
     const [data, setData] = useState({})
+    const redactedData = useMemo(() => redactErrorDetails(data), [data])
 
     useEffect(() => {
         if (dialogProps.data) setData(dialogProps.data)
@@ -29,7 +32,7 @@ const SourceDocDialog = ({ show, dialogProps, onCancel }) => {
             aria-describedby='alert-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
-                {dialogProps.title ?? 'Source Documents'}
+                {dialogProps.title ?? '来源文档'}
             </DialogTitle>
             <DialogContent>
                 {data.error && (
@@ -44,17 +47,17 @@ const SourceDocDialog = ({ show, dialogProps, onCancel }) => {
                         }}
                     >
                         <Typography variant='body2' fontWeight='medium'>
-                            Error:
+                            错误：
                         </Typography>
                         <Typography variant='body2' sx={{ whiteSpace: 'pre-wrap' }}>
-                            {data.error}
+                            来源文档处理失败，详细信息仅对管理员可见
                         </Typography>
                     </Box>
                 )}
                 <ReactJson
                     theme={customization.isDarkMode ? 'ocean' : 'rjv-default'}
                     style={{ padding: 10, borderRadius: 10 }}
-                    src={data}
+                    src={redactedData}
                     name={null}
                     quotesOnKeys={false}
                     enableClipboard={false}

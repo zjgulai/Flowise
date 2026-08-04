@@ -115,12 +115,12 @@ describe('bindChatflowsApi', () => {
     })
 
     describe('getChatModels', () => {
-        it('should call GET /assistants/chatmodels', async () => {
+        it('should call GET /assistants/components/chatmodels', async () => {
             const mockModels = [{ name: 'gpt-4', label: 'GPT-4' }]
             ;(mockClient.get as jest.Mock).mockResolvedValue({ data: mockModels })
 
             const result = await api.getChatModels()
-            expect(mockClient.get).toHaveBeenCalledWith('/assistants/chatmodels')
+            expect(mockClient.get).toHaveBeenCalledWith('/assistants/components/chatmodels')
             expect(result).toEqual(mockModels)
         })
     })

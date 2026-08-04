@@ -38,13 +38,13 @@ describe('isNodeOutdated', () => {
 describe('getNodeVersionWarning', () => {
     it('returns generic outdated message when nodeData has no version but componentNode has one', () => {
         const result = getNodeVersionWarning(makeNodeData({ version: undefined }), makeNodeDataSchema({ version: 1.3 }))
-        expect(result).toContain('Node outdated')
+        expect(result).toContain('节点版本已过期')
         expect(result).toContain('1.3')
     })
 
     it('includes the stale and current version numbers in the outdated message', () => {
         const result = getNodeVersionWarning(makeNodeData({ version: 1 }), makeNodeDataSchema({ version: 3.2 }))
-        expect(result).toContain('Node version 1 outdated')
+        expect(result).toContain('节点版本 1 已过期')
         expect(result).toContain('3.2')
     })
 
@@ -64,7 +64,7 @@ describe('getNodeVersionWarning', () => {
     it('returns default deprecation message when DEPRECATING badge has no deprecateMessage', () => {
         const cn = makeNodeDataSchema({ version: 1.0, badge: 'DEPRECATING' })
         const result = getNodeVersionWarning(makeNodeData({ version: 1.0 }), cn)
-        expect(result).toContain('deprecated')
+        expect(result).toContain('弃用')
     })
 
     it('returns componentNode.warning when set and node is up to date', () => {
@@ -75,7 +75,7 @@ describe('getNodeVersionWarning', () => {
     it('version check takes priority over deprecation badge', () => {
         const cn = makeNodeDataSchema({ version: 2.0, badge: 'DEPRECATING', deprecateMessage: 'Deprecated!' })
         const result = getNodeVersionWarning(makeNodeData({ version: 1 }), cn)
-        expect(result).toContain('outdated')
+        expect(result).toContain('已过期')
         expect(result).not.toContain('Deprecated!')
     })
 

@@ -6,6 +6,7 @@ import workspaceApi from '@/api/workspace'
 import useApi from '@/hooks/useApi'
 import { store } from '@/store'
 import { upgradePlanSuccess } from '@/store/reducers/authSlice'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import {
     Box,
     Button,
@@ -24,6 +25,53 @@ import { useSnackbar } from 'notistack'
 import PropTypes from 'prop-types'
 import { useEffect, useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
+
+const pricingCopy = Object.freeze({
+    Free: '免费版',
+    Starter: '入门版',
+    Pro: '专业版',
+    Enterprise: '企业版',
+    'For trying out the platform': '适合体验平台',
+    'For individuals & small teams': '适合个人与小型团队',
+    'For medium-sized businesses': '适合中型企业',
+    'For large organizations': '适合大型组织',
+    '/month': '/月',
+    'Contact Us': '联系我们',
+    '2 Flows & Assistants': '2 个流程或助手',
+    '100 Predictions / month': '每月 100 次预测',
+    '5MB Storage': '5 MB 存储空间',
+    'Evaluations & Metrics': '评估与指标',
+    'Custom Embedded Chatbot Branding': '自定义嵌入式聊天机器人品牌',
+    'Community Support': '社区支持',
+    'Everything in Free plan, plus': '包含免费版全部功能，另有',
+    'Unlimited Flows & Assistants': '不限量流程与助手',
+    '10,000 Predictions / month': '每月 10,000 次预测',
+    '1GB Storage': '1 GB 存储空间',
+    'Email Support': '邮件支持',
+    'Everything in Starter plan, plus': '包含入门版全部功能，另有',
+    '50,000 Predictions / month': '每月 50,000 次预测',
+    '10GB Storage': '10 GB 存储空间',
+    'Unlimited Workspaces': '不限量工作区',
+    '5 users': '5 位用户',
+    '+ $15/user/month': '+ 15 美元/用户/月',
+    'Admin Roles & Permissions': '管理员角色与权限',
+    'Priority Support': '优先支持',
+    'On-Premise Deployment': '本地化部署',
+    'Air-gapped Environments': '物理隔离环境',
+    'SSO & SAML': 'SSO 与 SAML',
+    'LDAP & RBAC': 'LDAP 与 RBAC',
+    Versioning: '版本管理',
+    'Audit Logs': '审计日志',
+    '99.99% Uptime SLA': '99.99% 可用性 SLA',
+    'Personalized Support': '专属支持'
+})
+
+const localizePricingCopy = (value, fallback = '暂未提供中文说明') => {
+    if (typeof value !== 'string') return value
+    if (Object.hasOwn(pricingCopy, value)) return pricingCopy[value]
+    if (/[㐀-鿿]/u.test(value) || !/[A-Za-z]/.test(value)) return value
+    return fallback
+}
 
 const PricingDialog = ({ open, onClose }) => {
     const customization = useSelector((state) => state.customization)
@@ -73,11 +121,14 @@ const PricingDialog = ({ open, onClose }) => {
             if (response.data?.url) {
                 setOpenPlanDialog(false)
                 window.open(response.data.url, '_blank')
+            } else {
+                enqueueSnackbar('账单门户暂不可用，请稍后重试', { variant: 'error' })
             }
         } catch (error) {
-            console.error('Error accessing billing portal:', error)
+            enqueueSnackbar(getErrorMessage(error, '无法打开账单门户，请稍后重试'), { variant: 'error' })
+        } finally {
+            setIsOpeningBillingPortal(false)
         }
-        setIsOpeningBillingPortal(false)
     }
 
     const handleUpdatePlan = async () => {
@@ -93,16 +144,15 @@ const PricingDialog = ({ open, onClose }) => {
             if (response.data.status === 'success') {
                 // Subscription updated successfully
                 store.dispatch(upgradePlanSuccess(response.data.user))
-                enqueueSnackbar('Subscription updated successfully!', { variant: 'success' })
+                enqueueSnackbar('订阅方案已更新', { variant: 'success' })
                 onClose(true)
             } else {
-                const errorMessage = response.data.message || 'Subscription failed to update'
+                const errorMessage = getErrorMessage({ response }, '订阅方案更新失败，请稍后重试')
                 enqueueSnackbar(errorMessage, { variant: 'error' })
                 onClose()
             }
         } catch (error) {
-            console.error('Error updating plan:', error)
-            const errorMessage = err.response?.data?.message || 'Failed to verify subscription'
+            const errorMessage = getErrorMessage(error, '无法验证订阅状态，请稍后重试')
             enqueueSnackbar(errorMessage, { variant: 'error' })
             onClose()
         } finally {
@@ -168,7 +218,7 @@ const PricingDialog = ({ open, onClose }) => {
             if (plan.title === 'Enterprise') {
                 return {
                     ...plan,
-                    buttonText: 'Contact Us',
+                    buttonText: '联系我们',
                     buttonVariant: 'outlined',
                     buttonAction: () => handlePlanClick(plan)
                 }
@@ -186,7 +236,7 @@ const PricingDialog = ({ open, onClose }) => {
                 ...plan,
                 currentPlan: isCurrentPlanValue,
                 isStarterPlan,
-                buttonText: isCurrentPlanValue ? 'Current Plan' : 'Get Started',
+                buttonText: isCurrentPlanValue ? '当前方案' : '开始使用',
                 buttonVariant: plan.mostPopular ? 'contained' : 'outlined',
                 disabled: isCurrentPlanValue || !currentUser.isOrganizationAdmin,
                 buttonAction: () => handlePlanClick(plan)
@@ -234,7 +284,7 @@ const PricingDialog = ({ open, onClose }) => {
                         position: 'relative'
                     }}
                 >
-                    <Typography variant='h3'>Pricing Plans</Typography>
+                    <Typography variant='h3'>订阅方案</Typography>
                     <IconButton
                         onClick={handleClose}
                         sx={{
@@ -244,6 +294,7 @@ const PricingDialog = ({ open, onClose }) => {
                             transform: 'translateY(-50%)'
                         }}
                         disabled={isUpdatingPlan}
+                        aria-label='关闭订阅方案'
                     >
                         <IconX />
                     </IconButton>
@@ -287,7 +338,7 @@ const PricingDialog = ({ open, onClose }) => {
                                             }}
                                         >
                                             <Typography sx={{ color: 'white' }} variant='caption' fontWeight='bold'>
-                                                Current Plan
+                                                当前方案
                                             </Typography>
                                         </Box>
                                     )}
@@ -304,12 +355,12 @@ const PricingDialog = ({ open, onClose }) => {
                                             }}
                                         >
                                             <Typography sx={{ color: 'white' }} variant='caption' fontWeight='bold'>
-                                                Most Popular
+                                                最受欢迎
                                             </Typography>
                                         </Box>
                                     )}
                                     <Typography variant='h4' gutterBottom>
-                                        {plan.title}
+                                        {localizePricingCopy(plan.title)}
                                     </Typography>
                                     <Typography
                                         variant='body2'
@@ -319,11 +370,11 @@ const PricingDialog = ({ open, onClose }) => {
                                         }}
                                         gutterBottom
                                     >
-                                        {plan.subtitle}
+                                        {localizePricingCopy(plan.subtitle)}
                                     </Typography>
                                     <Box sx={{ mb: 3 }}>
                                         <Typography variant='h3' component='span'>
-                                            {plan.price}
+                                            {localizePricingCopy(plan.price, '请咨询客服')}
                                         </Typography>
                                         {plan.period && (
                                             <Typography
@@ -334,7 +385,7 @@ const PricingDialog = ({ open, onClose }) => {
                                                 component='span'
                                                 color='text.secondary'
                                             >
-                                                {plan.period}
+                                                {localizePricingCopy(plan.period)}
                                             </Typography>
                                         )}
                                     </Box>
@@ -343,7 +394,7 @@ const PricingDialog = ({ open, onClose }) => {
                                             <Box key={index} sx={{ display: 'flex', alignItems: 'start', mb: 1 }}>
                                                 <IconCheck color={theme.palette.success.dark} size={15} style={{ marginRight: 8 }} />
                                                 <Box>
-                                                    <Typography variant='body1'>{feature.text}</Typography>
+                                                    <Typography variant='body1'>{localizePricingCopy(feature.text)}</Typography>
                                                     {feature.subtext && (
                                                         <Typography
                                                             sx={{
@@ -352,7 +403,7 @@ const PricingDialog = ({ open, onClose }) => {
                                                             variant='caption'
                                                             color='text.secondary'
                                                         >
-                                                            {feature.subtext}
+                                                            {localizePricingCopy(feature.subtext)}
                                                         </Typography>
                                                     )}
                                                 </Box>
@@ -384,7 +435,7 @@ const PricingDialog = ({ open, onClose }) => {
                                                     position: 'relative'
                                                 }}
                                             >
-                                                First Month Free
+                                                首月免费
                                             </Box>
                                         </Box>
                                     )}
@@ -395,7 +446,7 @@ const PricingDialog = ({ open, onClose }) => {
                                         onClick={plan.buttonAction}
                                         disabled={plan.disabled}
                                     >
-                                        {plan.currentPlan ? 'Current Plan' : plan.buttonText}
+                                        {plan.currentPlan ? '当前方案' : plan.buttonText}
                                     </Button>
                                 </Box>
                             </Grid>
@@ -405,7 +456,7 @@ const PricingDialog = ({ open, onClose }) => {
             </Dialog>
 
             <Dialog fullWidth maxWidth='sm' open={openPlanDialog} onClose={handlePlanDialogClose}>
-                <DialogTitle variant='h4'>Confirm Plan Change</DialogTitle>
+                <DialogTitle variant='h4'>确认更改订阅方案</DialogTitle>
                 <DialogContent>
                     <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
                         {purchasedSeats > 0 || occupiedSeats > 1 ? (
@@ -420,7 +471,7 @@ const PricingDialog = ({ open, onClose }) => {
                                 }}
                             >
                                 <IconAlertCircle size={20} />
-                                You must remove additional seats and users before changing your plan.
+                                更改方案前，请先移除额外席位和用户。
                             </Typography>
                         ) : workspaceCount > 1 ? (
                             <>
@@ -435,7 +486,7 @@ const PricingDialog = ({ open, onClose }) => {
                                     }}
                                 >
                                     <IconAlertCircle size={20} />
-                                    You must remove all workspaces except the default workspace before changing your plan.
+                                    更改方案前，请先移除默认工作区之外的所有工作区。
                                 </Typography>
                             </>
                         ) : proAPIKeysCount > 0 ? (
@@ -451,7 +502,7 @@ const PricingDialog = ({ open, onClose }) => {
                                     }}
                                 >
                                     <IconAlertCircle size={20} />
-                                    You must remove all API keys with sharing permissions before changing your plan.
+                                    更改方案前，请先移除所有具有共享权限的 API 密钥。
                                 </Typography>
                             </>
                         ) : (
@@ -460,7 +511,7 @@ const PricingDialog = ({ open, onClose }) => {
                                     <CircularProgress size={20} />
                                 ) : getCustomerDefaultSourceApi.data?.invoice_settings?.default_payment_method ? (
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 2 }}>
-                                        <Typography variant='subtitle2'>Payment Method</Typography>
+                                        <Typography variant='subtitle2'>付款方式</Typography>
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                             {getCustomerDefaultSourceApi.data.invoice_settings.default_payment_method.card && (
                                                 <>
@@ -480,7 +531,7 @@ const PricingDialog = ({ open, onClose }) => {
                                                             }
                                                         </Typography>
                                                         <Typography color='text.secondary'>
-                                                            (expires{' '}
+                                                            （有效期至{' '}
                                                             {
                                                                 getCustomerDefaultSourceApi.data.invoice_settings.default_payment_method
                                                                     .card.exp_month
@@ -490,7 +541,7 @@ const PricingDialog = ({ open, onClose }) => {
                                                                 getCustomerDefaultSourceApi.data.invoice_settings.default_payment_method
                                                                     .card.exp_year
                                                             }
-                                                            )
+                                                            ）
                                                         </Typography>
                                                     </Box>
                                                 </>
@@ -501,7 +552,7 @@ const PricingDialog = ({ open, onClose }) => {
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, p: 2 }}>
                                         <Typography color='error' sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                             <IconAlertCircle size={20} />
-                                            No payment method found
+                                            未找到付款方式
                                         </Typography>
                                         <Button
                                             disabled={isOpeningBillingPortal}
@@ -512,10 +563,10 @@ const PricingDialog = ({ open, onClose }) => {
                                             {isOpeningBillingPortal ? (
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                                     <CircularProgress size={16} color='inherit' />
-                                                    <span>Opening Billing Portal...</span>
+                                                    <span>正在打开账单门户…</span>
                                                 </Box>
                                             ) : (
-                                                'Add Payment Method in Billing Portal'
+                                                '在账单门户中添加付款方式'
                                             )}
                                         </Button>
                                     </Box>
@@ -540,12 +591,12 @@ const PricingDialog = ({ open, onClose }) => {
                                     >
                                         {/* Date Range */}
                                         <Typography variant='body2' color='text.secondary'>
-                                            {new Date(prorationInfo.currentPeriodStart * 1000).toLocaleDateString('en-US', {
+                                            {new Date(prorationInfo.currentPeriodStart * 1000).toLocaleDateString('zh-CN', {
                                                 month: 'short',
                                                 day: 'numeric'
                                             })}{' '}
-                                            -{' '}
-                                            {new Date(prorationInfo.currentPeriodEnd * 1000).toLocaleDateString('en-US', {
+                                            至{' '}
+                                            {new Date(prorationInfo.currentPeriodEnd * 1000).toLocaleDateString('zh-CN', {
                                                 month: 'short',
                                                 day: 'numeric',
                                                 year: 'numeric'
@@ -567,14 +618,14 @@ const PricingDialog = ({ open, onClose }) => {
                                                 }}
                                             >
                                                 <Typography variant='body2' fontWeight='bold'>
-                                                    {`You're eligible for your first month free!`}
+                                                    您符合首月免费条件！
                                                 </Typography>
                                             </Box>
                                         )}
 
                                         {/* Base Plan */}
                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <Typography variant='body2'>{selectedPlan.title} Plan</Typography>
+                                            <Typography variant='body2'>{localizePricingCopy(selectedPlan.title)}方案</Typography>
                                             <Typography variant='body2'>
                                                 {prorationInfo.currency} {Math.max(0, prorationInfo.newPlanAmount).toFixed(2)}
                                             </Typography>
@@ -582,7 +633,7 @@ const PricingDialog = ({ open, onClose }) => {
 
                                         {selectedPlan?.title === 'Starter' && prorationInfo.eligibleForFirstMonthFree && (
                                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <Typography variant='body2'>First Month Discount</Typography>
+                                                <Typography variant='body2'>首月优惠</Typography>
                                                 <Typography variant='body2' color='success.main'>
                                                     -{prorationInfo.currency} {Math.max(0, prorationInfo.newPlanAmount).toFixed(2)}
                                                 </Typography>
@@ -598,7 +649,7 @@ const PricingDialog = ({ open, onClose }) => {
                                                     alignItems: 'center'
                                                 }}
                                             >
-                                                <Typography variant='body2'>Applied account balance</Typography>
+                                                <Typography variant='body2'>已抵扣账户余额</Typography>
                                                 <Typography
                                                     variant='body2'
                                                     color={prorationInfo.creditBalance < 0 ? 'success.main' : 'error.main'}
@@ -616,7 +667,7 @@ const PricingDialog = ({ open, onClose }) => {
                                                     alignItems: 'center'
                                                 }}
                                             >
-                                                <Typography variant='body2'>Credit balance</Typography>
+                                                <Typography variant='body2'>可用余额</Typography>
                                                 <Typography
                                                     variant='body2'
                                                     color={prorationInfo.prorationAmount < 0 ? 'success.main' : 'error.main'}
@@ -637,7 +688,7 @@ const PricingDialog = ({ open, onClose }) => {
                                                 borderTop: `1px solid ${theme.palette.divider}`
                                             }}
                                         >
-                                            <Typography variant='h5'>Due today</Typography>
+                                            <Typography variant='h5'>今日应付</Typography>
                                             <Typography variant='h5'>
                                                 {prorationInfo.currency}{' '}
                                                 {Math.max(0, prorationInfo.prorationAmount + prorationInfo.creditBalance).toFixed(2)}
@@ -652,7 +703,7 @@ const PricingDialog = ({ open, onClose }) => {
                                                     fontStyle: 'italic'
                                                 }}
                                             >
-                                                Your available credit will automatically apply to your next invoice.
+                                                可用余额将自动抵扣下一张账单。
                                             </Typography>
                                         )}
                                     </Box>
@@ -664,7 +715,7 @@ const PricingDialog = ({ open, onClose }) => {
                 {getCustomerDefaultSourceApi.data?.invoice_settings?.default_payment_method && (
                     <DialogActions>
                         <Button onClick={handlePlanDialogClose} disabled={isUpdatingPlan}>
-                            Cancel
+                            取消
                         </Button>
                         <Button
                             variant='contained'
@@ -684,10 +735,10 @@ const PricingDialog = ({ open, onClose }) => {
                             {isUpdatingPlan ? (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     <CircularProgress size={16} color='inherit' />
-                                    <span>Updating Plan...</span>
+                                    <span>正在更新方案…</span>
                                 </Box>
                             ) : (
-                                'Confirm Change'
+                                '确认更改'
                             )}
                         </Button>
                     </DialogActions>

@@ -15,7 +15,7 @@
         }
     },
     "scripts": {
-        "build": "tsc && gulp",
+        "build": "tsc && gulp && node ../../scripts/metadata-i18n/write-build-fingerprint.mjs",
         "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
         "clean": "rimraf dist",
         "nuke": "pnpm clean && rimraf node_modules .turbo",

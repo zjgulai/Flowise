@@ -126,8 +126,17 @@ function normalizeOptions(raw: unknown, apiBaseUrl: string): OptionItem[] {
                 const name = typeof obj.name === 'string' ? obj.name : ''
                 const label = typeof obj.label === 'string' ? obj.label : name
                 const description = typeof obj.description === 'string' ? obj.description : undefined
+                const displayLabel = typeof obj.displayLabel === 'string' ? obj.displayLabel : undefined
+                const displayDescription = typeof obj.displayDescription === 'string' ? obj.displayDescription : undefined
                 const imageSrc = obj.imageSrc ? `${apiBaseUrl}/api/v1/node-icon/${name}` : undefined
-                return { label, name, description, imageSrc }
+                return {
+                    label,
+                    name,
+                    description,
+                    ...(displayLabel ? { displayLabel } : {}),
+                    ...(displayDescription ? { displayDescription } : {}),
+                    ...(imageSrc ? { imageSrc } : {})
+                }
             }
             if (typeof item === 'string') {
                 return { label: item, name: item }

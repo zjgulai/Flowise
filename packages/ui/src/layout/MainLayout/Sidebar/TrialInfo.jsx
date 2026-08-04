@@ -29,18 +29,23 @@ const TrialInfo = ({ billingPortalUrl, isLoading, paymentMethodExists, trialDays
             ) : (
                 <>
                     <Typography variant='body1' color='inherit' sx={{ lineHeight: '1.5' }}>
-                        There are{' '}
+                        试用期还剩{' '}
                         <Typography variant='' color='error'>
-                            {trialDaysLeft} days left
+                            {trialDaysLeft} 天
                         </Typography>{' '}
-                        in your trial. {!paymentMethodExists ? 'Update your payment method to avoid service interruption.' : ''}
+                        。{!paymentMethodExists ? '请更新付款方式，以免服务中断。' : ''}
                     </Typography>
                     {!paymentMethodExists && (
-                        <a href={billingPortalUrl} target='_blank' rel='noreferrer' style={{ width: '100%' }}>
-                            <StyledButton variant='contained' sx={{ borderRadius: 2, height: 32, width: '100%' }}>
-                                Update Payment Method
-                            </StyledButton>
-                        </a>
+                        <StyledButton
+                            component='a'
+                            href={billingPortalUrl}
+                            target='_blank'
+                            rel='noreferrer'
+                            variant='contained'
+                            sx={{ borderRadius: 2, height: 32, width: '100%' }}
+                        >
+                            更新付款方式
+                        </StyledButton>
                     )}
                 </>
             )}

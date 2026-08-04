@@ -20,6 +20,7 @@ import { baseURL } from '@/store/constant'
 import { IconTrash, IconCopy, IconInfoCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { flowContext } from '@/store/context/ReactFlowContext'
 import LlamaindexPNG from '@/assets/images/llamaindex.png'
+import { getMetadataDisplayText, resolveInstanceDisplayLabel } from '@/utils/componentMetadataDisplay'
 
 // ===========================|| CANVAS NODE ||=========================== //
 
@@ -27,6 +28,7 @@ const CanvasNode = ({ data }) => {
     const theme = useTheme()
     const canvas = useSelector((state) => state.canvas)
     const { deleteNode, duplicateNode } = useContext(flowContext)
+    const componentNode = canvas.componentNodes.find((node) => node.name === data.name)
 
     const [showDialog, setShowDialog] = useState(false)
     const [dialogProps, setDialogProps] = useState({})
@@ -49,16 +51,16 @@ const CanvasNode = ({ data }) => {
         else return !canvas.canvasDialogShow && open
     }
 
-    const nodeOutdatedMessage = (oldVersion, newVersion) => `Node version ${oldVersion} outdated\nUpdate to latest version ${newVersion}`
+    const nodeOutdatedMessage = (oldVersion, newVersion) => `节点版本 ${oldVersion} 已过期\n请更新至最新版本 ${newVersion}`
 
-    const nodeVersionEmptyMessage = (newVersion) => `Node outdated\nUpdate to latest version ${newVersion}`
+    const nodeVersionEmptyMessage = (newVersion) => `节点已过期\n请更新至最新版本 ${newVersion}`
 
     const onDialogClicked = () => {
         const dialogProps = {
             data,
             inputParams: data.inputParams.filter((inputParam) => !inputParam.hidden).filter((param) => param.additionalParams),
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setDialogProps(dialogProps)
         setShowDialog(true)
@@ -71,7 +73,6 @@ const CanvasNode = ({ data }) => {
     }
 
     useEffect(() => {
-        const componentNode = canvas.componentNodes.find((nd) => nd.name === data.name)
         if (componentNode) {
             if (!data.version) {
                 setWarningMessage(nodeVersionEmptyMessage(componentNode.version))
@@ -79,16 +80,15 @@ const CanvasNode = ({ data }) => {
                 setWarningMessage(nodeOutdatedMessage(data.version, componentNode.version))
             } else if (componentNode.badge === 'DEPRECATING') {
                 setWarningMessage(
-                    componentNode?.deprecateMessage ??
-                        'This node will be deprecated in the next release. Change to a new node tagged with NEW'
+                    getMetadataDisplayText(componentNode, 'deprecateMessage', '此节点将在下一版本中弃用，请改用带有“新增”标记的新节点。')
                 )
             } else if (componentNode.warning) {
-                setWarningMessage(componentNode.warning)
+                setWarningMessage(getMetadataDisplayText(componentNode, 'warning', componentNode.warning))
             } else {
                 setWarningMessage('')
             }
         }
-    }, [canvas.componentNodes, data.name, data.version])
+    }, [componentNode, data.version])
 
     return (
         <>
@@ -136,7 +136,7 @@ const CanvasNode = ({ data }) => {
                             <IconButton
                                 title='提示'
                                 onClick={() => {
-                                    setInfoDialogProps({ data })
+                                    setInfoDialogProps({ data, componentMetadata: componentNode })
                                     setShowInfoDialog(true)
                                 }}
                                 sx={{ height: '35px', width: '35px', '&:hover': { color: theme?.palette.secondary.main } }}
@@ -165,7 +165,7 @@ const CanvasNode = ({ data }) => {
                                     <img
                                         style={{ width: '100%', height: '100%', padding: 5, objectFit: 'contain' }}
                                         src={`${baseURL}/api/v1/node-icon/${data.name}`}
-                                        alt='Notification'
+                                        alt='节点图标'
                                     />
                                 </div>
                             </Box>
@@ -177,7 +177,7 @@ const CanvasNode = ({ data }) => {
                                         mr: 2
                                     }}
                                 >
-                                    {data.label}
+                                    {resolveInstanceDisplayLabel(data, componentNode)}
                                 </Typography>
                             </Box>
                             <div style={{ flexGrow: 1 }}></div>
@@ -217,7 +217,7 @@ const CanvasNode = ({ data }) => {
                                             textAlign: 'center'
                                         }}
                                     >
-                                        Inputs
+                                        输入
                                     </Typography>
                                 </Box>
                                 <Divider />
@@ -255,7 +255,7 @@ const CanvasNode = ({ data }) => {
                                 }}
                             >
                                 <Button sx={{ borderRadius: 25, width: '90%', mb: 2 }} variant='outlined' onClick={onDialogClicked}>
-                                    Additional Parameters
+                                    其他参数
                                 </Button>
                             </div>
                         )}
@@ -268,7 +268,7 @@ const CanvasNode = ({ data }) => {
                                         textAlign: 'center'
                                     }}
                                 >
-                                    Output
+                                    输出
                                 </Typography>
                             </Box>
                         )}

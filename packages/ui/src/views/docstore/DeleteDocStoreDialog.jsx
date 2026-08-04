@@ -20,8 +20,7 @@ import {
     TableCell,
     DialogActions,
     Card,
-    Stack,
-    Link
+    Stack
 } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
@@ -186,7 +185,7 @@ const DeleteDocStoreDialog = ({ show, dialogProps, onCancel, onDelete }) => {
                 }}
             >
                 <span style={{ marginTop: '20px' }}>{dialogProps.description}</span>
-                {dialogProps.vectorStoreConfig && !dialogProps.recordManagerConfig && (
+                {dialogProps.vectorStoreConfig && (
                     <div
                         style={{
                             display: 'flex',
@@ -199,16 +198,8 @@ const DeleteDocStoreDialog = ({ show, dialogProps, onCancel, onDelete }) => {
                     >
                         <IconAlertTriangle size={70} color='orange' />
                         <span style={{ color: 'rgb(116,66,16)', marginLeft: 10 }}>
-                            <strong>注意：</strong>如果未配置记录管理器，将仅从文档库中删除文档分块。向量数据库中的实际向量嵌入不会改变。
-                            若要自动清理向量库数据，请配置记录管理器。{' '}
-                            <Link
-                                href='https://docs.flowiseai.com/integrations/langchain/record-managers'
-                                target='_blank'
-                                rel='noopener noreferrer'
-                                sx={{ fontWeight: 500, color: 'rgb(116,66,16)', textDecoration: 'underline' }}
-                            >
-                                了解更多
-                            </Link>
+                            <strong>注意：</strong>本操作仅删除本地数据，不会删除外部向量服务中的数据。
+                            请在本地删除后按受控清理流程另行处理并核验外部数据；两步无法保证原子性。
                         </span>
                     </div>
                 )}
@@ -216,11 +207,11 @@ const DeleteDocStoreDialog = ({ show, dialogProps, onCancel, onDelete }) => {
                     <Card sx={{ borderColor: theme.palette.primary[200] + 75, p: 2 }} variant='outlined'>
                         <Stack sx={{ mt: 1, mb: 2, ml: 1, alignItems: 'center' }} direction='row' spacing={2}>
                             <SettingsIcon />
-                            <Typography variant='h4'>配置</Typography>
+                            <Typography variant='h4'>关联的外部配置（仅供受控清理核对）</Typography>
                         </Stack>
                         <Stack direction='column'>
                             <TableContainer component={Paper} sx={{ maxHeight: '400px', overflow: 'auto' }}>
-                                <Table sx={{ minWidth: 650 }} aria-label='simple table'>
+                                <Table sx={{ minWidth: 650 }} aria-label='待删除的文档库数据'>
                                     <TableBody>
                                         <TableRow sx={{ '& td': { border: 0 } }}>
                                             <TableCell sx={{ pb: 0, pt: 0 }} colSpan={6}>

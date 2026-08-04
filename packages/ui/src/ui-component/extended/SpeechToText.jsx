@@ -23,6 +23,7 @@ import groqPng from '@/assets/images/groq.png'
 
 // store
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 
 // API
 import chatflowsApi from '@/api/chatflows'
@@ -55,8 +56,7 @@ const speechToTextProviders = {
                 label: '语言',
                 name: 'language',
                 type: 'string',
-                description:
-                    'The language of the input audio. Supplying the input language in ISO-639-1 format will improve accuracy and latency.',
+                description: '输入音频的语言。使用 <code>ISO-639-1</code> 格式指定语言可提高识别准确率并降低延迟。',
                 placeholder: 'en',
                 optional: true
             },
@@ -65,7 +65,7 @@ const speechToTextProviders = {
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
-                description: `An optional text to guide the model's style or continue a previous audio segment. The prompt should match the audio language.`,
+                description: '用于引导模型风格或延续上一段音频的可选文本。提示词应与音频语言一致。',
                 optional: true
             },
             {
@@ -73,7 +73,7 @@ const speechToTextProviders = {
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
-                description: `The sampling temperature, between 0 and 1. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic.`,
+                description: '采样温度范围为 0 到 1。较高值（如 0.8）会增加输出随机性，较低值（如 0.2）会使输出更集中、稳定。',
                 optional: true
             }
         ]
@@ -108,14 +108,13 @@ const speechToTextProviders = {
                 label: '基础 URL',
                 name: 'baseUrl',
                 type: 'string',
-                description: 'The base URL of the local AI server'
+                description: '本地 AI 服务器的基础 URL'
             },
             {
                 label: '语言',
                 name: 'language',
                 type: 'string',
-                description:
-                    'The language of the input audio. Supplying the input language in ISO-639-1 format will improve accuracy and latency.',
+                description: '输入音频的语言。使用 <code>ISO-639-1</code> 格式指定语言可提高识别准确率并降低延迟。',
                 placeholder: 'en',
                 optional: true
             },
@@ -123,7 +122,7 @@ const speechToTextProviders = {
                 label: '模型',
                 name: 'model',
                 type: 'string',
-                description: `The STT model to load. Defaults to whisper-1 if left blank.`,
+                description: '要加载的 STT 模型；留空时默认使用 whisper-1。',
                 placeholder: 'whisper-1',
                 optional: true
             },
@@ -132,7 +131,7 @@ const speechToTextProviders = {
                 name: 'prompt',
                 type: 'string',
                 rows: 4,
-                description: `An optional text to guide the model's style or continue a previous audio segment. The prompt should match the audio language.`,
+                description: '用于引导模型风格或延续上一段音频的可选文本。提示词应与音频语言一致。',
                 optional: true
             },
             {
@@ -140,7 +139,7 @@ const speechToTextProviders = {
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
-                description: `The sampling temperature, between 0 and 1. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic.`,
+                description: '采样温度范围为 0 到 1。较高值（如 0.8）会增加输出随机性，较低值（如 0.2）会使输出更集中、稳定。',
                 optional: true
             }
         ]
@@ -161,7 +160,7 @@ const speechToTextProviders = {
                 label: '语言',
                 name: 'language',
                 type: 'string',
-                description: 'The recognition language (e.g., "en-US", "es-ES")',
+                description: '识别语言（例如 <code>en-US</code>、<code>es-ES</code>）',
                 placeholder: 'en-US',
                 optional: true
             },
@@ -169,7 +168,7 @@ const speechToTextProviders = {
                 label: '亵渎过滤模式',
                 name: 'profanityFilterMode',
                 type: 'options',
-                description: 'How to handle profanity in the transcription',
+                description: '设置如何处理转写内容中的不雅用语',
                 options: [
                     {
                         label: '无',
@@ -188,10 +187,10 @@ const speechToTextProviders = {
                 optional: true
             },
             {
-                label: 'Audio Channels',
+                label: '音频声道',
                 name: 'channels',
                 type: 'string',
-                description: 'Comma-separated list of audio channels to process (e.g., "0,1")',
+                description: '要处理的音频声道列表，使用英文逗号分隔（例如“0,1”）',
                 placeholder: '0,1',
                 default: '0,1'
             }
@@ -207,7 +206,7 @@ const speechToTextProviders = {
                 label: '模型',
                 name: 'model',
                 type: 'string',
-                description: `The STT model to load. Defaults to whisper-large-v3 if left blank.`,
+                description: '要加载的 STT 模型；留空时默认使用 <code>whisper-large-v3</code>。',
                 placeholder: 'whisper-large-v3',
                 optional: true
             },
@@ -221,8 +220,7 @@ const speechToTextProviders = {
                 label: '语言',
                 name: 'language',
                 type: 'string',
-                description:
-                    'The language of the input audio. Supplying the input language in ISO-639-1 format will improve accuracy and latency.',
+                description: '输入音频的语言。使用 <code>ISO-639-1</code> 格式指定语言可提高识别准确率并降低延迟。',
                 placeholder: 'en',
                 optional: true
             },
@@ -231,8 +229,7 @@ const speechToTextProviders = {
                 name: 'temperature',
                 type: 'number',
                 step: 0.1,
-                description:
-                    'The sampling temperature, between 0 and 1. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic.',
+                description: '采样温度范围为 0 到 1。较高值（如 0.8）会增加输出随机性，较低值（如 0.2）会使输出更集中、稳定。',
                 optional: true
             }
         ]
@@ -259,7 +256,7 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
             })
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Speech To Text Configuration Saved',
+                    message: '语音转文字配置已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -275,9 +272,7 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
             }
         } catch (error) {
             enqueueSnackbar({
-                message: `Failed to save Speech To Text Configuration: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存语音转文字配置失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -334,10 +329,9 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
                 })
                 setSelectedProvider(selectedProvider)
                 setSpeechToText(speechToText)
-            } catch (e) {
+            } catch {
                 setSpeechToText({})
                 setSelectedProvider('none')
-                console.error(e)
             }
         }
 
@@ -394,7 +388,7 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
                                         padding: 10,
                                         objectFit: 'contain'
                                     }}
-                                    alt='AI'
+                                    alt='语音转文字提供商'
                                     src={speechToTextProviders[selectedProvider].icon}
                                 />
                             </div>
@@ -485,7 +479,7 @@ const SpeechToText = ({ dialogProps, onConfirm }) => {
                     onClick={onSave}
                     sx={{ minWidth: 100 }}
                 >
-                    Save
+                    保存
                 </StyledButton>
             </Box>
         </>

@@ -1,19 +1,26 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 
 import { Box, CircularProgress, IconButton, TextField, Typography } from '@mui/material'
-import Autocomplete from '@mui/material/Autocomplete'
+import Autocomplete, { createFilterOptions } from '@mui/material/Autocomplete'
 import { IconEdit, IconRefresh } from '@tabler/icons-react'
 
 import type { AsyncInputProps } from '@/atoms'
 import { Dropdown } from '@/atoms'
 import type { FlowNode, NodeOption } from '@/core/types'
-import { getDefinedStateKeys, getUpstreamNodes } from '@/core/utils'
+import {
+    getDefinedStateKeys,
+    getMetadataDisplayText,
+    getMetadataOptionSearchText,
+    getUpstreamNodes,
+    resolveInstanceDisplayLabel
+} from '@/core/utils'
 import { useAsyncOptions } from '@/infrastructure/api/hooks'
 import { useAgentflowContext } from '@/infrastructure/store'
 
 import { CreateCredentialDialog } from './CreateCredentialDialog'
 
 const CREATE_NEW_SENTINEL = '-create-'
+const filterMetadataOptions = createFilterOptions<NodeOption>({ stringify: getMetadataOptionSearchText })
 
 /**
  * Build the params object for useAsyncOptions.
@@ -45,11 +52,14 @@ function buildAsyncParams(
 function useFlowAncestorNodeOptions(nodeId?: string): NodeOption[] {
     const { state } = useAgentflowContext()
     if (!nodeId) return []
-    return getUpstreamNodes(nodeId, state.nodes as FlowNode[], state.edges, /* includeStart */ true).map((n) => ({
-        label: n.data.label,
-        name: `${n.id}-${n.data.label}`,
-        description: n.id
-    }))
+    return getUpstreamNodes(nodeId, state.nodes as FlowNode[], state.edges, /* includeStart */ true).map((n) => {
+        const component = state.componentNodes?.find((candidate) => candidate.name === n.data.name)
+        return {
+            label: resolveInstanceDisplayLabel(n.data, component),
+            name: `${n.id}-${n.data.label}`,
+            description: n.id
+        }
+    })
 }
 
 /**
@@ -100,13 +110,15 @@ function OptionContent({ option }: { option: NodeOption }) {
                 <Box
                     component='img'
                     src={option.imageSrc}
-                    alt={option.label}
+                    alt={getMetadataDisplayText(option, 'label', option.label)}
                     sx={{ width: 30, height: 30, padding: '1px', borderRadius: '50%', flexShrink: 0 }}
                 />
             )}
             <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                <Typography variant='h5'>{option.label}</Typography>
-                {option.description && <Typography variant='caption'>{option.description}</Typography>}
+                <Typography variant='h5'>{getMetadataDisplayText(option, 'label', option.label)}</Typography>
+                {(option.displayDescription || option.description) && (
+                    <Typography variant='caption'>{getMetadataDisplayText(option, 'description', option.description)}</Typography>
+                )}
             </Box>
         </>
     )
@@ -257,15 +269,16 @@ function AsyncOptionsDropdown({
     const { options, loading, error, refetch } = useAsyncOptionData(inputParam, nodeName, inputValues)
 
     // Append "- Create New -" sentinel for credential dropdowns
-    const displayOptions = isCredential ? [...options, { label: '- Create New -', name: CREATE_NEW_SENTINEL }] : options
+    const displayOptions = isCredential ? [...options, { label: '- 新建凭据 -', name: CREATE_NEW_SENTINEL }] : options
     const matchedValue = displayOptions.find((o) => o.name === value) ?? null
 
     // Controlled input text — synced to the matched option label so it clears
     // when a previously selected key is removed from the Start node.
-    const [inputText, setInputText] = useState(matchedValue?.label ?? '')
+    const matchedDisplayLabel = matchedValue ? getMetadataDisplayText(matchedValue, 'label', matchedValue.label) : ''
+    const [inputText, setInputText] = useState(matchedDisplayLabel)
     useEffect(() => {
-        setInputText(matchedValue?.label ?? '')
-    }, [matchedValue?.label])
+        setInputText(matchedDisplayLabel)
+    }, [matchedDisplayLabel])
 
     const onChangeRef = useRef(onChange)
     useEffect(() => {
@@ -289,6 +302,7 @@ function AsyncOptionsDropdown({
             size='small'
             disabled={disabled}
             options={displayOptions}
+            filterOptions={filterMetadataOptions}
             value={matchedValue}
             inputValue={inputText}
             onInputChange={(_e, newValue, reason) => {
@@ -297,7 +311,7 @@ function AsyncOptionsDropdown({
                     setInputText(newValue)
                 }
             }}
-            getOptionLabel={(o) => o.label}
+            getOptionLabel={(o) => getMetadataDisplayText(o, 'label', o.label)}
             isOptionEqualToValue={(o, v) => o.name === v.name}
             onChange={(_e, selection) => {
                 if (selection?.name === CREATE_NEW_SENTINEL) {
@@ -331,7 +345,7 @@ function AsyncOptionsDropdown({
                                     <Box
                                         component='img'
                                         src={matchedValue.imageSrc}
-                                        alt={matchedValue.label}
+                                        alt={matchedDisplayLabel}
                                         sx={{ width: 32, height: 32, borderRadius: '50%', mr: 0.5, flexShrink: 0 }}
                                     />
                                 )}
@@ -401,8 +415,9 @@ function AsyncMultiOptionsDropdown({ inputParam, value, disabled, onChange, node
             size='small'
             disabled={disabled}
             options={options}
+            filterOptions={filterMetadataOptions}
             value={selectedOptions}
-            getOptionLabel={(o) => o.label}
+            getOptionLabel={(o) => getMetadataDisplayText(o, 'label', o.label)}
             isOptionEqualToValue={(o, v) => o.name === v.name}
             onChange={(_e, selection) => {
                 const names = selection.map((s) => s.name)

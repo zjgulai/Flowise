@@ -44,8 +44,8 @@ export class ChatInputHistory {
     saveHistory() {
         try {
             localStorage.setItem('chatInputHistory', JSON.stringify(this.history))
-        } catch (error) {
-            console.warn('Failed to save chat history to localStorage:', error)
+        } catch {
+            // Local storage may be disabled; keep the in-memory history usable.
         }
     }
 
@@ -55,8 +55,8 @@ export class ChatInputHistory {
             if (saved) {
                 this.history = JSON.parse(saved)
             }
-        } catch (error) {
-            console.warn('Failed to load chat history from localStorage:', error)
+        } catch {
+            // Local storage may be disabled; continue with an empty history.
         }
     }
 }

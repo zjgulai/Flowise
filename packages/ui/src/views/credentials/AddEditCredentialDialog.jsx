@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom'
 import PropTypes from 'prop-types'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useDispatch } from 'react-redux'
 import { enqueueSnackbar as enqueueSnackbarAction, closeSnackbar as closeSnackbarAction } from '@/store/actions'
 import parser from 'html-react-parser'
@@ -25,6 +25,8 @@ import useApi from '@/hooks/useApi'
 
 // utils
 import useNotifier from '@/utils/useNotifier'
+import { getErrorMessage } from '@/utils/getErrorMessage'
+import { getTrustedOAuth2MessageType } from '@/utils/getTrustedOAuth2MessageType'
 import { useAuth } from '@/hooks/useAuth'
 import { initializeDefaultNodeData } from '@/utils/genericHelper'
 
@@ -32,6 +34,85 @@ import { initializeDefaultNodeData } from '@/utils/genericHelper'
 import { baseURL, REDACTED_CREDENTIAL_VALUE } from '@/store/constant'
 import { HIDE_CANVAS_DIALOG, SHOW_CANVAS_DIALOG } from '@/store/actions'
 import keySVG from '@/assets/images/key.svg'
+import { getMetadataDisplayText } from '@/utils/componentMetadataDisplay'
+import DOMPurify from 'dompurify'
+
+export const createOAuth2PopupSession = ({
+    authWindow,
+    credentialId,
+    expectedOrigin,
+    eventTarget,
+    onSuccess,
+    onFailure,
+    closedCheckIntervalMs = 1000,
+    timeoutMs = 300000
+}) => {
+    let settled = false
+    let closedCheckIntervalId
+    let timeoutId
+    let handleMessage
+
+    const isAuthWindowClosed = () => {
+        try {
+            return authWindow.closed
+        } catch {
+            return true
+        }
+    }
+
+    const closeAuthWindow = () => {
+        try {
+            if (!authWindow.closed) authWindow.close()
+        } catch {
+            // Local cleanup is complete even if the browser refuses to close the popup.
+        }
+    }
+
+    const cleanup = () => {
+        if (closedCheckIntervalId !== undefined) eventTarget.clearInterval(closedCheckIntervalId)
+        if (timeoutId !== undefined) eventTarget.clearTimeout(timeoutId)
+        if (handleMessage) eventTarget.removeEventListener('message', handleMessage)
+    }
+
+    const settle = (outcome) => {
+        if (settled) return
+        settled = true
+        cleanup()
+
+        try {
+            if (outcome === 'success') onSuccess()
+            else onFailure(outcome)
+        } finally {
+            closeAuthWindow()
+        }
+    }
+
+    handleMessage = (event) => {
+        const messageType = getTrustedOAuth2MessageType(event, {
+            expectedOrigin,
+            expectedSource: authWindow,
+            credentialId
+        })
+        if (!messageType) return
+
+        settle(messageType === 'OAUTH2_SUCCESS' ? 'success' : 'error')
+    }
+
+    eventTarget.addEventListener('message', handleMessage)
+    closedCheckIntervalId = eventTarget.setInterval(() => {
+        if (isAuthWindowClosed()) settle('closed')
+    }, closedCheckIntervalMs)
+    timeoutId = eventTarget.setTimeout(() => settle('timeout'), timeoutMs)
+
+    return {
+        cancel: () => {
+            if (settled) return
+            settled = true
+            cleanup()
+            closeAuthWindow()
+        }
+    }
+}
 
 const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setError }) => {
     const portalElement = document.getElementById('portal')
@@ -57,6 +138,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
     const [componentCredential, setComponentCredential] = useState({})
     const [shared, setShared] = useState(false)
     const [revealedData, setRevealedData] = useState(null)
+    const oauthSessionRef = useRef(null)
 
     useEffect(() => {
         if (getSpecificCredentialApi.data) {
@@ -85,14 +167,14 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
 
     useEffect(() => {
         if (getSpecificCredentialApi.error && setError) {
-            setError(getSpecificCredentialApi.error)
+            setError(new Error('加载凭据失败，请稍后重试'))
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [getSpecificCredentialApi.error])
 
     useEffect(() => {
         if (getSpecificComponentCredentialApi.error && setError) {
-            setError(getSpecificComponentCredentialApi.error)
+            setError(new Error('加载凭据类型失败，请稍后重试'))
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [getSpecificComponentCredentialApi.error])
@@ -123,6 +205,18 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
         return () => dispatch({ type: HIDE_CANVAS_DIALOG })
     }, [show, dispatch])
 
+    useEffect(() => {
+        if (!show) {
+            oauthSessionRef.current?.cancel()
+            oauthSessionRef.current = null
+        }
+
+        return () => {
+            oauthSessionRef.current?.cancel()
+            oauthSessionRef.current = null
+        }
+    }, [show])
+
     const isMaskedUrlValue = (value) => typeof value === 'string' && value.includes('\u2022\u2022\u2022\u2022\u2022\u2022')
 
     const handleRevealField = async (fieldName) => {
@@ -145,7 +239,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
             const createResp = await credentialsApi.createCredential(obj)
             if (createResp.data) {
                 enqueueSnackbar({
-                    message: 'New Credential added',
+                    message: '已添加新凭据',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -159,11 +253,9 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                 onConfirm(createResp.data.id)
             }
         } catch (error) {
-            if (setError) setError(error)
+            if (setError) setError(new Error('添加凭据失败，请稍后重试'))
             enqueueSnackbar({
-                message: `Failed to add new Credential: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `添加凭据失败：${getErrorMessage(error)}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -197,7 +289,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
             const saveResp = await credentialsApi.updateCredential(credential.id, saveObj)
             if (saveResp.data) {
                 enqueueSnackbar({
-                    message: 'Credential saved',
+                    message: '凭据已保存',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -211,11 +303,9 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                 onConfirm(saveResp.data.id)
             }
         } catch (error) {
-            if (setError) setError(error)
+            if (setError) setError(new Error('保存凭据失败，请稍后重试'))
             enqueueSnackbar({
-                message: `Failed to save Credential: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存凭据失败：${getErrorMessage(error)}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -232,6 +322,9 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
     }
 
     const setOAuth2 = async () => {
+        oauthSessionRef.current?.cancel()
+        oauthSessionRef.current = null
+
         try {
             let credentialId = null
 
@@ -269,7 +362,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
             }
 
             if (!credentialId) {
-                throw new Error('Failed to save credential')
+                throw new Error('保存凭据失败')
             }
 
             const authResponse = await oauth2Api.authorize(credentialId)
@@ -286,80 +379,59 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                     throw new Error('打开授权窗口失败，请检查是否阻止了弹窗。')
                 }
 
-                // Listen for messages from the popup window
-                const handleMessage = (event) => {
-                    // Verify origin if needed (you may want to add origin checking)
-                    if (event.data && (event.data.type === 'OAUTH2_SUCCESS' || event.data.type === 'OAUTH2_ERROR')) {
-                        window.removeEventListener('message', handleMessage)
-
-                        if (event.data.type === 'OAUTH2_SUCCESS') {
-                            enqueueSnackbar({
-                                message: 'OAuth2 authorization completed successfully',
-                                options: {
-                                    key: new Date().getTime() + Math.random(),
-                                    variant: 'success',
-                                    action: (key) => (
-                                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                            <IconX />
-                                        </Button>
-                                    )
-                                }
-                            })
-                            onConfirm(credentialId)
-                        } else if (event.data.type === 'OAUTH2_ERROR') {
-                            enqueueSnackbar({
-                                message: event.data.message || 'OAuth2 authorization failed',
-                                options: {
-                                    key: new Date().getTime() + Math.random(),
-                                    variant: 'error',
-                                    persist: true,
-                                    action: (key) => (
-                                        <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                            <IconX />
-                                        </Button>
-                                    )
-                                }
-                            })
-                        }
-
-                        // Close the auth window if it's still open
-                        if (authWindow && !authWindow.closed) {
-                            authWindow.close()
-                        }
-                    }
-                }
-
-                // Add message listener
-                window.addEventListener('message', handleMessage)
-
-                // Fallback: Monitor the auth window and handle if it closes manually
-                const checkClosed = setInterval(() => {
-                    if (authWindow.closed) {
-                        clearInterval(checkClosed)
-                        window.removeEventListener('message', handleMessage)
-
-                        // If no message was received, assume user closed window manually
-                        // Don't show error in this case, just close dialog
+                let oauthSession
+                oauthSession = createOAuth2PopupSession({
+                    authWindow,
+                    credentialId,
+                    expectedOrigin: window.location.origin,
+                    eventTarget: window,
+                    onSuccess: () => {
+                        if (oauthSessionRef.current === oauthSession) oauthSessionRef.current = null
+                        enqueueSnackbar({
+                            message: 'OAuth2 授权已完成',
+                            options: {
+                                key: new Date().getTime() + Math.random(),
+                                variant: 'success',
+                                action: (key) => (
+                                    <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                                        <IconX />
+                                    </Button>
+                                )
+                            }
+                        })
                         onConfirm(credentialId)
+                    },
+                    onFailure: (reason) => {
+                        if (oauthSessionRef.current === oauthSession) oauthSessionRef.current = null
+                        const failureMessage =
+                            reason === 'closed'
+                                ? '授权窗口已关闭，OAuth2 授权未完成'
+                                : reason === 'timeout'
+                                ? 'OAuth2 授权超时，请重试'
+                                : 'OAuth2 授权失败，请重试'
+                        enqueueSnackbar({
+                            message: failureMessage,
+                            options: {
+                                key: new Date().getTime() + Math.random(),
+                                variant: 'error',
+                                persist: true,
+                                action: (key) => (
+                                    <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                                        <IconX />
+                                    </Button>
+                                )
+                            }
+                        })
                     }
-                }, 1000)
-
-                // Cleanup after a reasonable timeout (5 minutes)
-                setTimeout(() => {
-                    clearInterval(checkClosed)
-                    window.removeEventListener('message', handleMessage)
-                    if (authWindow && !authWindow.closed) {
-                        authWindow.close()
-                    }
-                }, 300000) // 5 minutes
+                })
+                oauthSessionRef.current = oauthSession
             } else {
-                throw new Error('Invalid response from authorization endpoint')
+                throw new Error('授权端点返回了无效响应')
             }
-        } catch (error) {
-            console.error('OAuth2 authorization error:', error)
-            if (setError) setError(error)
+        } catch {
+            if (setError) setError(new Error('OAuth2 授权失败'))
             enqueueSnackbar({
-                message: `OAuth2 authorization failed: ${error.response?.data?.message || error.message || 'Unknown error'}`,
+                message: 'OAuth2 授权失败，请重试',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -412,7 +484,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                                 }}
                             />
                         </div>
-                        {componentCredential.label}
+                        {getMetadataDisplayText(componentCredential, 'label', componentCredential.label)}
                     </div>
                 )}
             </DialogTitle>
@@ -437,7 +509,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                             }}
                         >
                             <IconHandStop size={25} color='white' />
-                            <span style={{ color: 'white', marginLeft: 10, fontWeight: 400 }}>Cannot edit shared credential.</span>
+                            <span style={{ color: 'white', marginLeft: 10, fontWeight: 400 }}>共享凭据不可编辑。</span>
                         </div>
                     </div>
                 )}
@@ -454,7 +526,13 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                                 marginBottom: 10
                             }}
                         >
-                            <span style={{ color: 'rgb(116,66,16)' }}>{parser(componentCredential.description)}</span>
+                            <span style={{ color: 'rgb(116,66,16)' }}>
+                                {parser(
+                                    DOMPurify.sanitize(
+                                        getMetadataDisplayText(componentCredential, 'description', componentCredential.description)
+                                    )
+                                )}
+                            </span>
                         </div>
                     </Box>
                 )}
@@ -462,7 +540,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                     <Box sx={{ p: 2 }}>
                         <Stack sx={{ position: 'relative' }} direction='row'>
                             <Typography variant='overline'>
-                                Credential Name
+                                凭据名称
                                 <span style={{ color: 'red' }}>&nbsp;*</span>
                             </Typography>
                         </Stack>
@@ -470,7 +548,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                             id='credName'
                             type='string'
                             fullWidth
-                            placeholder={componentCredential.label}
+                            placeholder={getMetadataDisplayText(componentCredential, 'label', componentCredential.label)}
                             value={name}
                             name='name'
                             onChange={(e) => setName(e.target.value)}
@@ -480,7 +558,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                 {!shared && componentCredential && componentCredential.name && componentCredential.name.includes('OAuth2') && (
                     <Box sx={{ p: 2 }}>
                         <Stack sx={{ position: 'relative' }} direction='row'>
-                            <Typography variant='overline'>OAuth Redirect URL</Typography>
+                            <Typography variant='overline'>OAuth2 重定向 URL</Typography>
                         </Stack>
                         <OutlinedInput
                             id='oauthRedirectUrl'
@@ -508,7 +586,7 @@ const AddEditCredentialDialog = ({ show, dialogProps, onCancel, onConfirm, setEr
                 {!shared && componentCredential && componentCredential.name && componentCredential.name.includes('OAuth2') && (
                     <Box sx={{ p: 2 }}>
                         <Button variant='contained' color='secondary' onClick={() => setOAuth2()}>
-                            Authenticate
+                            授权
                         </Button>
                     </Box>
                 )}

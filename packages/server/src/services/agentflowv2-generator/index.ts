@@ -1,15 +1,16 @@
 import { StatusCodes } from 'http-status-codes'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
-import { getErrorMessage } from '../../errors/utils'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import path from 'path'
 import * as fs from 'fs'
-import { generateAgentflowv2 as generateAgentflowv2_json } from 'flowise-components'
+import { generateAgentflowv2 as generateAgentflowv2_json, resolveSafeChatModelSelection } from 'flowise-components'
 import { z } from 'zod/v3'
 import { sysPrompt } from './prompt'
 import { databaseEntities } from '../../utils'
 import logger from '../../utils/logger'
 import { MODE } from '../../Interface'
+import credentialsService from '../credentials'
+import { createWorkspaceOAuth2RefreshCapability } from '../oauth2CredentialRefresh'
 
 // Define the Zod schema for Agentflowv2 data structure
 const NodeType = z.object({
@@ -132,8 +133,8 @@ const getAllAgentflowv2Marketplaces = async () => {
                 // @ts-ignore
                 title: title
             })
-        } catch (error) {
-            console.error(`Error processing template file ${file}:`, error)
+        } catch {
+            logger.warn('[server]: Agentflow template skipped', { skippedCount: 1 })
             // Continue with next file instead of failing completely
         }
     })
@@ -181,8 +182,24 @@ const getAllAgentflowv2Marketplaces = async () => {
     return formattedTemplates
 }
 
-const generateAgentflowv2 = async (question: string, selectedChatModel: Record<string, any>) => {
+const generateAgentflowv2 = async (question: string, selectedChatModel: Record<string, any>, workspaceId: string) => {
     try {
+        if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Agentflow generation is not authorized')
+        const appServer = getRunningExpressApp()
+        let safeChatModel: ReturnType<typeof resolveSafeChatModelSelection>
+        try {
+            safeChatModel = resolveSafeChatModelSelection(appServer.nodesPool.componentNodes, selectedChatModel)
+        } catch {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid chat model selection')
+        }
+        if (safeChatModel.credentialId) {
+            try {
+                await credentialsService.assertCredentialInWorkspace(safeChatModel.credentialId, workspaceId)
+            } catch {
+                throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Chat model credential not found')
+            }
+        }
+        const safeSelectedChatModel = safeChatModel.nodeData
         const agentFlow2Nodes = await getAllAgentFlow2Nodes()
         const toolNodes = await getAllToolNodes()
         const marketplaceTemplates = await getAllAgentflowv2Marketplaces()
@@ -191,12 +208,6 @@ const generateAgentflowv2 = async (question: string, selectedChatModel: Record<s
             .replace('{agentFlow2Nodes}', agentFlow2Nodes)
             .replace('{marketplaceTemplates}', marketplaceTemplates)
             .replace('{userRequest}', question)
-        const options: Record<string, any> = {
-            appDataSource: getRunningExpressApp().AppDataSource,
-            databaseEntities: databaseEntities,
-            logger: logger
-        }
-
         let response
 
         if (process.env.MODE === MODE.QUEUE) {
@@ -205,15 +216,24 @@ const generateAgentflowv2 = async (question: string, selectedChatModel: Record<s
                 prompt,
                 question,
                 toolNodes,
-                selectedChatModel,
+                selectedChatModel: safeSelectedChatModel,
+                workspaceId,
                 isAgentFlowGenerator: true
             })
             logger.debug(`[server]: Generated Agentflowv2 Job added to queue: ${job.id}`)
             const queueEvents = predictionQueue.getQueueEvents()
             response = await job.waitUntilFinished(queueEvents)
         } else {
+            const options: Record<string, any> = {
+                appDataSource: appServer.AppDataSource,
+                databaseEntities: databaseEntities,
+                logger: logger,
+                workspaceId,
+                skipVariables: true,
+                refreshOAuth2Credential: createWorkspaceOAuth2RefreshCapability(workspaceId)
+            }
             response = await generateAgentflowv2_json(
-                { prompt, componentNodes: getRunningExpressApp().nodesPool.componentNodes, toolNodes, selectedChatModel },
+                { prompt, componentNodes: appServer.nodesPool.componentNodes, toolNodes, selectedChatModel: safeSelectedChatModel },
                 question,
                 options
             )
@@ -235,16 +255,14 @@ const generateAgentflowv2 = async (question: string, selectedChatModel: Record<s
             else {
                 throw new Error(`Unexpected response type: ${typeof response}`)
             }
-        } catch (parseError) {
-            console.error('Failed to parse or validate response:', parseError)
-            // If parsing fails, return an error object
-            return {
-                error: 'Failed to validate response format',
-                rawResponse: response
-            } as any // Type assertion to avoid type errors
+        } catch {
+            logger.warn('[server]: Agentflow response validation failed', { failedCount: 1 })
+            throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to generate Agentflowv2')
         }
     } catch (error) {
-        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, `Error: generateAgentflowv2 - ${getErrorMessage(error)}`)
+        if (error instanceof InternalFlowiseError) throw error
+        logger.error('[server]: Failed to generate Agentflowv2', { failedCount: 1 })
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Failed to generate Agentflowv2')
     }
 }
 

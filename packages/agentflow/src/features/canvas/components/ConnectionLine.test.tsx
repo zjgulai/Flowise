@@ -80,16 +80,16 @@ describe('ConnectionLine', () => {
             expect(getByText('0')).toBeInTheDocument()
         })
 
-        it('should show "proceed" for humanInput first output (index 0)', () => {
+        it('should show localized proceed text for humanInput first output (index 0)', () => {
             mockConnectionHandleId = 'humanInputAgentflow_output-0'
             const { getByText } = renderInSvg(<ConnectionLine {...defaultProps} />)
-            expect(getByText('proceed')).toBeInTheDocument()
+            expect(getByText('继续')).toBeInTheDocument()
         })
 
-        it('should show "reject" for humanInput second output (index 1)', () => {
+        it('should show localized reject text for humanInput second output (index 1)', () => {
             mockConnectionHandleId = 'humanInputAgentflow_output-1'
             const { getByText } = renderInSvg(<ConnectionLine {...defaultProps} />)
-            expect(getByText('reject')).toBeInTheDocument()
+            expect(getByText('拒绝')).toBeInTheDocument()
         })
 
         it('should handle NaN suffix by defaulting to "0"', () => {

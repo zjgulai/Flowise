@@ -112,6 +112,118 @@ describe('AgentflowContext E2E', () => {
             expect(flowData.nodes).toHaveLength(2)
             expect(flowData.edges).toHaveLength(0)
         })
+
+        it('should sanitize render-only metadata at save while preserving Teams and nested runtime payload fields', () => {
+            const createChannelName = 'Create｜customer channel 📣\r\nkeep bytes'
+            const updateChannelName = 'Update｜customer channel 🛠️\n保留'
+            const runtimePayload = {
+                displayLabel: '<user-authored-displayLabel>',
+                nested: { displayDescription: 'legitimate runtime field' }
+            }
+            const teamsNode = makeNode('teams-1', 'agentFlow')
+            teamsNode.data = {
+                ...teamsNode.data,
+                name: 'microsoftTeams',
+                label: 'Microsoft Teams',
+                displayLabel: '<img src=x onerror="globalThis.pwned=true">',
+                displayLocale: 'zh-CN',
+                inputParams: [
+                    {
+                        id: 'teams-1-input-payload-json',
+                        name: 'payload',
+                        label: 'Payload',
+                        displayLabel: '载荷',
+                        type: 'json',
+                        default: { displayLabel: 'legitimate schema default value' }
+                    }
+                ],
+                outputAnchors: [
+                    {
+                        id: 'teams-1-output-output-string',
+                        name: 'output',
+                        label: 'Output',
+                        displayLabel: '输出',
+                        type: 'string'
+                    }
+                ],
+                inputs: {
+                    displayNameCreateChannel: createChannelName,
+                    displayNameUpdateChannel: updateChannelName,
+                    payload: runtimePayload
+                }
+            }
+
+            const { result } = renderHook(() => useAgentflowContext(), {
+                wrapper: createWrapper({ nodes: [teamsNode], edges: [] })
+            })
+
+            const flowData = result.current.getFlowData()
+            const savedNodeData = flowData.nodes[0].data
+
+            expect(savedNodeData.displayLabel).toBeUndefined()
+            expect(savedNodeData.displayLocale).toBeUndefined()
+            expect(savedNodeData.inputParams?.[0].displayLabel).toBeUndefined()
+            expect(savedNodeData.outputAnchors?.[0].displayLabel).toBeUndefined()
+            expect(savedNodeData.inputParams?.[0].default).toEqual({
+                displayLabel: 'legitimate schema default value'
+            })
+            expect(savedNodeData.inputs?.displayNameCreateChannel).toBe(createChannelName)
+            expect(savedNodeData.inputs?.displayNameUpdateChannel).toBe(updateChannelName)
+            expect(savedNodeData.inputs?.payload).toEqual(runtimePayload)
+            expect(result.current.state.nodes[0].data.displayLabel).toContain('onerror')
+        })
+
+        it('should sanitize initial-flow metadata from change callbacks while preserving runtime and edge payloads', () => {
+            const runtimePayload = {
+                displayLabel: 'legitimate runtime display label',
+                nested: { displayDescription: 'legitimate runtime description' }
+            }
+            const edgePayload = {
+                displayLabel: 'legitimate edge display label',
+                nested: { displayDescription: 'legitimate edge description' }
+            }
+            const sourceNode = makeNode('source-1')
+            sourceNode.data = {
+                ...sourceNode.data,
+                displayLabel: '<img src=x onerror="globalThis.pwned=true">',
+                displayLocale: 'zh-CN',
+                inputParams: [
+                    {
+                        id: 'source-1-input-payload-json',
+                        name: 'payload',
+                        label: 'Payload',
+                        displayLabel: '载荷',
+                        type: 'json',
+                        default: { displayLabel: 'legitimate schema default value' }
+                    }
+                ],
+                inputs: { payload: runtimePayload }
+            }
+            const initialEdge = makeEdge('source-1', 'target-1', { id: 'edge-1' })
+            initialEdge.data = edgePayload
+            const onFlowChange = jest.fn()
+            const { result } = renderHook(() => useAgentflowContext(), {
+                wrapper: createWrapper({ nodes: [sourceNode, makeNode('target-1')], edges: [initialEdge] })
+            })
+
+            act(() => {
+                result.current.registerOnFlowChange(onFlowChange)
+                result.current.updateNodeData('source-1', { inputs: { payload: runtimePayload, changed: true } })
+            })
+
+            const emittedFlow = onFlowChange.mock.calls[0][0] as FlowData
+            const emittedNodeData = emittedFlow.nodes.find((node) => node.id === 'source-1')!.data
+
+            expect(emittedNodeData.displayLabel).toBeUndefined()
+            expect(emittedNodeData.displayLocale).toBeUndefined()
+            expect(emittedNodeData.inputParams?.[0].displayLabel).toBeUndefined()
+            expect(emittedNodeData.inputParams?.[0].default).toEqual({
+                displayLabel: 'legitimate schema default value'
+            })
+            expect(emittedNodeData.inputs).toEqual({ payload: runtimePayload, changed: true })
+            expect(emittedFlow.edges[0].data).toEqual(edgePayload)
+            expect(result.current.state.nodes[0].data.displayLabel).toContain('onerror')
+        })
     })
 
     describe('multiple edges from single node', () => {

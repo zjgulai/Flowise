@@ -37,6 +37,7 @@ import CancelIcon from '@mui/icons-material/Cancel'
 
 // const
 import { baseURL, AGENTFLOW_ICONS } from '@/store/constant'
+import { getMetadataDisplayText, resolveInstanceDisplayLabel } from '@/utils/componentMetadataDisplay'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -71,6 +72,7 @@ const AgentFlowNode = ({ data }) => {
     const { deleteNode, duplicateNode } = useContext(flowContext)
     const [showInfoDialog, setShowInfoDialog] = useState(false)
     const [infoDialogProps, setInfoDialogProps] = useState({})
+    const componentNode = canvas.componentNodes.find((node) => node.name === data.name)
 
     const defaultColor = '#666666' // fallback color if data.color is not present
     const nodeColor = data.color || defaultColor
@@ -182,11 +184,9 @@ const AgentFlowNode = ({ data }) => {
     }, [data, ref, updateNodeInternals])
 
     useEffect(() => {
-        const nodeOutdatedMessage = (oldVersion, newVersion) =>
-            `Node version ${oldVersion} outdated\nUpdate to latest version ${newVersion}`
-        const nodeVersionEmptyMessage = (newVersion) => `Node outdated\nUpdate to latest version ${newVersion}`
+        const nodeOutdatedMessage = (oldVersion, newVersion) => `节点版本 ${oldVersion} 已过期\n请更新至最新版本 ${newVersion}`
+        const nodeVersionEmptyMessage = (newVersion) => `节点已过期\n请更新至最新版本 ${newVersion}`
 
-        const componentNode = canvas.componentNodes.find((nd) => nd.name === data.name)
         if (componentNode) {
             if (!data.version) {
                 setWarningMessage(nodeVersionEmptyMessage(componentNode.version))
@@ -194,21 +194,20 @@ const AgentFlowNode = ({ data }) => {
                 setWarningMessage(nodeOutdatedMessage(data.version, componentNode.version))
             } else if (componentNode.badge === 'DEPRECATING') {
                 setWarningMessage(
-                    componentNode?.deprecateMessage ??
-                        'This node will be deprecated in the next release. Change to a new node tagged with NEW'
+                    getMetadataDisplayText(componentNode, 'deprecateMessage', '此节点将在下一版本中弃用，请改用带有“新增”标记的新节点。')
                 )
             } else if (componentNode.warning) {
-                setWarningMessage(componentNode.warning)
+                setWarningMessage(getMetadataDisplayText(componentNode, 'warning', componentNode.warning))
             } else {
                 setWarningMessage('')
             }
         }
-    }, [canvas.componentNodes, data.name, data.version])
+    }, [componentNode, data.version])
 
     return (
         <div ref={ref} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
             <StyledNodeToolbar>
-                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
+                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='基础操作按钮组'>
                     {data.name !== 'startAgentflow' && (
                         <IconButton
                             size={'small'}
@@ -245,7 +244,7 @@ const AgentFlowNode = ({ data }) => {
                         size={'small'}
                         title='提示'
                         onClick={() => {
-                            setInfoDialogProps({ data })
+                            setInfoDialogProps({ data, componentMetadata: componentNode })
                             setShowInfoDialog(true)
                         }}
                         sx={{
@@ -277,7 +276,7 @@ const AgentFlowNode = ({ data }) => {
                 border={false}
             >
                 {data && data.status && (
-                    <Tooltip title={data.status === 'ERROR' ? data.error || 'Error' : ''}>
+                    <Tooltip title={data.status === 'ERROR' ? data.error || '错误' : ''}>
                         <Avatar
                             variant='rounded'
                             sx={{
@@ -399,7 +398,7 @@ const AgentFlowNode = ({ data }) => {
                                     fontWeight: 500
                                 }}
                             >
-                                {data.label}
+                                {resolveInstanceDisplayLabel(data, componentNode)}
                             </Typography>
 
                             {/* Render the icon for "Start" node to help users determine it's started by user's input or schedule */}

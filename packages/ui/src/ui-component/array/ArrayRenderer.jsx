@@ -10,7 +10,7 @@ import { showHideInputs } from '@/utils/genericHelper'
 import { cloneDeep } from 'lodash'
 import { flowContext } from '@/store/context/ReactFlowContext'
 
-export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }) => {
+export const ArrayRenderer = ({ inputParam, displayLabel, data, disabled, isDocStore = false }) => {
     const [arrayItems, setArrayItems] = useState([]) // these are the actual values. Ex: [{name: 'John', age: 30}, {name: 'Jane', age: 25}]
     const [itemParameters, setItemParameters] = useState([]) // these are the input parameters for each array item. Ex: [{label: '名称', type: 'string', display: true}, {label: 'age', type: 'number', display: false}]
     const theme = useTheme()
@@ -81,7 +81,7 @@ export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }
             id: `${data.id}-output-${i}`,
             label: i,
             name: i,
-            description: `Condition ${i}`
+            description: `条件 ${i}`
         }))
 
         // always append additional output anchor for ELSE for condition
@@ -90,7 +90,7 @@ export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }
                 id: `${data.id}-output-${items.length}`,
                 label: items.length,
                 name: items.length,
-                description: 'Else'
+                description: '否则'
             })
         }
         data.outputAnchors = updatedOutputs
@@ -268,7 +268,7 @@ export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }
                 startIcon={<IconPlus />}
                 onClick={handleAddItem}
             >
-                Add {inputParam.label}
+                添加{displayLabel ?? inputParam.label}
             </Button>
         </>
     )
@@ -276,6 +276,7 @@ export const ArrayRenderer = ({ inputParam, data, disabled, isDocStore = false }
 
 ArrayRenderer.propTypes = {
     inputParam: PropTypes.object.isRequired,
+    displayLabel: PropTypes.string,
     data: PropTypes.object.isRequired,
     disabled: PropTypes.bool,
     isDocStore: PropTypes.bool

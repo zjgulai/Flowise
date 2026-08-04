@@ -112,11 +112,17 @@ const APICodeDialog = ({ show, dialogProps, onCancel }) => {
     const webhookEnableAuth = startNodeInputs?.webhookEnableAuth === true
     const webhookSignatureHeader = startNodeInputs?.webhookSignatureHeader || 'x-webhook-signature'
     const webhookResponseMode = startNodeInputs?.webhookResponseMode || 'sync'
+    const contentTypeHeaderName = 'Content-Type'
+    const callbackMethod = 'POST'
 
     const codes = useMemo(() => {
         if (isWebhookFlow || isScheduleFlow) return ['Python', 'JavaScript', 'cURL']
         return ['Embed', 'Python', 'JavaScript', 'cURL', 'Share Chatbot']
     }, [isWebhookFlow, isScheduleFlow])
+    const codeLabels = {
+        Embed: '嵌入',
+        'Share Chatbot': '分享聊天机器人'
+    }
     const [value, setValue] = useState(0)
     const [apiKeys, setAPIKeys] = useState([])
     const [chatflowApiKeyId, setChatflowApiKeyId] = useState('')
@@ -155,7 +161,7 @@ const APICodeDialog = ({ show, dialogProps, onCancel }) => {
 
         if (isGlobal || hasPermission('apikeys:create')) {
             options.push({
-                label: '- Add New Key -',
+                label: '- 新建 API 密钥 -',
                 name: 'addnewkey'
             })
         }
@@ -794,9 +800,8 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                     >
                         <IconExclamationCircle size={28} color='rgb(116,66,16)' style={{ flexShrink: 0 }} />
                         <span style={{ color: 'rgb(116,66,16)', marginLeft: 10, fontWeight: 500 }}>
-                            This flow is configured as a <b>Scheduled Trigger</b>. It is fired automatically by the in-process scheduler on
-                            its cron schedule and cannot be invoked via the prediction API. To call this flow from an API, change the Start
-                            node Input Type to <b>Chat Input</b>, <b>Form Input</b>, or <b>Webhook Trigger</b>.
+                            此流程已配置为<b>定时触发器</b>。系统会按照定时计划由进程内调度器自动触发，无法通过预测 API 调用。如需通过 API
+                            调用此流程，请将开始节点的输入类型改为<b>对话输入</b>、<b>表单输入</b>或<b>Webhook 触发器</b>。
                         </span>
                     </div>
                 ) : (
@@ -815,21 +820,18 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                 <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
                                     <IconBulb size={28} color='#2d6a4f' />
                                     <span style={{ color: '#2d6a4f', marginLeft: 10, fontWeight: 500 }}>
-                                        This flow is configured as a <b>Webhook Trigger</b>. Send <b>{webhookMethod}</b> requests to{' '}
-                                        <code>/api/v1/webhook/{dialogProps.chatflowid}</code> with Content-Type{' '}
-                                        <code>{webhookContentType}</code>.
+                                        此流程已配置为<b>Webhook 触发器</b>。请向 <code>/api/v1/webhook/{dialogProps.chatflowid}</code> 发送{' '}
+                                        <b>{webhookMethod}</b> 请求，并将 <code>{contentTypeHeaderName}</code> 设置为{' '}
+                                        <code>{webhookContentType}</code>。
                                         {webhookEnableAuth && (
                                             <>
                                                 {' '}
-                                                Each request must include a valid signature in the <code>
-                                                    {webhookSignatureHeader}
-                                                </code>{' '}
-                                                header.
+                                                每个请求都必须在 <code>{webhookSignatureHeader}</code> 请求头中包含有效签名。
                                             </>
                                         )}{' '}
-                                        Response mode: <b>{webhookResponseMode}</b>
-                                        {webhookResponseMode === 'async' && ' (returns 202 immediately, optional callback POST when done)'}
-                                        {webhookResponseMode === 'stream' && ' (Server-Sent Events stream)'}.
+                                        响应模式：<b>{webhookResponseMode}</b>
+                                        {webhookResponseMode === 'async' && <>（立即返回 202，完成后可选择通过 {callbackMethod} 回调）</>}
+                                        {webhookResponseMode === 'stream' && '（服务器发送事件，即 SSE 流）'}。
                                     </span>
                                 </div>
                             </div>
@@ -843,12 +845,12 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                                 <img
                                                     style={{ objectFit: 'cover', height: 15, width: 'auto' }}
                                                     src={getSVG(codeLang)}
-                                                    alt='code'
+                                                    alt='代码示例'
                                                 />
                                             }
                                             iconPosition='start'
                                             key={index}
-                                            label={codeLang}
+                                            label={codeLabels[codeLang] ?? codeLang}
                                             {...a11yProps(index)}
                                         ></Tab>
                                     ))}
@@ -861,7 +863,7 @@ formData.append("openAIApiKey[openAIEmbeddings_0]", "sk-my-openai-2nd-key")`
                                         disableClearable={true}
                                         options={keyOptions}
                                         onSelect={(newValue) => onApiKeySelected(newValue)}
-                                        value={dialogProps.chatflowApiKeyId ?? chatflowApiKeyId ?? 'Choose an API key'}
+                                        value={dialogProps.chatflowApiKeyId ?? chatflowApiKeyId ?? '请选择 API 密钥'}
                                     />
                                 </Available>
                             </div>

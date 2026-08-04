@@ -1,11 +1,19 @@
 import { Request, Response, NextFunction } from 'express'
+import { StatusCodes } from 'http-status-codes'
 import executionsService from '../../services/executions'
 import { ExecutionState } from '../../Interface'
+import { InternalFlowiseError } from '../../errors/internalFlowiseError'
+
+const requireActiveWorkspaceId = (req: Request): string => {
+    const workspaceId = typeof req.user?.activeWorkspaceId === 'string' ? req.user.activeWorkspaceId.trim() : ''
+    if (!workspaceId) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Workspace ID is required')
+    return workspaceId
+}
 
 const getExecutionById = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const executionId = req.params.id
-        const workspaceId = req.user?.activeWorkspaceId
+        const workspaceId = requireActiveWorkspaceId(req)
         const execution = await executionsService.getExecutionById(executionId, workspaceId)
         return res.json(execution)
     } catch (error) {
@@ -26,7 +34,7 @@ const getPublicExecutionById = async (req: Request, res: Response, next: NextFun
 const updateExecution = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const executionId = req.params.id
-        const workspaceId = req.user?.activeWorkspaceId
+        const workspaceId = requireActiveWorkspaceId(req)
         const execution = await executionsService.updateExecution(executionId, req.body, workspaceId)
         return res.json(execution)
     } catch (error) {
@@ -40,7 +48,7 @@ const getAllExecutions = async (req: Request, res: Response, next: NextFunction)
         const filters: any = {}
 
         // Add workspace ID filter
-        filters.workspaceId = req.user?.activeWorkspaceId
+        filters.workspaceId = requireActiveWorkspaceId(req)
 
         // ID filter
         if (req.query.id) filters.id = req.query.id as string
@@ -92,7 +100,7 @@ const getAllExecutions = async (req: Request, res: Response, next: NextFunction)
 const deleteExecutions = async (req: Request, res: Response, next: NextFunction) => {
     try {
         let executionIds: string[] = []
-        const workspaceId = req.user?.activeWorkspaceId
+        const workspaceId = requireActiveWorkspaceId(req)
 
         // Check if we're deleting a single execution from URL param
         if (req.params.id) {

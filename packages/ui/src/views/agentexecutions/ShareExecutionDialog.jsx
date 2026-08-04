@@ -36,7 +36,7 @@ const ShareExecutionDialog = ({ show, executionId, onClose, onUnshare }) => {
         // Show success message
         dispatch(
             enqueueSnackbarAction({
-                message: 'Link copied to clipboard',
+                message: '链接已复制到剪贴板',
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'success',
@@ -64,11 +64,11 @@ const ShareExecutionDialog = ({ show, executionId, onClose, onUnshare }) => {
     const component = show ? (
         <Dialog open={show} onClose={onClose} maxWidth='sm' fullWidth aria-labelledby='share-dialog-title'>
             <DialogTitle id='share-dialog-title' sx={{ fontSize: '1.1rem', fontWeight: 600 }}>
-                Public Trace Link
+                公开执行追踪链接
             </DialogTitle>
             <DialogContent>
                 <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
-                    Anyone with the link below can view this execution trace.
+                    任何持有下方链接的人都可以查看这条执行记录，请谨慎分享。
                 </Typography>
 
                 {/* Link Display Box */}
@@ -96,9 +96,9 @@ const ShareExecutionDialog = ({ show, executionId, onClose, onUnshare }) => {
                     >
                         {shareableLink}
                     </Typography>
-                    <Tooltip title={copied ? 'Copied!' : 'Copy link'}>
+                    <Tooltip title={copied ? '已复制' : '复制链接'}>
                         <Button variant='text' color='primary' onClick={copyToClipboard} startIcon={<IconCopy size={18} />}>
-                            Copy
+                            复制
                         </Button>
                     </Tooltip>
                 </Box>
@@ -107,7 +107,7 @@ const ShareExecutionDialog = ({ show, executionId, onClose, onUnshare }) => {
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
                     <Available permission='executions:update'>
                         <Button color='error' onClick={handleUnshare} sx={{ mr: 1 }}>
-                            Unshare
+                            取消公开分享
                         </Button>
                     </Available>
                     <Button onClick={onClose}>关闭</Button>

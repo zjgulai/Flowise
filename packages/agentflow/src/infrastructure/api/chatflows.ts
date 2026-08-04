@@ -87,7 +87,9 @@ export function bindChatflowsApi(client: AxiosInstance) {
             Array<{
                 name: string
                 label: string
+                displayLabel?: string
                 description?: string
+                displayDescription?: string
                 category?: string
                 inputParams?: Array<{
                     name: string
@@ -98,7 +100,7 @@ export function bindChatflowsApi(client: AxiosInstance) {
                 }>
             }>
         > => {
-            const response = await client.get('/assistants/chatmodels')
+            const response = await client.get('/assistants/components/chatmodels')
             return response.data
         }
     }

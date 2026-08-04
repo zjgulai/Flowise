@@ -79,7 +79,7 @@ describe('production UI safety contracts', () => {
 
         expect(source).toContain('flowise_logo.png')
         expect(source).toContain('onError=')
-        expect(source).toContain("data.iconSrc.startsWith('/')")
+        expect(source).toContain("iconSrc.startsWith('/')")
         expect(source).toContain('data.iconSrc || !data.color')
     })
 
@@ -90,12 +90,15 @@ describe('production UI safety contracts', () => {
     it('renders the shared error state in Chinese with defensive and responsive recovery controls', () => {
         const source = read('../ErrorBoundary.jsx')
 
+        expect(source).toContain("import { getErrorMessage } from '@/utils/getErrorMessage'")
+        expect(source).toContain("getErrorMessage(error, '页面加载失败，请稍后重试')")
+        expect(source).not.toContain('error?.response?.data?.message')
+        expect(source).not.toContain('error?.message ??')
         expect(source).toContain('页面加载失败')
         expect(source).toContain('请稍后重试')
         expect(source).toContain('重新加载')
         expect(source).toContain('复制错误详情')
         expect(source).toContain('error?.response?.status')
-        expect(source).toContain('error?.response?.data?.message')
         expect(source).toContain("maxWidth: '100%'")
         expect(source).not.toContain('Oh snap!')
         expect(source).not.toContain('Discord')
@@ -162,6 +165,7 @@ describe('production UI safety contracts', () => {
         expect(documents).toContain('新增文档库')
         expect(documents).toContain("id='btn_createDocumentStore'")
         expect(documents).toContain("aria-label='文档库操作'")
+        expect(documents).toContain("const canRenameDocumentStore = hasPermission('documentStores:update')")
         expect(documents).toContain("gridTemplateColumns={{ xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' }}")
         expect(documents).toContain('文档库已删除')
         expect(documents).not.toContain('Add New')
@@ -180,7 +184,8 @@ describe('production UI safety contracts', () => {
         expect(card).not.toContain(' chars')
         expect(card).not.toContain(' chunks')
         expect(status).toContain("EMPTY: '空库'")
-        expect(dialog).toContain('服务请求失败（${status}）')
+        expect(dialog).toContain("import { getErrorMessage } from '@/utils/getErrorMessage'")
+        expect(dialog).toContain("getErrorMessage(error, '未知错误')")
     })
 
     it('keeps Document Store create failures editable and offers a list recovery path', () => {
@@ -190,13 +195,14 @@ describe('production UI safety contracts', () => {
         const chunks = read('../views/docstore/ShowStoredChunks.jsx')
         const boundary = read('../ErrorBoundary.jsx')
 
-        expect(dialog).toContain('const getDocumentStoreErrorMessage')
+        expect(dialog).toContain('新增文档库失败：${getErrorMessage')
+        expect(dialog).toContain('更新文档库失败：${getErrorMessage')
         expect(dialog).toContain('const [isSubmitting, setIsSubmitting]')
         expect(dialog).toContain('submitErrorSnackbarKey')
         expect(dialog).toContain('dismissSubmitError()')
         expect(dialog).toContain('setIsSubmitting(true)')
         expect(dialog).toContain('setIsSubmitting(false)')
-        expect(dialog).toContain('disabled={isSubmitting || !documentStoreName.trim()}')
+        expect(dialog).toContain('disabled={isSubmitting || hasVersionConflict || !documentStoreName.trim()}')
         expect(dialog).toContain('正在提交…')
         expect(dialog).toContain("id='txtInput_documentStoreName'")
         expect(dialog).toContain("id='txtInput_documentStoreDescription'")
@@ -211,7 +217,21 @@ describe('production UI safety contracts', () => {
         expect(boundary).toContain('onBack')
         expect(boundary).toContain('backLabel')
         expect(details).toContain("backLabel='返回文档库列表'")
+        expect(details).toContain("isEditButton={hasPermission('documentStores:update')}")
+        expect(details).toMatch(/permissionId=\{'documentStores:upsert-config'\}[\s\S]*?title='刷新文档库'/)
         expect(chunks).toContain("backLabel='返回文档库列表'")
+    })
+
+    it('hides provider-backed document description generation without upsert-config permission', () => {
+        const nodeInputs = read('../views/canvas/NodeInputHandler.jsx')
+        const assistant = read('../views/assistants/custom/CustomAssistantConfigurePreview.jsx')
+
+        expect(nodeInputs).toMatch(
+            /<Available permission='documentStores:upsert-config'>[\s\S]*?title='生成知识库描述'[\s\S]*?<\/Available>/
+        )
+        expect(assistant).toMatch(
+            /<Available permission='documentStores:upsert-config'>[\s\S]*?title='使用模型生成说明'[\s\S]*?<\/Available>/
+        )
     })
 
     it('keeps ViewHeader actions and search usable on narrow screens', () => {
@@ -282,6 +302,316 @@ describe('production UI safety contracts', () => {
         expect(flowMenu).toContain('另存为模板')
         expect(flowMenu).toContain('getFlowListErrorMessage')
         expect(flowMenu).not.toMatch(/>\s*Options\s*</)
+    })
+
+    it('keeps execution dates, shared table copy, and selection names in the Chinese PC contract', () => {
+        const executions = read('../views/agentexecutions/index.jsx')
+        const details = read('../views/agentexecutions/ExecutionDetails.jsx')
+        const table = read('../ui-component/table/ExecutionsListTable.jsx')
+
+        expect(executions).toContain("registerLocale('zh-CN', zhCN)")
+        expect(executions.match(/locale='zh-CN'/g)).toHaveLength(2)
+        expect(executions.match(/dateFormat='yyyy-MM-dd'/g)).toHaveLength(2)
+        expect(executions).toContain("previousMonthAriaLabel='上个月'")
+        expect(executions).toContain("nextMonthAriaLabel='下个月'")
+        expect(details).toContain("format('YYYY-MM-DD HH:mm:ss')")
+        expect(table).toContain("aria-label='执行记录表'")
+        expect(table).toContain("'aria-label': `选择执行记录 ${row.agentflow?.name || row.id}（ID：${row.id}）`")
+        expect(table).toContain('最近更新时间')
+        expect(table).toContain('创建时间')
+        expect(table.match(/format\('YYYY-MM-DD HH:mm:ss'\)/g)).toHaveLength(2)
+        expect(table).not.toContain('Last Updated')
+    })
+
+    it('renders shared file-picker placeholders while the deprecated assistant blocks new uploads', () => {
+        const file = read('../ui-component/file/File.jsx')
+        const dataset = read('../views/datasets/AddEditDatasetDialog.jsx')
+        const upload = read('../views/datasets/UploadCSVFileDialog.jsx')
+        const canvas = read('../views/canvas/NodeInputHandler.jsx')
+        const assistant = read('../views/assistants/openai/AssistantDialog.jsx')
+
+        expect(file).toContain("placeholder = '选择要上传的文件'")
+        expect(file).toContain("buttonText = '上传文件'")
+        expect(file).toContain('(myValue && getFileName(myValue)) || placeholder')
+        for (const source of [dataset, upload]) {
+            expect(source).toContain("value={selectedFile ?? ''}")
+            expect(source).toContain("placeholder='选择要上传的 CSV 文件'")
+            expect(source).toContain("buttonText='上传 CSV 文件'")
+            expect(source).not.toContain("value={selectedFile ?? '选择要上传的文件'}")
+        }
+        expect(canvas).toContain("value={data.inputs[inputParam.name] ?? inputParam.default ?? ''}")
+        expect(canvas).toContain("placeholder='选择要上传的文件'")
+        expect(canvas).toContain("buttonText='上传文件'")
+        expect(canvas).not.toContain("'Choose a file to upload'")
+        expect(assistant).not.toContain('uploadCodeInterpreterFiles')
+        expect(assistant).not.toContain('uploadVectorStoreFiles')
+        expect(assistant).not.toContain("buttonText='上传文件'")
+    })
+
+    it('labels MCP server annotations as unverified and fails closed when risk hints are incomplete', () => {
+        const source = read('../views/tools/CustomMcpServerDialog.jsx')
+        const riskClassifier = read('../utils/getMcpToolRiskHints.js')
+
+        expect(source).toContain("label='声明只读'")
+        expect(source).toContain("label={additiveWrite ? '声明可追加写入' : '声明可写入'}")
+        expect(source).toContain("label='声明非幂等'")
+        expect(source).toContain('服务器声明此工具为只读；该注解未经验证')
+        expect(source).toContain("label='风险未知'")
+        expect(source).toContain('服务器未完整声明工具风险')
+        expect(source).toContain("role='button'")
+        expect(source).toContain('aria-expanded={expanded}')
+        expect(source).toContain('aria-controls={detailsId}')
+        expect(source).toContain('if (event.target !== event.currentTarget) return')
+        expect(source).not.toMatch(/const HintChip[\s\S]*?tabIndex=\{0\}[\s\S]*?HintChip\.propTypes/)
+        expect(riskClassifier).toContain('destructive: writable && annotations.destructiveHint !== false')
+        expect(riskClassifier).toContain('nonIdempotent: writable && annotations.idempotentHint !== true')
+        expect(riskClassifier).toContain('openWorld: annotations.openWorldHint !== false')
+        expect(source).not.toContain('此工具不会修改任何数据')
+    })
+
+    it('keeps text-to-speech tests Chinese and preserves safe controlled failure details', () => {
+        const source = read('../ui-component/extended/TextToSpeech.jsx')
+
+        expect(source).toContain("text: '今天是使用 Flowise 构建智能应用的美好一天！'")
+        expect(source).toContain('语音测试失败：HTTP 请求状态码 ${response.status}')
+        expect(source).toContain("throw createSafeTtsTestError('语音测试失败：未收到音频数据')")
+        expect(source).toContain('message: error?.userMessage ||')
+        expect(source).toContain('testAbortControllerRef.current?.abort()')
+        expect(source).toContain("getErrorMessage(error, '网络或浏览器错误')")
+        expect(source).not.toMatch(/console\.error\s*\(/)
+        expect(source).not.toContain("throw new Error('未收到音频数据')")
+    })
+
+    it('keeps API key, Chatbot, and Marketplace network failures on the safe error path', () => {
+        for (const file of [
+            '../views/apikey/APIKeyDialog.jsx',
+            '../views/apikey/index.jsx',
+            '../views/chatflows/ShareChatbot.jsx',
+            '../views/marketplaces/index.jsx'
+        ]) {
+            const source = read(file)
+            expect(source).toContain("getErrorMessage(error, '未知错误')")
+            expect(source).not.toContain('error.response.data')
+        }
+    })
+
+    it('keeps canvas and generated-flow failures on the safe error path', () => {
+        const canvas = read('../views/canvas/index.jsx')
+        const agentflowCanvas = read('../views/agentflowsv2/Canvas.jsx')
+        const nodeInput = read('../views/canvas/NodeInputHandler.jsx')
+        const generator = read('../ui-component/dialog/AgentflowGeneratorDialog.jsx')
+
+        for (const source of [canvas, agentflowCanvas, nodeInput, generator]) {
+            expect(source).toContain("import { getErrorMessage } from '@/utils/getErrorMessage'")
+            expect(source).not.toContain('error.response.data')
+            expect(source).not.toContain('error.response?.data?.message')
+        }
+        expect(canvas).toContain('getErrorMessage(error, `删除${canvasTitle}失败，请稍后重试`)')
+        expect(agentflowCanvas).toContain("getErrorMessage(error, '删除流程失败，请稍后重试')")
+        expect(nodeInput.match(/getErrorMessage\(error, '生成文档库工具描述失败，请稍后重试'\)/g)).toHaveLength(2)
+        expect(generator).toContain("getErrorMessage(error, '生成智能体流程失败，请重试')")
+        expect(generator).not.toContain('message: response.error')
+    })
+
+    it('keeps chat and text-to-speech failures localized without exposing raw errors', () => {
+        const chat = read('../views/chatmessage/ChatMessage.jsx')
+        const popup = read('../views/chatmessage/ChatPopUp.jsx')
+        const validation = read('../views/chatmessage/ValidationPopUp.jsx')
+        const streamGuard = read('../utils/createChatStreamGuard.js')
+        const ttsLifecycle = read('../utils/ttsStreamingLifecycle.js')
+
+        for (const source of [chat, popup, validation]) {
+            expect(source).toContain("import { getErrorMessage } from '@/utils/getErrorMessage'")
+            expect(source).not.toMatch(/console\.(?:error|warn|log)\s*\(/)
+            expect(source).not.toContain('error.response.data')
+            expect(source).not.toContain('error.response?.data?.message')
+        }
+        expect(chat).toContain('语音播放失败：HTTP 请求状态码 ${response.status}')
+        expect(chat).toContain("getErrorMessage(error, '网络或浏览器错误')")
+        expect(chat).toContain('await fetchResponseFromEventStream(chatflowid, params)')
+        expect(chat).toContain('signal: abortController.signal')
+        expect(chat).toContain('streamGuard.assertTerminalClose()')
+        expect(chat).not.toContain('async onmessage')
+        expect(chat).not.toContain('async onerror')
+        expect(chat).toContain('ttsStreamingResourcesRef')
+        expect(chat).toContain('expectedSessionId')
+        expect(chat).toContain('initializationWatchdog')
+        expect(streamGuard).toContain("throw new Error('stream_closed')")
+        expect(streamGuard).toContain("throw new Error('stream_failed')")
+        expect(ttsLifecycle).toContain('resources.sourceBuffer.abort()')
+        expect(ttsLifecycle).toContain('resources.reader.cancel()')
+        expect(ttsLifecycle).toContain('revokeObjectURL(resources.objectUrl)')
+        expect(chat).toContain("case 'tts_error':")
+        expect(chat).not.toContain('Raw data:')
+        expect(chat).not.toContain('error.message')
+        expect(popup).toContain("getErrorMessage(error, '清空对话记录失败，请稍后重试')")
+        expect(validation).toContain("getErrorMessage(error, '流程验证失败，请稍后重试')")
+    })
+
+    it('keeps reviewed G1 error sinks fail-closed and out of the browser console', () => {
+        const promptGenerator = read('../ui-component/dialog/PromptGeneratorDialog.jsx')
+        const codeDialog = read('../ui-component/dialog/ExpandTextDialog.jsx')
+        const canvasHeader = read('../views/canvas/CanvasHeader.jsx')
+        const sourceDocument = read('../ui-component/dialog/SourceDocDialog.jsx')
+        const publicExecutionRoute = read('../../../server/src/routes/public-executions/index.ts')
+        const publicExecutionService = read('../../../server/src/services/executions/index.ts')
+
+        expect(promptGenerator).toContain("getErrorMessage(error, '生成指令失败，请稍后重试')")
+        expect(promptGenerator).not.toContain('error.response.data')
+        expect(codeDialog).toContain("getErrorMessage(executeCustomFunctionNodeApi.error, '代码执行失败，请检查输入和运行环境')")
+        expect(codeDialog).not.toContain('executeCustomFunctionNodeApi.error?.response?.data')
+        expect(canvasHeader).toContain("getErrorMessage(toggleScheduleEnabledApi.error, '切换调度失败，请稍后重试')")
+        expect(canvasHeader).not.toContain('toggleScheduleEnabledApi.error?.message')
+        expect(sourceDocument).toContain("import { redactErrorDetails } from '@/utils/redactErrorDetails'")
+        expect(sourceDocument).toContain('src={redactedData}')
+        expect(sourceDocument).not.toContain('src={data}')
+        expect(publicExecutionRoute).toContain("router.get('/:id', executionController.getPublicExecutionById)")
+        expect(publicExecutionRoute).not.toContain("['/', '/:id']")
+        expect(publicExecutionService).toContain('!executionId || !isValidUUID(executionId)')
+        expect(publicExecutionService).toContain('公开执行记录不存在')
+        expect(publicExecutionService).toContain('读取公开执行记录失败')
+
+        for (const file of [
+            '../layout/MainLayout/Header/index.jsx',
+            '../layout/MainLayout/Header/OrgWorkspaceBreadcrumbs/index.jsx',
+            '../layout/MainLayout/Header/WorkspaceSwitcher/index.jsx',
+            '../layout/MainLayout/Sidebar/CloudMenuList.jsx',
+            '../store/context/ErrorContext.jsx',
+            '../ui-component/dialog/AboutDialog.jsx',
+            '../ui-component/dialog/ViewMessagesDialog.jsx',
+            '../ui-component/dropdown/AsyncDropdown.jsx',
+            '../ui-component/extended/AnalyseFlow.jsx',
+            '../ui-component/extended/SpeechToText.jsx',
+            '../ui-component/grid/DataGrid.jsx',
+            '../ui-component/subscription/PricingDialog.jsx',
+            '../views/agentexecutions/NodeExecutionDetails.jsx',
+            '../views/agentexecutions/index.jsx',
+            '../views/agentflows/index.jsx',
+            '../views/assistants/custom/CustomAssistantConfigurePreview.jsx',
+            '../views/assistants/openai/AssistantDialog.jsx',
+            '../views/canvas/CanvasHeader.jsx',
+            '../views/canvas/CredentialInputHandler.jsx',
+            '../views/canvas/NodeInputHandler.jsx',
+            '../views/docstore/DocumentStoreDetail.jsx',
+            '../views/docstore/index.jsx',
+            '../views/marketplaces/index.jsx',
+            '../views/tools/index.jsx'
+        ]) {
+            expect(read(file)).not.toMatch(/console\.(?:error|warn)\s*\(/)
+        }
+    })
+
+    it('keeps NVIDIA NIM installer and container errors on the safe display path', () => {
+        const source = read('../ui-component/dialog/NvidiaNIMDialog.jsx')
+
+        expect(source).toContain("import { getErrorMessage } from '@/utils/getErrorMessage'")
+        expect(source).toContain("getErrorMessage(err, '下载安装程序失败，请稍后重试')")
+        expect(source).toContain("getErrorMessage(err, '拉取镜像失败，请稍后重试')")
+        expect(source).toContain("getErrorMessage(err, '启动容器失败，请稍后重试')")
+        expect(source.match(/getErrorMessage\(err, '检查容器状态失败，请稍后重试'\)/g)).toHaveLength(4)
+        expect(source).not.toContain('err.response.data.message')
+        expect(source).not.toContain('err.response?.data?.message')
+        expect(source).not.toContain('err.message')
+    })
+
+    it('accepts OAuth2 popup messages only from the same-origin authorization window', () => {
+        const source = read('../views/credentials/AddEditCredentialDialog.jsx')
+
+        expect(source).toContain("import { getTrustedOAuth2MessageType } from '@/utils/getTrustedOAuth2MessageType'")
+        expect(source).toContain('expectedOrigin: window.location.origin')
+        expect(source).toContain('expectedSource: authWindow')
+        expect(source).toContain("message: 'OAuth2 授权失败，请重试'")
+        expect(source).not.toContain('message: event.data.message')
+        expect(source).not.toContain("console.error('OAuth2 授权错误：', error)")
+        expect(source).not.toContain('error.response?.data?.message || error.message')
+        expect(source).not.toContain('setError(error)')
+        expect(source).not.toContain('setError(getSpecificCredentialApi.error)')
+        expect(source).not.toContain('setError(getSpecificComponentCredentialApi.error)')
+    })
+
+    it('keeps the shared pricing dialog Chinese and its subscription failure path defined', () => {
+        const source = read('../ui-component/subscription/PricingDialog.jsx')
+
+        expect(source).toContain("import { getErrorMessage } from '@/utils/getErrorMessage'")
+        expect(source).toContain("getErrorMessage(error, '无法验证订阅状态，请稍后重试')")
+        expect(source).not.toContain('err.response')
+        expect(source).toContain('订阅方案')
+        expect(source).toContain('当前方案')
+        expect(source).toContain('确认更改订阅方案')
+        expect(source).toContain('在账单门户中添加付款方式')
+        expect(source).toContain("localizePricingCopy(plan.price, '请咨询客服')")
+        expect(source).toContain("enqueueSnackbar('账单门户暂不可用，请稍后重试'")
+        expect(source).toContain("getErrorMessage(error, '无法打开账单门户，请稍后重试')")
+        expect(source).toContain("toLocaleDateString('zh-CN'")
+        expect(source).not.toContain('Subscription updated successfully!')
+        expect(source).not.toContain('Opening Billing Portal...')
+    })
+
+    it('keeps shared header controls keyboard-operable and import/export errors defined', () => {
+        const header = read('../layout/MainLayout/Header/index.jsx')
+        const profile = read('../layout/MainLayout/Header/ProfileSection/index.jsx')
+        const cloudMenu = read('../layout/MainLayout/Sidebar/CloudMenuList.jsx')
+        const trial = read('../layout/MainLayout/Sidebar/TrialInfo.jsx')
+
+        expect(header).toMatch(/<ButtonBase[\s\S]*?onClick=\{handleLeftDrawerToggle\}[\s\S]*?<Avatar/)
+        expect(profile).toMatch(/<ButtonBase[\s\S]*?onClick=\{handleToggle\}[\s\S]*?aria-label='打开账户菜单'/)
+        expect(profile).toContain("import { getErrorMessage } from '@/utils/getErrorMessage'")
+        expect(profile).toContain("getErrorMessage(importAllApi.error, '导入文件无效')")
+        expect(profile).toContain("getErrorMessage(exportAllApi.error, '服务器内部错误')")
+        expect(profile).not.toContain("from '@/utils/errorHandler'")
+        expect(profile).toContain('旧版 OpenAI／Azure 助手仅供归档，不属于可恢复的工作区备份。')
+        expect(profile).not.toContain("{ value: 'Assistants OpenAI'")
+        expect(profile).not.toContain("{ value: 'Assistants Azure'")
+        expect(profile).not.toContain("data.includes('Assistants OpenAI')")
+        expect(profile).not.toContain("data.includes('Assistants Azure')")
+        expect(cloudMenu).toContain("<ListItemButton\n                            component='a'")
+        expect(cloudMenu).not.toContain("<a href='https://docs.flowiseai.com'")
+        expect(trial).toContain("component='a'")
+        expect(trial).not.toContain('<a href={billingPortalUrl}')
+    })
+
+    it('keeps the assistant tool-delete icon accessible in Chinese', () => {
+        expect(read('../views/assistants/custom/CustomAssistantConfigurePreview.jsx')).toContain("aria-label='删除工具'")
+    })
+
+    it('makes the deprecated OpenAI Assistants area legacy-only with an explicit migration path', () => {
+        const landing = read('../views/assistants/index.jsx')
+        const layout = read('../views/assistants/openai/OpenAIAssistantLayout.jsx')
+        const dialog = read('../views/assistants/openai/AssistantDialog.jsx')
+        const nodeInput = read('../views/canvas/NodeInputHandler.jsx')
+        const vectorDialog = read('../views/assistants/openai/AssistantVectorStoreDialog.jsx')
+
+        expect(landing).toContain('2026 年 8 月 26 日停止服务')
+        expect(landing).toContain("label='2026-08-26 停止服务'")
+        expect(layout).toContain('OpenAI 助手 API 将于 2026 年 8 月 26 日停止服务')
+        expect(layout).toContain('https://developers.openai.com/api/docs/assistants/migration')
+        expect(layout).toContain("navigate('/assistants/custom')")
+        expect(layout).not.toContain('LoadAssistantDialog')
+        expect(layout).not.toContain("import ErrorBoundary from '@/ErrorBoundary'")
+        expect(layout).toContain('onClick={() => void loadAssistants()}')
+        expect(layout).not.toContain('useApi(assistantsApi.getAllAssistants)')
+        expect(layout).toContain("assistantsApi.getAllAssistants('OPENAI', { signal: abortController.signal })")
+        expect(layout).toContain('loadAbortControllerRef.current?.abort()')
+        expect(layout).not.toContain('onClick={addNew}')
+        expect(layout).not.toContain('JSON.parse(data.details)')
+        expect(layout).toContain('无效助手记录，已安全跳过')
+        expect(layout).toContain('未找到匹配的 OpenAI 助手')
+        expect(dialog).toContain("const openAIAssistantCreationDisabled = dialogProps.type === 'ADD'")
+        expect(dialog).toContain('OpenAI 助手 API 将于 2026 年 8 月 26 日停止服务')
+        expect(nodeInput).toContain("const CREATEABLE_OPTIONS = ['selectedTool']")
+        expect(nodeInput).toContain('isCreateNewOption={CREATEABLE_OPTIONS.includes(inputParam.name)}')
+        expect(nodeInput).not.toContain("title: '添加新助手'")
+        expect(vectorDialog).not.toContain('setError(')
+        expect(dialog).not.toContain('<ConfirmDialog')
+        expect(vectorDialog).not.toContain('<ConfirmDialog')
+        expect(vectorDialog).not.toContain('createAssistantVectorStore')
+        expect(vectorDialog).not.toContain('updateAssistantVectorStore')
+        expect(vectorDialog).not.toContain('deleteAssistantVectorStore')
+        expect(dialog).not.toContain('uploadFilesToAssistant(')
+        expect(dialog).not.toContain('uploadFilesToAssistantVectorStore')
+        expect(dialog).not.toContain('deleteFilesFromAssistantVectorStore')
+        expect(dialog).not.toContain('deleteAssistantVectorStore')
+        expect(dialog).toContain('关联或解绑只修改当前表单，需保存主助手后生效')
     })
 
     it('fails closed until organization setup is explicitly allowed by auth resolve', () => {

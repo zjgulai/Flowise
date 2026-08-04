@@ -38,8 +38,10 @@ import useApi from '@/hooks/useApi'
 
 // utils
 import { generateExportFlowData } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import { uiBaseURL } from '@/store/constant'
 import { closeSnackbar as closeSnackbarAction, enqueueSnackbar as enqueueSnackbarAction, SET_CHATFLOW } from '@/store/actions'
+import { getCanvasSavePermission } from './canvasSavePermission'
 
 // Clock icon (unchecked) and calendar-check icon (checked), mirroring MaterialUISwitch style
 const clockIcon = `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" height="20" width="20" viewBox="0 0 20 20"><path fill="${encodeURIComponent(
@@ -120,7 +122,15 @@ const LockedScheduleSwitch = styled(ScheduleSwitch, { shouldForwardProp: (prop) 
 
 // ==============================|| CANVAS HEADER ||============================== //
 
-const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, handleDeleteFlow, handleLoadFlow }) => {
+const CanvasHeader = ({
+    chatflow,
+    isAgentCanvas,
+    isAgentflowV2,
+    handleSaveFlow,
+    handleDeleteFlow,
+    handleLoadFlow,
+    isSaveDisabled = false
+}) => {
     const theme = useTheme()
     const dispatch = useDispatch()
     const navigate = useNavigate()
@@ -147,9 +157,9 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
     const enqueueSnackbar = (...args) => dispatch(enqueueSnackbarAction(...args))
     const closeSnackbar = (...args) => dispatch(closeSnackbarAction(...args))
 
-    const [savePermission, setSavePermission] = useState(isAgentCanvas ? 'agentflows:create' : 'chatflows:create')
+    const savePermission = getCanvasSavePermission({ isAgentCanvas, persistedFlowId: chatflow?.id })
 
-    const title = isAgentCanvas ? 'Agents' : 'Chatflow'
+    const title = isAgentCanvas ? '智能体流程' : '对话流程'
 
     const updateChatflowApi = useApi(chatflowsApi.updateChatflow)
     const getScheduleStatusApi = useApi(chatflowsApi.getScheduleStatus)
@@ -238,8 +248,11 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                 } else {
                     window.open(`${uiBaseURL}/canvas`, '_blank')
                 }
-            } catch (e) {
-                console.error(e)
+            } catch (error) {
+                enqueueSnackbar({
+                    message: getErrorMessage(error, '复制流程失败，请检查流程数据后重试'),
+                    options: { variant: 'error' }
+                })
             }
         } else if (setting === 'exportChatflow') {
             try {
@@ -255,8 +268,11 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                 linkElement.setAttribute('href', dataUri)
                 linkElement.setAttribute('download', exportFileDefaultName)
                 linkElement.click()
-            } catch (e) {
-                console.error(e)
+            } catch (error) {
+                enqueueSnackbar({
+                    message: getErrorMessage(error, '导出流程失败，请检查流程数据后重试'),
+                    options: { variant: 'error' }
+                })
             }
         }
     }
@@ -287,8 +303,12 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                     break
                 }
             }
-        } catch (e) {
-            console.error(e)
+        } catch (error) {
+            enqueueSnackbar({
+                message: getErrorMessage(error, '无法读取流程文件配置，请检查流程数据'),
+                options: { variant: 'error' }
+            })
+            return
         }
 
         // If sessionId memory, isSessionMemory = true
@@ -302,8 +322,12 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                     break
                 }
             }
-        } catch (e) {
-            console.error(e)
+        } catch (error) {
+            enqueueSnackbar({
+                message: getErrorMessage(error, '无法读取流程会话配置，请检查流程数据'),
+                options: { variant: 'error' }
+            })
+            return
         }
 
         setAPIDialogProps({
@@ -319,20 +343,19 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
     }
 
     const onSaveChatflowClick = () => {
-        if (chatflow.id) handleSaveFlow(flowName)
+        if (isSaveDisabled) return
+        if (chatflow?.id) handleSaveFlow(flowName)
         else setFlowDialogOpen(true)
     }
 
     const onConfirmSaveName = (flowName) => {
         setFlowDialogOpen(false)
-        setSavePermission(isAgentCanvas ? 'agentflows:update' : 'chatflows:update')
         handleSaveFlow(flowName)
     }
 
     useEffect(() => {
         if (updateChatflowApi.data) {
             setFlowName(updateChatflowApi.data.name)
-            setSavePermission(isAgentCanvas ? 'agentflows:update' : 'chatflows:update')
             dispatch({ type: SET_CHATFLOW, chatflow: updateChatflowApi.data })
         }
         setEditingFlowName(false)
@@ -385,7 +408,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
     useEffect(() => {
         if (toggleScheduleEnabledApi.error) {
             enqueueSnackbar({
-                message: String(toggleScheduleEnabledApi.error?.message || toggleScheduleEnabledApi.error || '切换调度失败'),
+                message: getErrorMessage(toggleScheduleEnabledApi.error, '切换调度失败，请稍后重试'),
                 options: { variant: 'error' }
             })
         }
@@ -571,7 +594,7 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                         </Tooltip>
                     )}
                     {chatflow?.id && (
-                        <ButtonBase title='API Endpoint' sx={{ borderRadius: '50%', mr: 2 }}>
+                        <ButtonBase title='API 端点' sx={{ borderRadius: '50%', mr: 2 }}>
                             <Avatar
                                 variant='rounded'
                                 sx={{
@@ -593,7 +616,12 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                         </ButtonBase>
                     )}
                     <Available permission={savePermission}>
-                        <ButtonBase title={`Save ${title}`} sx={{ borderRadius: '50%', mr: 2 }}>
+                        <ButtonBase
+                            title={isSaveDisabled ? '流程数据未能安全加载，暂时无法保存' : `保存${title}`}
+                            sx={{ borderRadius: '50%', mr: 2 }}
+                            disabled={isSaveDisabled}
+                            onClick={onSaveChatflowClick}
+                        >
                             <Avatar
                                 variant='rounded'
                                 sx={{
@@ -608,7 +636,6 @@ const CanvasHeader = ({ chatflow, isAgentCanvas, isAgentflowV2, handleSaveFlow, 
                                     }
                                 }}
                                 color='inherit'
-                                onClick={onSaveChatflowClick}
                             >
                                 <IconDeviceFloppy stroke={1.5} size='1.3rem' />
                             </Avatar>
@@ -690,7 +717,8 @@ CanvasHeader.propTypes = {
     handleDeleteFlow: PropTypes.func,
     handleLoadFlow: PropTypes.func,
     isAgentCanvas: PropTypes.bool,
-    isAgentflowV2: PropTypes.bool
+    isAgentflowV2: PropTypes.bool,
+    isSaveDisabled: PropTypes.bool
 }
 
 export default CanvasHeader

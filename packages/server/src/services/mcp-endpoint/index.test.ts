@@ -18,6 +18,7 @@ jest.mock(
         Column: () => () => {},
         CreateDateColumn: () => () => {},
         UpdateDateColumn: () => () => {},
+        VersionColumn: () => () => {},
         PrimaryGeneratedColumn: () => () => {}
     }),
     { virtual: true }
@@ -88,6 +89,7 @@ jest.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
 import { StatusCodes } from 'http-status-codes'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { ChatType } from '../../Interface'
+import logger from '../../utils/logger'
 import mcpEndpointService from '.'
 
 // --- Helpers ---
@@ -192,6 +194,34 @@ describe('handleMcpRequest', () => {
         await expect(mcpEndpointService.handleMcpRequest('flow-123', 'token', makeReq() as any, makeRes())).rejects.toThrow(
             'DB connection failed'
         )
+    })
+
+    it('uses the middleware-verified ChatFlow without repeating token verification', async () => {
+        const verifiedChatflow = makeChatflow({ mcpServerConfig: JSON.stringify(makeConfig()) })
+        const req = makeReq() as any
+        const res = makeRes()
+
+        await mcpEndpointService.handleMcpRequest('flow-123', 'a'.repeat(64), req, res, verifiedChatflow as any)
+
+        expect(mockGetChatflowByIdAndVerifyToken).not.toHaveBeenCalled()
+        expect(mockParseMcpConfig).toHaveBeenCalledWith(verifiedChatflow)
+        expect(mockHandleRequest).toHaveBeenCalledWith(req, res, req.body)
+    })
+
+    it('rejects a middleware ChatFlow bound to a different route id', async () => {
+        const res = makeRes()
+
+        await mcpEndpointService.handleMcpRequest(
+            'flow-123',
+            'a'.repeat(64),
+            makeReq() as any,
+            res,
+            makeChatflow({ id: 'flow-other' }) as any
+        )
+
+        expect(res.status).toHaveBeenCalledWith(StatusCodes.UNAUTHORIZED)
+        expect(mockGetChatflowByIdAndVerifyToken).not.toHaveBeenCalled()
+        expect(mockHandleRequest).not.toHaveBeenCalled()
     })
 
     it('returns 404 when config is null', async () => {
@@ -507,13 +537,18 @@ describe('chatflow tool callback', () => {
     })
 
     it('returns isError:true and a text message when utilBuildChatflow throws', async () => {
-        mockUtilBuildChatflow.mockRejectedValue(new Error('Build failed'))
+        mockUtilBuildChatflow.mockRejectedValue(new Error('Build failed with provider-secret-sentinel'))
 
         const result = await toolCallback({ question: 'what?' })
 
         expect(result.isError).toBe(true)
         expect(result.content).toHaveLength(1)
         expect(result.content[0].type).toBe('text')
+        expect(JSON.stringify((logger.error as jest.Mock).mock.calls)).not.toContain('provider-secret-sentinel')
+        expect(logger.error).toHaveBeenCalledWith('mcp_tool_execution_failed', {
+            flowType: 'CHATFLOW',
+            errorClass: 'Error'
+        })
     })
 
     it('calls createMockRequest with the chatflowId and question', async () => {

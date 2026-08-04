@@ -1,10 +1,38 @@
 import { ALLOWED_OAUTH2_TOKEN_FIELDS, DEFAULT_ALLOWED_OAUTH2_DOMAINS } from './constants'
 
+export const MAX_OAUTH2_TOKEN_LENGTH = 128 * 1024
+export const MAX_OAUTH2_TOKEN_LIFETIME_SECONDS = 10 * 365 * 24 * 60 * 60
+
 function getCustomDomains(): string[] {
     return (process.env.OAUTH2_ALLOWED_TOKEN_DOMAINS ?? '')
         .split(',')
         .map((d) => d.trim().toLowerCase())
         .filter(Boolean)
+}
+
+/**
+ * Validates a persisted OAuth endpoint for server-side authorization and token
+ * exchange. Unlike the legacy configurable validator, this policy cannot be
+ * disabled: execution endpoints must always use HTTPS and an explicit domain
+ * allowlist.
+ */
+export function validateStrictOAuth2Url(value: unknown): string {
+    if (typeof value !== 'string' || !value.trim() || value.length > 4096) {
+        throw new Error('OAuth2 endpoint is not allowed.')
+    }
+
+    try {
+        const parsed = new URL(value)
+        const hostname = parsed.hostname.toLowerCase()
+        const allowedDomains = [...new Set([...DEFAULT_ALLOWED_OAUTH2_DOMAINS, ...getCustomDomains()])]
+        const isAllowed = allowedDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))
+        if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash || !isAllowed) {
+            throw new Error('OAuth2 endpoint is not allowed.')
+        }
+        return parsed.toString()
+    } catch {
+        throw new Error('OAuth2 endpoint is not allowed.')
+    }
 }
 
 /**
@@ -87,4 +115,36 @@ export function extractOAuth2TokenFields(data: Record<string, any>): Record<stri
         }
     }
     return result
+}
+
+/** Normalizes the token response shared by authorization-code and refresh flows. */
+export function normalizeOAuth2TokenResponse(data: unknown): Record<string, any> {
+    const invalid = () => new Error('OAuth2 token response is invalid.')
+    let tokenData: Record<string, any>
+    try {
+        tokenData = extractOAuth2TokenFields(data as Record<string, any>)
+    } catch {
+        throw invalid()
+    }
+
+    if (typeof tokenData.access_token !== 'string' || !tokenData.access_token || tokenData.access_token.length > MAX_OAUTH2_TOKEN_LENGTH) {
+        throw invalid()
+    }
+
+    for (const field of ['refresh_token', 'token_type', 'scope', 'id_token', 'granted_scope']) {
+        const value = tokenData[field]
+        if (value !== undefined && (typeof value !== 'string' || value.length > MAX_OAUTH2_TOKEN_LENGTH)) {
+            throw invalid()
+        }
+    }
+
+    if (tokenData.expires_in !== undefined) {
+        const expiresIn = Number(tokenData.expires_in)
+        if (!Number.isFinite(expiresIn) || expiresIn <= 0 || expiresIn > MAX_OAUTH2_TOKEN_LIFETIME_SECONDS) {
+            throw invalid()
+        }
+        tokenData.expires_in = expiresIn
+    }
+
+    return tokenData
 }

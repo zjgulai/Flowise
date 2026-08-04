@@ -5,6 +5,7 @@ import {
     IMPORT_EXTRACTION_REGEX,
     executeJavaScriptCode
 } from './utils'
+import http from 'http'
 
 describe('removeInvalidImageMarkdown', () => {
     describe('strips non-http/https image markdown', () => {
@@ -285,5 +286,60 @@ describe('NodeVM sandbox — availableDependencies allowlist', () => {
         process.env.TOOL_FUNCTION_EXTERNAL_DEP = 'pg'
         const result = await executeJavaScriptCode(`const { Client } = require('pg'); return typeof Client`, {}, { timeout: 10000 })
         expect(result).toBe('function')
+    }, 15000)
+})
+
+describe('NodeVM sandbox — HTTP resource boundaries', () => {
+    const originalSecurityCheck = process.env.HTTP_SECURITY_CHECK
+    const originalDenyList = process.env.HTTP_DENY_LIST
+    let server: http.Server
+    let port: number
+
+    beforeAll(async () => {
+        server = http.createServer((_request, response) => {
+            response.writeHead(200, { 'content-length': String(32 * 1024 * 1024 + 1), 'content-type': 'text/plain' })
+            response.end()
+        })
+        await new Promise<void>((resolve, reject) => {
+            server.once('error', reject)
+            server.listen(0, '127.0.0.1', () => resolve())
+        })
+        const address = server.address()
+        if (!address || typeof address === 'string') throw new Error('local NodeVM fixture did not bind a TCP port')
+        port = address.port
+    })
+
+    beforeEach(() => {
+        process.env.HTTP_SECURITY_CHECK = 'false'
+        process.env.HTTP_DENY_LIST = ''
+    })
+
+    afterAll(async () => {
+        await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+        if (originalSecurityCheck === undefined) delete process.env.HTTP_SECURITY_CHECK
+        else process.env.HTTP_SECURITY_CHECK = originalSecurityCheck
+        if (originalDenyList === undefined) delete process.env.HTTP_DENY_LIST
+        else process.env.HTTP_DENY_LIST = originalDenyList
+    })
+
+    it('does not let sandboxed node-fetch disable the default timeout or response cap', async () => {
+        const code = `
+            const fetch = require('node-fetch')
+            const response = await fetch('http://127.0.0.1:${port}/oversized', {
+                timeout: 0,
+                size: 0,
+                maxBodyLength: -1
+            })
+            return await response.text()
+        `
+
+        const errorText = await executeJavaScriptCode(code, {}, { timeout: 10000 }).then(
+            () => '',
+            (error) => String(error)
+        )
+
+        expect(errorText).toContain('HTTP request exceeded a configured resource limit.')
+        expect(errorText).not.toContain('127.0.0.1')
+        expect(errorText).not.toContain('/oversized')
     }, 15000)
 })

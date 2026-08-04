@@ -3,8 +3,15 @@ import { StatusCodes } from 'http-status-codes'
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { AssistantType } from '../../Interface'
 import assistantsService from '../../services/assistants'
+import { assertAssistantCreationAllowed } from '../../services/assistants/legacyPolicy'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { checkUsageLimit } from '../../utils/quotaUsage'
+
+const parseDeleteBoth = (value: unknown): boolean => {
+    if (value === undefined || value === false || value === 'false') return false
+    if (value === true || value === 'true') return true
+    throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'isDeleteBoth must be true or false')
+}
 
 const createAssistant = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -15,6 +22,7 @@ const createAssistant = async (req: Request, res: Response, next: NextFunction) 
             )
         }
         const body = req.body
+        assertAssistantCreationAllowed(body.type)
         const orgId = req.user?.activeOrganizationId
         if (!orgId) {
             throw new InternalFlowiseError(
@@ -58,7 +66,30 @@ const deleteAssistant = async (req: Request, res: Response, next: NextFunction) 
                 `Error: assistantsController.deleteAssistant - workspace ${workspaceId} not found!`
             )
         }
-        const apiResponse = await assistantsService.deleteAssistant(req.params.id, req.query.isDeleteBoth, workspaceId)
+        const apiResponse = await assistantsService.deleteAssistant(req.params.id, parseDeleteBoth(req.query.isDeleteBoth), workspaceId)
+        return res.json(apiResponse)
+    } catch (error) {
+        next(error)
+    }
+}
+
+const deleteCustomAssistant = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (!req.params?.id) {
+            throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, 'Custom assistant id is required')
+        }
+        if (!req.body) {
+            throw new InternalFlowiseError(StatusCodes.PRECONDITION_FAILED, 'Custom assistant delete snapshot is required')
+        }
+        const orgId = req.user?.activeOrganizationId
+        if (!orgId) {
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Active organization not found')
+        }
+        const workspaceId = req.user?.activeWorkspaceId
+        if (!workspaceId) {
+            throw new InternalFlowiseError(StatusCodes.NOT_FOUND, 'Active workspace not found')
+        }
+        const apiResponse = await assistantsService.deleteCustomAssistant(req.params.id, req.body, orgId, workspaceId)
         return res.json(apiResponse)
     } catch (error) {
         next(error)
@@ -132,6 +163,64 @@ const updateAssistant = async (req: Request, res: Response, next: NextFunction) 
     }
 }
 
+const getCustomAssistantFlow = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (typeof req.params === 'undefined' || !req.params.id) {
+            throw new InternalFlowiseError(
+                StatusCodes.PRECONDITION_FAILED,
+                `Error: assistantsController.getCustomAssistantFlow - id not provided!`
+            )
+        }
+        const workspaceId = req.user?.activeWorkspaceId
+        if (!workspaceId) {
+            throw new InternalFlowiseError(
+                StatusCodes.NOT_FOUND,
+                `Error: assistantsController.getCustomAssistantFlow - workspace ${workspaceId} not found!`
+            )
+        }
+        const apiResponse = await assistantsService.getCustomAssistantFlow(req.params.id, workspaceId)
+        return res.json(apiResponse)
+    } catch (error) {
+        next(error)
+    }
+}
+
+const saveCustomAssistant = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (typeof req.params === 'undefined' || !req.params.id) {
+            throw new InternalFlowiseError(
+                StatusCodes.PRECONDITION_FAILED,
+                `Error: assistantsController.saveCustomAssistant - id not provided!`
+            )
+        }
+        if (!req.body) {
+            throw new InternalFlowiseError(
+                StatusCodes.PRECONDITION_FAILED,
+                `Error: assistantsController.saveCustomAssistant - body not provided!`
+            )
+        }
+        const orgId = req.user?.activeOrganizationId
+        if (!orgId) {
+            throw new InternalFlowiseError(
+                StatusCodes.NOT_FOUND,
+                `Error: assistantsController.saveCustomAssistant - organization ${orgId} not found!`
+            )
+        }
+        const workspaceId = req.user?.activeWorkspaceId
+        if (!workspaceId) {
+            throw new InternalFlowiseError(
+                StatusCodes.NOT_FOUND,
+                `Error: assistantsController.saveCustomAssistant - workspace ${workspaceId} not found!`
+            )
+        }
+        const subscriptionId = req.user?.activeOrganizationSubscriptionId || ''
+        const apiResponse = await assistantsService.saveCustomAssistant(req.params.id, req.body, orgId, workspaceId, subscriptionId)
+        return res.json(apiResponse)
+    } catch (error) {
+        next(error)
+    }
+}
+
 const getChatModels = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const apiResponse = await assistantsService.getChatModels()
@@ -174,7 +263,14 @@ const generateAssistantInstruction = async (req: Request, res: Response, next: N
                 `Error: assistantsController.generateAssistantInstruction - body not provided!`
             )
         }
-        const apiResponse = await assistantsService.generateAssistantInstruction(req.body.task, req.body.selectedChatModel)
+        const workspaceId = req.user?.activeWorkspaceId
+        if (!workspaceId) {
+            throw new InternalFlowiseError(
+                StatusCodes.NOT_FOUND,
+                `Error: assistantsController.generateAssistantInstruction - workspace not found!`
+            )
+        }
+        const apiResponse = await assistantsService.generateAssistantInstruction(req.body.task, req.body.selectedChatModel, workspaceId)
         return res.json(apiResponse)
     } catch (error) {
         next(error)
@@ -184,9 +280,12 @@ const generateAssistantInstruction = async (req: Request, res: Response, next: N
 export default {
     createAssistant,
     deleteAssistant,
+    deleteCustomAssistant,
     getAllAssistants,
     getAssistantById,
     updateAssistant,
+    getCustomAssistantFlow,
+    saveCustomAssistant,
     getChatModels,
     getDocumentStores,
     getTools,

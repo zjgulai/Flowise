@@ -41,13 +41,18 @@ import ConfirmDialog from '@/ui-component/dialog/ConfirmDialog'
 import DocStoreAPIDialog from './DocStoreAPIDialog'
 
 // API
-import documentsApi from '@/api/documentstore'
+import documentsApi, {
+    DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+    isDocumentStoreVersionConflict,
+    requireDocumentStoreVersionToken
+} from '@/api/documentstore'
 
 // Hooks
 import useApi from '@/hooks/useApi'
 import useNotifier from '@/utils/useNotifier'
 import { useAuth } from '@/hooks/useAuth'
 import { getFileName } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useConfirm from '@/hooks/useConfirm'
 
 // icons
@@ -186,27 +191,19 @@ const DocumentStoreDetails = () => {
         setShowDocumentLoaderListDialog(true)
     }
 
-    const deleteVectorStoreDataFromStore = async (storeId, docId) => {
-        try {
-            await documentsApi.deleteVectorStoreDataFromStore(storeId, docId)
-        } catch (error) {
-            console.error(error)
-        }
-    }
-
     const onDocStoreDelete = async (type, file) => {
         setBackdropLoading(true)
-        setShowDeleteDocStoreDialog(false)
         if (type === 'STORE') {
-            if (documentStore.recordManagerConfig) {
-                await deleteVectorStoreDataFromStore(storeId)
-            }
             try {
-                const deleteResp = await documentsApi.deleteDocumentStore(storeId)
+                const versionToken = requireDocumentStoreVersionToken(documentStore)
+                const deleteResp = await documentsApi.deleteDocumentStore(storeId, versionToken)
                 setBackdropLoading(false)
                 if (deleteResp.data) {
+                    setShowDeleteDocStoreDialog(false)
                     enqueueSnackbar({
-                        message: 'Store, Loader and associated document chunks deleted',
+                        message: documentStore.vectorStoreConfig
+                            ? '本地文档库、加载器和分块已删除；外部向量服务中的数据未自动清理'
+                            : '本地文档库、加载器和分块已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -221,11 +218,25 @@ const DocumentStoreDetails = () => {
                 }
             } catch (error) {
                 setBackdropLoading(false)
+                if (isDocumentStoreVersionConflict(error)) {
+                    setShowDeleteDocStoreDialog(false)
+                    setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    try {
+                        const latestResponse = await documentsApi.getSpecificDocumentStore(storeId)
+                        requireDocumentStoreVersionToken(latestResponse.data)
+                        setDocumentStore(latestResponse.data)
+                    } catch {
+                        setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    }
+                    enqueueSnackbar({
+                        message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                        options: { variant: 'warning' }
+                    })
+                    return
+                }
                 setError(error)
                 enqueueSnackbar({
-                    message: `Failed to delete Document Store: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `删除文档库失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -239,15 +250,18 @@ const DocumentStoreDetails = () => {
                 })
             }
         } else if (type === 'LOADER') {
-            if (documentStore.recordManagerConfig) {
-                await deleteVectorStoreDataFromStore(storeId, file.id)
-            }
             try {
-                const deleteResp = await documentsApi.deleteLoaderFromStore(storeId, file.id)
+                const versionToken = requireDocumentStoreVersionToken(documentStore)
+                const deleteResp = await documentsApi.deleteLoaderFromStore(storeId, file.id, versionToken)
                 setBackdropLoading(false)
                 if (deleteResp.data) {
+                    setShowDeleteDocStoreDialog(false)
+                    const advancedVersionToken = requireDocumentStoreVersionToken(deleteResp.data)
+                    setDocumentStore((current) => ({ ...current, versionToken: advancedVersionToken }))
                     enqueueSnackbar({
-                        message: 'Loader and associated document chunks deleted',
+                        message: documentStore.vectorStoreConfig
+                            ? '本地加载器和关联分块已删除；外部向量服务中的数据未自动清理'
+                            : '本地加载器和关联分块已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -261,12 +275,26 @@ const DocumentStoreDetails = () => {
                     onConfirm()
                 }
             } catch (error) {
-                setError(error)
                 setBackdropLoading(false)
+                if (isDocumentStoreVersionConflict(error)) {
+                    setShowDeleteDocStoreDialog(false)
+                    setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    try {
+                        const latestResponse = await documentsApi.getSpecificDocumentStore(storeId)
+                        requireDocumentStoreVersionToken(latestResponse.data)
+                        setDocumentStore(latestResponse.data)
+                    } catch {
+                        setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    }
+                    enqueueSnackbar({
+                        message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                        options: { variant: 'warning' }
+                    })
+                    return
+                }
+                setError(error)
                 enqueueSnackbar({
-                    message: `Failed to delete Document Loader: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `删除文档加载器失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -284,7 +312,7 @@ const DocumentStoreDetails = () => {
 
     const onLoaderDelete = (file, vectorStoreConfig, recordManagerConfig) => {
         // Get the display name in the format "LoaderName (sourceName)"
-        const loaderName = file.loaderName || 'Unknown'
+        const loaderName = file.loaderName || '未知加载器'
         let sourceName = ''
 
         // Prefer files.name when files array exists and has items
@@ -303,19 +331,14 @@ const DocumentStoreDetails = () => {
 
         const displayName = sourceName ? `${loaderName} (${sourceName})` : loaderName
 
-        let description = `Delete "${displayName}"? This will delete all the associated document chunks from the document store.`
+        let description = `确定删除“${displayName}”吗？此操作会删除文档库中与其关联的全部文档分块。`
 
-        if (
-            recordManagerConfig &&
-            vectorStoreConfig &&
-            Object.keys(recordManagerConfig).length > 0 &&
-            Object.keys(vectorStoreConfig).length > 0
-        ) {
-            description = `Delete "${displayName}"? This will delete all the associated document chunks from the document store and remove the actual data from the vector store database.`
+        if (vectorStoreConfig && Object.keys(vectorStoreConfig).length > 0) {
+            description += '此操作不会删除外部向量服务中的数据；需按受控清理流程另行处理。本地删除与外部清理无法保证原子性。'
         }
 
         const props = {
-            title: `Delete`,
+            title: '删除加载器',
             description,
             vectorStoreConfig,
             recordManagerConfig,
@@ -328,19 +351,14 @@ const DocumentStoreDetails = () => {
     }
 
     const onStoreDelete = (vectorStoreConfig, recordManagerConfig) => {
-        let description = `Delete Store ${getSpecificDocumentStore.data?.name}? This will delete all the associated loaders and document chunks from the document store.`
+        let description = `确定删除文档库“${documentStore?.name}”吗？此操作会删除其中的全部加载器和文档分块。`
 
-        if (
-            recordManagerConfig &&
-            vectorStoreConfig &&
-            Object.keys(recordManagerConfig).length > 0 &&
-            Object.keys(vectorStoreConfig).length > 0
-        ) {
-            description = `Delete Store ${getSpecificDocumentStore.data?.name}? This will delete all the associated loaders and document chunks from the document store, and remove the actual data from the vector store database.`
+        if (vectorStoreConfig && Object.keys(vectorStoreConfig).length > 0) {
+            description += '此操作不会删除外部向量服务中的数据；需按受控清理流程另行处理。本地删除与外部清理无法保证原子性。'
         }
 
         const props = {
-            title: `Delete`,
+            title: '删除文档库',
             description,
             vectorStoreConfig,
             recordManagerConfig,
@@ -353,10 +371,10 @@ const DocumentStoreDetails = () => {
 
     const onStoreRefresh = async (storeId) => {
         const confirmPayload = {
-            title: `Refresh all loaders and upsert all chunks?`,
-            description: `This will re-process all loaders and upsert all chunks. This action might take some time.`,
-            confirmButtonName: 'Refresh',
-            cancelButtonName: 'Cancel'
+            title: '刷新全部加载器并更新所有分块？',
+            description: '系统将重新处理全部加载器并更新所有分块，这可能需要一些时间。',
+            confirmButtonName: '刷新',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -364,10 +382,14 @@ const DocumentStoreDetails = () => {
             setAnchorEl(null)
             setBackdropLoading(true)
             try {
-                const resp = await documentsApi.refreshLoader(storeId)
+                const resp = await documentsApi.refreshLoader(storeId, documentStore.versionToken)
                 if (resp.data) {
+                    requireDocumentStoreVersionToken(resp.data)
+                    const latestResponse = await documentsApi.getSpecificDocumentStore(storeId)
+                    requireDocumentStoreVersionToken(latestResponse.data)
+                    setDocumentStore(latestResponse.data)
                     enqueueSnackbar({
-                        message: 'Document store refresh successfully!',
+                        message: '文档库刷新成功',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -382,10 +404,23 @@ const DocumentStoreDetails = () => {
                 setBackdropLoading(false)
             } catch (error) {
                 setBackdropLoading(false)
+                if (isDocumentStoreVersionConflict(error)) {
+                    setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    try {
+                        const latestResponse = await documentsApi.getSpecificDocumentStore(storeId)
+                        requireDocumentStoreVersionToken(latestResponse.data)
+                        setDocumentStore(latestResponse.data)
+                    } catch {
+                        setDocumentStore((current) => ({ ...current, versionToken: undefined }))
+                    }
+                    enqueueSnackbar({
+                        message: DOCUMENT_STORE_VERSION_CONFLICT_MESSAGE,
+                        options: { variant: 'warning' }
+                    })
+                    return
+                }
                 enqueueSnackbar({
-                    message: `Failed to refresh document store: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `刷新文档库失败：${getErrorMessage(error)}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -404,13 +439,14 @@ const DocumentStoreDetails = () => {
         const data = {
             name: documentStore.name,
             description: documentStore.description,
-            id: documentStore.id
+            id: documentStore.id,
+            versionToken: documentStore.versionToken
         }
         const dialogProp = {
-            title: 'Edit Document Store',
+            title: '编辑文档库',
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Update',
+            cancelButtonName: '取消',
+            confirmButtonName: '更新',
             data: data
         }
         setDialogProps(dialogProp)
@@ -430,7 +466,7 @@ const DocumentStoreDetails = () => {
 
     const onViewUpsertAPI = (storeId, loaderId) => {
         const props = {
-            title: `Upsert API`,
+            title: '更新 API',
             storeId,
             loaderId
         }
@@ -474,7 +510,7 @@ const DocumentStoreDetails = () => {
                     <Stack flexDirection='column' sx={{ gap: 3 }}>
                         <ViewHeader
                             isBackButton={true}
-                            isEditButton={hasPermission('documentStores:create,documentStores:update')}
+                            isEditButton={hasPermission('documentStores:update')}
                             search={false}
                             title={documentStore?.name}
                             description={documentStore?.description}
@@ -483,7 +519,7 @@ const DocumentStoreDetails = () => {
                         >
                             {(documentStore?.status === 'STALE' || documentStore?.status === 'UPSERTING') && (
                                 <PermissionIconButton
-                                    permissionId={'documentStores:view'}
+                                    permissionId={'documentStores:upsert-config'}
                                     onClick={onConfirm}
                                     size='small'
                                     color='primary'
@@ -499,7 +535,7 @@ const DocumentStoreDetails = () => {
                                 startIcon={<IconPlus />}
                                 onClick={listLoaders}
                             >
-                                Add Document Loader
+                                添加文档加载器
                             </StyledPermissionButton>
                             <Button
                                 id='document-store-header-action-button'
@@ -513,7 +549,7 @@ const DocumentStoreDetails = () => {
                                 sx={{ minWidth: 150 }}
                                 endIcon={<KeyboardArrowDownIcon />}
                             >
-                                More Actions
+                                更多操作
                             </Button>
                             <StyledMenu
                                 id='document-store-header-menu'
@@ -533,7 +569,7 @@ const DocumentStoreDetails = () => {
                                     disableRipple
                                 >
                                     <FileChunksIcon />
-                                    View & Edit Chunks
+                                    查看和编辑分块
                                 </MenuItem>
                                 <Available permission={'documentStores:upsert-config'}>
                                     <MenuItem
@@ -545,7 +581,7 @@ const DocumentStoreDetails = () => {
                                         disableRipple
                                     >
                                         <NoteAddIcon />
-                                        Upsert All Chunks
+                                        更新全部分块
                                     </MenuItem>
                                 </Available>
                                 <MenuItem
@@ -557,7 +593,7 @@ const DocumentStoreDetails = () => {
                                     disableRipple
                                 >
                                     <SearchIcon />
-                                    Retrieval Query
+                                    检索测试
                                 </MenuItem>
                                 <Available permission={'documentStores:upsert-config'}>
                                     <MenuItem
@@ -567,7 +603,7 @@ const DocumentStoreDetails = () => {
                                         title='重新处理所有加载器并更新所有片段'
                                     >
                                         <RefreshIcon />
-                                        Refresh
+                                        刷新
                                     </MenuItem>
                                 </Available>
                                 <Divider sx={{ my: 0.5 }} />
@@ -579,12 +615,12 @@ const DocumentStoreDetails = () => {
                                     disableRipple
                                 >
                                     <FileDeleteIcon />
-                                    Delete
+                                    删除
                                 </MenuItem>
                             </StyledMenu>
                         </ViewHeader>
                         <DocumentStoreStatus status={documentStore?.status} />
-                        {getSpecificDocumentStore.data?.whereUsed?.length > 0 && (
+                        {documentStore?.whereUsed?.length > 0 && (
                             <Stack flexDirection='row' sx={{ gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
                                 <div
                                     style={{
@@ -600,9 +636,9 @@ const DocumentStoreDetails = () => {
                                     }}
                                 >
                                     <IconVectorBezier2 style={{ marginRight: 5 }} size={17} />
-                                    Chatflows Used:
+                                    关联对话流程：
                                 </div>
-                                {getSpecificDocumentStore.data.whereUsed.map((chatflowUsed, index) => (
+                                {documentStore.whereUsed.map((chatflowUsed, index) => (
                                     <Chip
                                         key={index}
                                         clickable
@@ -625,17 +661,17 @@ const DocumentStoreDetails = () => {
                                     <img
                                         style={{ objectFit: 'cover', height: '16vh', width: 'auto' }}
                                         src={doc_store_details_emptySVG}
-                                        alt='doc_store_details_emptySVG'
+                                        alt='文档库暂无内容'
                                     />
                                 </Box>
-                                <div>No Document Added Yet</div>
+                                <div>尚未添加文档</div>
                                 <StyledButton
                                     variant='contained'
                                     sx={{ borderRadius: 2, height: '100%', mt: 2, color: 'white' }}
                                     startIcon={<IconPlus />}
                                     onClick={listLoaders}
                                 >
-                                    Add Document Loader
+                                    添加文档加载器
                                 </StyledButton>
                             </Stack>
                         ) : (
@@ -643,7 +679,7 @@ const DocumentStoreDetails = () => {
                                 sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }}
                                 component={Paper}
                             >
-                                <Table sx={{ minWidth: 650 }} aria-label='simple table'>
+                                <Table sx={{ minWidth: 650 }} aria-label='文档加载器列表'>
                                     <TableHead
                                         sx={{
                                             backgroundColor: customization.isDarkMode
@@ -658,7 +694,7 @@ const DocumentStoreDetails = () => {
                                             <StyledTableCell>分割器</StyledTableCell>
                                             <StyledTableCell>来源</StyledTableCell>
                                             <StyledTableCell>片段</StyledTableCell>
-                                            <StyledTableCell>Chars</StyledTableCell>
+                                            <StyledTableCell>字符数</StyledTableCell>
                                             <Available permission={'documentStores:preview-process,documentStores:delete-loader'}>
                                                 <StyledTableCell>操作</StyledTableCell>
                                             </Available>
@@ -749,7 +785,7 @@ const DocumentStoreDetails = () => {
                                 </Table>
                             </TableContainer>
                         )}
-                        {getSpecificDocumentStore.data?.status === 'STALE' && (
+                        {documentStore?.status === 'STALE' && (
                             <div style={{ width: '100%', textAlign: 'center', marginTop: '20px' }}>
                                 <Typography
                                     color='warning'
@@ -830,7 +866,7 @@ function LoaderRow(props) {
 
         // Return format: "LoaderName (sourceName)" or just "LoaderName" if no source
         if (!sourceName) {
-            return loaderName || 'No source'
+            return loaderName || '无来源'
         }
         return loaderName ? `${loaderName} (${sourceName})` : sourceName
     }
@@ -852,7 +888,7 @@ function LoaderRow(props) {
                 <StyledTableCell onClick={props.onViewChunksClick} scope='row'>
                     {props.loader.loaderName}
                 </StyledTableCell>
-                <StyledTableCell onClick={props.onViewChunksClick}>{props.loader.splitterName ?? 'None'}</StyledTableCell>
+                <StyledTableCell onClick={props.onViewChunksClick}>{props.loader.splitterName ?? '无'}</StyledTableCell>
                 <StyledTableCell onClick={props.onViewChunksClick}>
                     {formatSources(props.loader.files, props.loader.source)}
                 </StyledTableCell>
@@ -874,7 +910,7 @@ function LoaderRow(props) {
                                 onClick={(e) => handleClick(e)}
                                 endIcon={<KeyboardArrowDownIcon />}
                             >
-                                Options
+                                操作
                             </Button>
                             <StyledMenu
                                 id='document-store-actions-customized-menu'
@@ -894,7 +930,7 @@ function LoaderRow(props) {
                                         disableRipple
                                     >
                                         <FileEditIcon />
-                                        Preview & Process
+                                        预览并处理
                                     </MenuItem>
                                 </Available>
                                 <Available permission={'documentStores:preview-process'}>
@@ -906,7 +942,7 @@ function LoaderRow(props) {
                                         disableRipple
                                     >
                                         <FileChunksIcon />
-                                        View & Edit Chunks
+                                        查看和编辑分块
                                     </MenuItem>
                                 </Available>
                                 <Available permission={'documentStores:preview-process'}>
@@ -918,7 +954,7 @@ function LoaderRow(props) {
                                         disableRipple
                                     >
                                         <NoteAddIcon />
-                                        Upsert Chunks
+                                        更新分块
                                     </MenuItem>
                                 </Available>
                                 <Available permission={'documentStores:preview-process'}>
@@ -930,7 +966,7 @@ function LoaderRow(props) {
                                         disableRipple
                                     >
                                         <CodeIcon />
-                                        View API
+                                        查看 API
                                     </MenuItem>
                                 </Available>
                                 <Divider sx={{ my: 0.5 }} />
@@ -943,7 +979,7 @@ function LoaderRow(props) {
                                         disableRipple
                                     >
                                         <FileDeleteIcon />
-                                        Delete
+                                        删除
                                     </MenuItem>
                                 </Available>
                             </StyledMenu>

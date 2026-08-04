@@ -45,7 +45,6 @@ import { SwitchInput } from '@/ui-component/switch/Switch'
 
 // API
 import assistantsApi from '@/api/assistants'
-import chatflowsApi from '@/api/chatflows'
 import nodesApi from '@/api/nodes'
 import documentstoreApi from '@/api/documentstore'
 
@@ -55,8 +54,20 @@ import { SET_CHATFLOW, closeSnackbar as closeSnackbarAction, enqueueSnackbar as 
 
 // Utils
 import { initNode, showHideInputParams } from '@/utils/genericHelper'
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 import { toolAgentFlow } from './toolAgentFlow'
+import {
+    CUSTOM_ASSISTANT_DEFAULT_INSTRUCTION,
+    deriveCustomAssistantToolNodeId,
+    deriveDocumentStoreRetrieverToolName,
+    isExpectedCustomAssistantResource,
+    isCustomAssistantBackingFlowReady,
+    parseCustomAssistantDetails,
+    validateCustomAssistantSaveResponse
+} from './customAssistantDetails'
+
+const CUSTOM_ASSISTANT_CONFLICT_MESSAGE = '助手或关联流程已在其他会话中更新。当前未保存内容已保留，请重新加载后再保存。'
 
 // ===========================|| CustomAssistantConfigurePreview ||=========================== //
 
@@ -79,28 +90,35 @@ const CustomAssistantConfigurePreview = () => {
     const navigate = useNavigate()
     const theme = useTheme()
     const settingsRef = useRef()
-    const canvas = useSelector((state) => state.canvas)
+    const saveInFlightRef = useRef(false)
+    const expectedBackingFlowIdRef = useRef()
     const customization = useSelector((state) => state.customization)
 
     const getSpecificAssistantApi = useApi(assistantsApi.getSpecificAssistant)
     const getChatModelsApi = useApi(assistantsApi.getChatModels)
     const getDocStoresApi = useApi(assistantsApi.getDocStores)
     const getToolsApi = useApi(assistantsApi.getTools)
-    const getSpecificChatflowApi = useApi(chatflowsApi.getSpecificChatflow)
+    const getSpecificChatflowApi = useApi(assistantsApi.getCustomAssistantFlow)
 
     const { id: customAssistantId } = useParams()
+    const expectedAssistantIdRef = useRef(customAssistantId)
+    const routeLoadAbortControllerRef = useRef()
 
     const [chatModelsComponents, setChatModelsComponents] = useState([])
     const [chatModelsOptions, setChatModelsOptions] = useState([])
     const [selectedChatModel, setSelectedChatModel] = useState({})
     const [selectedCustomAssistant, setSelectedCustomAssistant] = useState({})
-    const [customAssistantInstruction, setCustomAssistantInstruction] = useState('You are helpful assistant')
+    const [customAssistantInstruction, setCustomAssistantInstruction] = useState(CUSTOM_ASSISTANT_DEFAULT_INSTRUCTION)
     const [customAssistantFlowId, setCustomAssistantFlowId] = useState()
     const [documentStoreOptions, setDocumentStoreOptions] = useState([])
     const [selectedDocumentStores, setSelectedDocumentStores] = useState([])
     const [toolComponents, setToolComponents] = useState([])
     const [toolOptions, setToolOptions] = useState([])
     const [selectedTools, setSelectedTools] = useState([])
+    const [assistantSnapshot, setAssistantSnapshot] = useState(null)
+    const [chatflowSnapshot, setChatflowSnapshot] = useState(null)
+    const [validatedBackingFlow, setValidatedBackingFlow] = useState(null)
+    const [loadedAssistantId, setLoadedAssistantId] = useState(null)
 
     const [apiDialogOpen, setAPIDialogOpen] = useState(false)
     const [apiDialogProps, setAPIDialogProps] = useState({})
@@ -119,6 +137,24 @@ const CustomAssistantConfigurePreview = () => {
     const [loading, setLoading] = useState(false)
     const [loadingAssistant, setLoadingAssistant] = useState(true)
     const [error, setError] = useState(null)
+    const [assistantDetailsError, setAssistantDetailsError] = useState(null)
+
+    const isAssistantSnapshotReady =
+        loadedAssistantId === customAssistantId &&
+        assistantSnapshot?.type === 'CUSTOM' &&
+        typeof assistantSnapshot.updatedDate === 'string' &&
+        typeof assistantSnapshot.details === 'string'
+    const isBackingFlowReady = isCustomAssistantBackingFlowReady(customAssistantFlowId, chatflowSnapshot)
+    const activeBackingFlow =
+        isBackingFlowReady && isCustomAssistantBackingFlowReady(customAssistantFlowId, validatedBackingFlow) ? validatedBackingFlow : null
+    const isChatflowSnapshotReady =
+        !customAssistantFlowId ||
+        (isBackingFlowReady &&
+            typeof chatflowSnapshot.updatedDate === 'string' &&
+            typeof chatflowSnapshot.name === 'string' &&
+            typeof chatflowSnapshot.flowData === 'string')
+    const isSaveSnapshotReady = isAssistantSnapshotReady && isChatflowSnapshotReady
+    const isSaveDisabled = loading || Boolean(assistantDetailsError) || !isSaveSnapshotReady
 
     const dispatch = useDispatch()
     const { confirm } = useConfirm()
@@ -212,7 +248,11 @@ const CustomAssistantConfigurePreview = () => {
             canSubmit = false
         }
 
-        canSubmit = checkInputParamsMandatory()
+        canSubmit = checkInputParamsMandatory() && canSubmit
+
+        if (selectedTools.some((tool) => !tool?.name)) {
+            canSubmit = false
+        }
 
         // check if any of the description is empty
         if (selectedDocumentStores.length > 0) {
@@ -231,63 +271,84 @@ const CustomAssistantConfigurePreview = () => {
     }
 
     const onSaveAndProcess = async () => {
-        if (checkMandatoryFields()) {
+        if (!saveInFlightRef.current && !isSaveDisabled && checkMandatoryFields()) {
+            const targetAssistantId = loadedAssistantId
+            if (!targetAssistantId || expectedAssistantIdRef.current !== targetAssistantId) return
+            saveInFlightRef.current = true
             setLoading(true)
-            const flowData = await prepareConfig()
-            if (!flowData) return
-            const saveObj = {
-                id: customAssistantId,
-                name: selectedCustomAssistant.name,
-                flowData: JSON.stringify(flowData),
-                type: 'ASSISTANT'
-            }
             try {
-                let saveResp
-                if (!customAssistantFlowId) {
-                    saveResp = await chatflowsApi.createNewChatflow(saveObj)
-                } else {
-                    saveResp = await chatflowsApi.updateChatflow(customAssistantFlowId, saveObj)
+                const flowData = await prepareConfig()
+                if (!flowData || expectedAssistantIdRef.current !== targetAssistantId) return
+                const assistantDetails = {
+                    ...selectedCustomAssistant,
+                    chatModel: selectedChatModel,
+                    instruction: customAssistantInstruction,
+                    flowId: customAssistantFlowId,
+                    documentStores: selectedDocumentStores,
+                    tools: selectedTools
                 }
 
-                if (saveResp.data) {
-                    setCustomAssistantFlowId(saveResp.data.id)
-                    dispatch({ type: SET_CHATFLOW, chatflow: saveResp.data })
+                const serializedFlowData = JSON.stringify(flowData)
+                const saveResp = await assistantsApi.saveCustomAssistant(
+                    targetAssistantId,
+                    {
+                        expectedAssistant: assistantSnapshot,
+                        expectedChatflow: chatflowSnapshot,
+                        details: JSON.stringify(assistantDetails),
+                        flowData: serializedFlowData
+                    },
+                    { signal: routeLoadAbortControllerRef.current?.signal }
+                )
+                if (expectedAssistantIdRef.current !== targetAssistantId) return
+                const {
+                    assistant: savedAssistant,
+                    chatflow: savedChatflow,
+                    details: savedDetails
+                } = validateCustomAssistantSaveResponse(saveResp.data, {
+                    assistantId: targetAssistantId,
+                    expectedFlowData: serializedFlowData
+                })
+                setSelectedCustomAssistant(savedDetails)
+                setSelectedChatModel(savedDetails.chatModel)
+                setCustomAssistantInstruction(savedDetails.instruction)
+                setCustomAssistantFlowId(savedDetails.flowId)
+                setSelectedDocumentStores(savedDetails.documentStores)
+                setSelectedTools(savedDetails.tools)
+                expectedBackingFlowIdRef.current = savedDetails.flowId
+                setAssistantSnapshot({
+                    updatedDate: savedAssistant.updatedDate,
+                    details: savedAssistant.details,
+                    type: savedAssistant.type
+                })
+                setChatflowSnapshot({
+                    id: savedChatflow.id,
+                    updatedDate: savedChatflow.updatedDate,
+                    name: savedChatflow.name,
+                    flowData: savedChatflow.flowData,
+                    type: savedChatflow.type
+                })
+                setValidatedBackingFlow(savedChatflow)
+                setLoadedAssistantId(savedAssistant.id)
+                dispatch({ type: SET_CHATFLOW, chatflow: savedChatflow })
 
-                    const assistantDetails = {
-                        ...selectedCustomAssistant,
-                        chatModel: selectedChatModel,
-                        instruction: customAssistantInstruction,
-                        flowId: saveResp.data.id,
-                        documentStores: selectedDocumentStores,
-                        tools: selectedTools
-                    }
-
-                    const saveAssistantResp = await assistantsApi.updateAssistant(customAssistantId, {
-                        details: JSON.stringify(assistantDetails)
-                    })
-
-                    if (saveAssistantResp.data) {
-                        setLoading(false)
-                        enqueueSnackbar({
-                            message: 'Assistant saved successfully',
-                            options: {
-                                key: new Date().getTime() + Math.random(),
-                                variant: 'success',
-                                action: (key) => (
-                                    <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
-                                        <IconX />
-                                    </Button>
-                                )
-                            }
-                        })
-                    }
-                }
-            } catch (error) {
-                setLoading(false)
                 enqueueSnackbar({
-                    message: `Failed to save assistant: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: '助手保存成功。',
+                    options: {
+                        key: new Date().getTime() + Math.random(),
+                        variant: 'success',
+                        action: (key) => (
+                            <Button style={{ color: 'white' }} onClick={() => closeSnackbar(key)}>
+                                <IconX />
+                            </Button>
+                        )
+                    }
+                })
+            } catch (error) {
+                if (expectedAssistantIdRef.current !== targetAssistantId) return
+                const isVersionConflict = (error?.response?.status ?? error?.status) === 409
+                if (isVersionConflict) setAssistantDetailsError(CUSTOM_ASSISTANT_CONFLICT_MESSAGE)
+                enqueueSnackbar({
+                    message: isVersionConflict ? CUSTOM_ASSISTANT_CONFLICT_MESSAGE : `保存助手失败：${getErrorMessage(error, '未知错误')}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -298,6 +359,9 @@ const CustomAssistantConfigurePreview = () => {
                         )
                     }
                 })
+            } finally {
+                saveInFlightRef.current = false
+                if (expectedAssistantIdRef.current === targetAssistantId) setLoading(false)
             }
         }
     }
@@ -307,33 +371,29 @@ const CustomAssistantConfigurePreview = () => {
         const edges = []
 
         for (let i = 0; i < selectedTools.length; i++) {
-            try {
-                const tool = selectedTools[i]
-                const toolId = `${tool.name}_${i}`
-                const toolNodeData = cloneDeep(tool)
-                set(toolNodeData, 'inputs', tool.inputs)
+            const tool = selectedTools[i]
+            const toolId = deriveCustomAssistantToolNodeId(tool.name, i)
+            const toolNodeData = cloneDeep(tool)
+            set(toolNodeData, 'inputs', tool.inputs)
 
-                const toolNodeObj = {
-                    id: toolId,
-                    data: {
-                        ...toolNodeData,
-                        id: toolId
-                    }
+            const toolNodeObj = {
+                id: toolId,
+                data: {
+                    ...toolNodeData,
+                    id: toolId
                 }
-                nodes.push(toolNodeObj)
-
-                const toolEdge = {
-                    source: toolId,
-                    sourceHandle: `${toolId}-output-${tool.name}-Tool`,
-                    target: toolAgentId,
-                    targetHandle: `${toolAgentId}-input-tools-Tool`,
-                    type: 'buttonedge',
-                    id: `${toolId}-${toolId}-output-${tool.name}-Tool-${toolAgentId}-${toolAgentId}-input-tools-Tool`
-                }
-                edges.push(toolEdge)
-            } catch (error) {
-                console.error('Error adding tool', error)
             }
+            nodes.push(toolNodeObj)
+
+            const toolEdge = {
+                source: toolId,
+                sourceHandle: `${toolId}-output-${tool.name}-Tool`,
+                target: toolAgentId,
+                targetHandle: `${toolAgentId}-input-tools-Tool`,
+                type: 'buttonedge',
+                id: `${toolId}-${toolId}-output-${tool.name}-Tool-${toolAgentId}-${toolAgentId}-input-tools-Tool`
+            }
+            edges.push(toolEdge)
         }
 
         return { nodes, edges }
@@ -347,71 +407,63 @@ const CustomAssistantConfigurePreview = () => {
         const edges = []
 
         for (let i = 0; i < selectedDocumentStores.length; i++) {
-            try {
-                const docStoreVSId = `documentStoreVS_${i}`
-                const retrieverToolId = `retrieverTool_${i}`
+            const docStoreVSId = `documentStoreVS_${i}`
+            const retrieverToolId = `retrieverTool_${i}`
 
-                const docStoreVSNodeData = cloneDeep(initNode(docStoreVSNode.data, docStoreVSId))
-                const retrieverToolNodeData = cloneDeep(initNode(retrieverToolNode.data, retrieverToolId))
+            const docStoreVSNodeData = cloneDeep(initNode(docStoreVSNode.data, docStoreVSId))
+            const retrieverToolNodeData = cloneDeep(initNode(retrieverToolNode.data, retrieverToolId))
 
-                set(docStoreVSNodeData, 'inputs.selectedStore', selectedDocumentStores[i].id)
-                set(docStoreVSNodeData, 'outputs.output', 'retriever')
+            set(docStoreVSNodeData, 'inputs.selectedStore', selectedDocumentStores[i].id)
+            set(docStoreVSNodeData, 'outputs.output', 'retriever')
 
-                const docStoreOption = documentStoreOptions.find((ds) => ds.name === selectedDocumentStores[i].id)
-                // convert to small case and replace space with underscore
-                const name = (docStoreOption?.label || '')
-                    .toLowerCase()
-                    .replace(/ /g, '_')
-                    .replace(/[^a-z0-9_-]/g, '')
-                const desc = selectedDocumentStores[i].description || docStoreOption?.description || ''
+            const docStoreOption = documentStoreOptions.find((ds) => ds.name === selectedDocumentStores[i].id)
+            const name = deriveDocumentStoreRetrieverToolName(docStoreOption?.label, selectedDocumentStores[i].id, i)
+            const desc = selectedDocumentStores[i].description || docStoreOption?.description || ''
 
-                set(retrieverToolNodeData, 'inputs', {
-                    name,
-                    description: desc,
-                    retriever: `{{${docStoreVSId}.data.instance}}`,
-                    returnSourceDocuments: selectedDocumentStores[i].returnSourceDocuments ?? false
-                })
+            set(retrieverToolNodeData, 'inputs', {
+                name,
+                description: desc,
+                retriever: `{{${docStoreVSId}.data.instance}}`,
+                returnSourceDocuments: selectedDocumentStores[i].returnSourceDocuments ?? false
+            })
 
-                const docStoreVS = {
-                    id: docStoreVSId,
-                    data: {
-                        ...docStoreVSNodeData,
-                        id: docStoreVSId
-                    }
+            const docStoreVS = {
+                id: docStoreVSId,
+                data: {
+                    ...docStoreVSNodeData,
+                    id: docStoreVSId
                 }
-                nodes.push(docStoreVS)
-
-                const retrieverTool = {
-                    id: retrieverToolId,
-                    data: {
-                        ...retrieverToolNodeData,
-                        id: retrieverToolId
-                    }
-                }
-                nodes.push(retrieverTool)
-
-                const docStoreVSEdge = {
-                    source: docStoreVSId,
-                    sourceHandle: `${docStoreVSId}-output-retriever-BaseRetriever`,
-                    target: retrieverToolId,
-                    targetHandle: `${retrieverToolId}-input-retriever-BaseRetriever`,
-                    type: 'buttonedge',
-                    id: `${docStoreVSId}-${docStoreVSId}-output-retriever-BaseRetriever-${retrieverToolId}-${retrieverToolId}-input-retriever-BaseRetriever`
-                }
-                edges.push(docStoreVSEdge)
-
-                const retrieverToolEdge = {
-                    source: retrieverToolId,
-                    sourceHandle: `${retrieverToolId}-output-retrieverTool-RetrieverTool|DynamicTool|Tool|StructuredTool|Runnable`,
-                    target: toolAgentId,
-                    targetHandle: `${toolAgentId}-input-tools-Tool`,
-                    type: 'buttonedge',
-                    id: `${retrieverToolId}-${retrieverToolId}-output-retrieverTool-RetrieverTool|DynamicTool|Tool|StructuredTool|Runnable-${toolAgentId}-${toolAgentId}-input-tools-Tool`
-                }
-                edges.push(retrieverToolEdge)
-            } catch (error) {
-                console.error('Error adding doc store', error)
             }
+            nodes.push(docStoreVS)
+
+            const retrieverTool = {
+                id: retrieverToolId,
+                data: {
+                    ...retrieverToolNodeData,
+                    id: retrieverToolId
+                }
+            }
+            nodes.push(retrieverTool)
+
+            const docStoreVSEdge = {
+                source: docStoreVSId,
+                sourceHandle: `${docStoreVSId}-output-retriever-BaseRetriever`,
+                target: retrieverToolId,
+                targetHandle: `${retrieverToolId}-input-retriever-BaseRetriever`,
+                type: 'buttonedge',
+                id: `${docStoreVSId}-${docStoreVSId}-output-retriever-BaseRetriever-${retrieverToolId}-${retrieverToolId}-input-retriever-BaseRetriever`
+            }
+            edges.push(docStoreVSEdge)
+
+            const retrieverToolEdge = {
+                source: retrieverToolId,
+                sourceHandle: `${retrieverToolId}-output-retrieverTool-RetrieverTool|DynamicTool|Tool|StructuredTool|Runnable`,
+                target: toolAgentId,
+                targetHandle: `${toolAgentId}-input-tools-Tool`,
+                type: 'buttonedge',
+                id: `${retrieverToolId}-${retrieverToolId}-output-retrieverTool-RetrieverTool|DynamicTool|Tool|StructuredTool|Runnable-${toolAgentId}-${toolAgentId}-input-tools-Tool`
+            }
+            edges.push(retrieverToolEdge)
         }
 
         return { nodes, edges }
@@ -449,7 +501,7 @@ const CustomAssistantConfigurePreview = () => {
                 agentTools.push(...retrieverTools)
             }
             if (selectedTools.length > 0) {
-                const tools = selectedTools.map((_, index) => `{{${selectedTools[index].id}}}`)
+                const tools = selectedTools.map((tool, index) => `{{${deriveCustomAssistantToolNodeId(tool.name, index)}}}`)
                 agentTools.push(...tools)
             }
             set(toolAgentNode.data.inputs, 'tools', agentTools)
@@ -486,11 +538,8 @@ const CustomAssistantConfigurePreview = () => {
 
             return config
         } catch (error) {
-            console.error('Error preparing config', error)
             enqueueSnackbar({
-                message: `Failed to save assistant: ${
-                    typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                }`,
+                message: `保存助手失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -507,50 +556,66 @@ const CustomAssistantConfigurePreview = () => {
 
     const onSettingsItemClick = (setting) => {
         setSettingsOpen(false)
+        if (!isBackingFlowReady || !activeBackingFlow) return
 
         if (setting === 'deleteAssistant') {
             handleDeleteFlow()
         } else if (setting === 'viewMessages') {
             setViewMessagesDialogProps({
                 title: '查看消息',
-                chatflow: canvas.chatflow,
+                chatflow: activeBackingFlow,
                 isChatflow: false
             })
             setViewMessagesDialogOpen(true)
         } else if (setting === 'viewLeads') {
             setViewLeadsDialogProps({
                 title: '查看线索',
-                chatflow: canvas.chatflow
+                chatflow: activeBackingFlow
             })
             setViewLeadsDialogOpen(true)
         } else if (setting === 'chatflowConfiguration') {
             setChatflowConfigurationDialogProps({
-                title: `Assistant Configuration`,
-                chatflow: canvas.chatflow
+                title: '助手配置',
+                chatflow: activeBackingFlow
             })
             setChatflowConfigurationDialogOpen(true)
         }
     }
 
     const handleDeleteFlow = async () => {
+        const targetAssistantId = loadedAssistantId
+        if (
+            !targetAssistantId ||
+            expectedAssistantIdRef.current !== targetAssistantId ||
+            !assistantSnapshot ||
+            !chatflowSnapshot ||
+            !isBackingFlowReady
+        )
+            return
+        const deleteSnapshot = {
+            expectedAssistant: assistantSnapshot,
+            expectedChatflow: chatflowSnapshot
+        }
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete ${selectedCustomAssistant.name}?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除助手',
+            description: `确定要删除“${selectedCustomAssistant.name}”吗？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
-        if (isConfirmed && customAssistantId) {
+        if (isConfirmed && expectedAssistantIdRef.current === targetAssistantId) {
             try {
-                const resp = await assistantsApi.deleteAssistant(customAssistantId)
-                if (resp.data && customAssistantFlowId) {
-                    await chatflowsApi.deleteChatflow(customAssistantFlowId)
-                }
+                await assistantsApi.deleteCustomAssistant(targetAssistantId, deleteSnapshot)
+                if (expectedAssistantIdRef.current !== targetAssistantId) return
                 navigate(-1)
             } catch (error) {
+                if (expectedAssistantIdRef.current !== targetAssistantId) return
+                const isConflict = error?.response?.status === 409
                 enqueueSnackbar({
-                    message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                    message: isConflict
+                        ? '助手或关联流程已发生变化，请重新加载后重试。'
+                        : `删除助手失败：${getErrorMessage(error, '未知错误')}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -574,8 +639,8 @@ const CustomAssistantConfigurePreview = () => {
                 name: 'instructions',
                 type: 'string'
             },
-            confirmButtonName: 'Save',
-            cancelButtonName: 'Cancel'
+            confirmButtonName: '保存',
+            cancelButtonName: '取消'
         }
         setExpandDialogProps(dialogProps)
         setShowExpandDialog(true)
@@ -611,7 +676,7 @@ const CustomAssistantConfigurePreview = () => {
                 })
                 setSelectedDocumentStores(newSelectedDocumentStores)
                 enqueueSnackbar({
-                    message: 'Document Store Tool Description generated successfully',
+                    message: '文档库工具说明生成成功。',
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'success',
@@ -624,10 +689,9 @@ const CustomAssistantConfigurePreview = () => {
                 })
             }
         } catch (error) {
-            console.error('Error generating doc store tool desc', error)
             setLoading(false)
             enqueueSnackbar({
-                message: typeof error.response.data === 'object' ? error.response.data.message : error.response.data,
+                message: `生成文档库工具说明失败：${getErrorMessage(error, '未知错误')}`,
                 options: {
                     key: new Date().getTime() + Math.random(),
                     variant: 'error',
@@ -650,18 +714,19 @@ const CustomAssistantConfigurePreview = () => {
         }
 
         setAssistantPromptGeneratorDialogProps({
-            title: 'Generate Instructions',
-            description: 'You can generate a prompt template by sharing basic details about your task.',
+            title: '生成指令',
+            description: '提供任务的基本信息，即可生成提示词模板。',
             data: { selectedChatModel }
         })
         setAssistantPromptGeneratorDialogOpen(true)
     }
 
     const onAPIDialogClick = () => {
+        if (!isBackingFlowReady || !activeBackingFlow) return
         setAPIDialogProps({
-            title: 'Embed in website or use as API',
+            title: '嵌入网站或通过 API 使用',
             chatflowid: customAssistantFlowId,
-            chatflowApiKeyId: canvas.chatflow.apikeyid,
+            chatflowApiKeyId: activeBackingFlow.apikeyid,
             isSessionMemory: true
         })
         setAPIDialogOpen(true)
@@ -730,55 +795,99 @@ const CustomAssistantConfigurePreview = () => {
     }, [getToolsApi.data])
 
     useEffect(() => {
-        if (getChatModelsApi.data) {
-            setChatModelsComponents(getChatModelsApi.data)
+        if (!getChatModelsApi.data) return
 
-            // Set options
-            const options = getChatModelsApi.data.map((chatModel) => ({
+        setChatModelsComponents(getChatModelsApi.data)
+        setChatModelsOptions(
+            getChatModelsApi.data.map((chatModel) => ({
                 label: chatModel.label,
                 name: chatModel.name,
                 imageSrc: `${baseURL}/api/v1/node-icon/${chatModel.name}`
             }))
-            setChatModelsOptions(options)
+        )
+    }, [getChatModelsApi.data])
 
-            if (customAssistantId) {
-                setLoadingAssistant(true)
-                getSpecificAssistantApi.request(customAssistantId)
-            }
+    useEffect(() => {
+        routeLoadAbortControllerRef.current?.abort()
+        const abortController = new AbortController()
+        routeLoadAbortControllerRef.current = abortController
+        expectedAssistantIdRef.current = customAssistantId
+        expectedBackingFlowIdRef.current = undefined
+        getSpecificAssistantApi.reset()
+        getSpecificChatflowApi.reset()
+        saveInFlightRef.current = false
+        setLoadedAssistantId(null)
+        setSelectedCustomAssistant({})
+        setSelectedChatModel({})
+        setCustomAssistantInstruction(CUSTOM_ASSISTANT_DEFAULT_INSTRUCTION)
+        setCustomAssistantFlowId(undefined)
+        setSelectedDocumentStores([])
+        setSelectedTools([])
+        setAssistantSnapshot(null)
+        setChatflowSnapshot(null)
+        setValidatedBackingFlow(null)
+        setAssistantDetailsError(null)
+        setError(null)
+        setLoading(false)
+        setAPIDialogOpen(false)
+        setSettingsOpen(false)
+        dispatch({ type: SET_CHATFLOW, chatflow: null })
+
+        if (customAssistantId && getChatModelsApi.data) {
+            setLoadingAssistant(true)
+            getSpecificAssistantApi.request(customAssistantId, { signal: abortController.signal })
+        } else {
+            setLoadingAssistant(Boolean(customAssistantId))
         }
 
+        return () => abortController.abort()
+
+        // useApi request/reset are intentionally scoped by this route generation.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [getChatModelsApi.data])
+    }, [customAssistantId, getChatModelsApi.data])
 
     useEffect(() => {
         if (getSpecificAssistantApi.data) {
             setLoadingAssistant(false)
+            const expectedAssistantId = expectedAssistantIdRef.current
+            if (
+                expectedAssistantId !== customAssistantId ||
+                !isExpectedCustomAssistantResource(expectedAssistantId, getSpecificAssistantApi.data)
+            ) {
+                setLoadedAssistantId(null)
+                setAssistantSnapshot(null)
+                setError('助手响应与当前页面不匹配，请重新加载后重试。')
+                return
+            }
+            let assistantDetails
             try {
-                const assistantDetails = JSON.parse(getSpecificAssistantApi.data.details)
-                setSelectedCustomAssistant(assistantDetails)
+                assistantDetails = parseCustomAssistantDetails(getSpecificAssistantApi.data.details)
+            } catch {
+                setAssistantDetailsError('助手详情格式无效，已保留当前数据。请重新加载后再保存。')
+                return
+            }
 
-                if (assistantDetails.chatModel) {
-                    setSelectedChatModel(assistantDetails.chatModel)
-                }
+            setAssistantDetailsError(null)
+            setError(null)
+            setLoadedAssistantId(expectedAssistantId)
+            setSelectedCustomAssistant(assistantDetails)
+            setSelectedChatModel(assistantDetails.chatModel)
+            setCustomAssistantInstruction(assistantDetails.instruction)
+            setCustomAssistantFlowId(assistantDetails.flowId)
+            setSelectedDocumentStores(assistantDetails.documentStores)
+            setSelectedTools(assistantDetails.tools)
+            expectedBackingFlowIdRef.current = assistantDetails.flowId
+            setAssistantSnapshot({
+                updatedDate: getSpecificAssistantApi.data.updatedDate,
+                details: getSpecificAssistantApi.data.details,
+                type: getSpecificAssistantApi.data.type
+            })
+            setChatflowSnapshot(null)
+            setValidatedBackingFlow(null)
+            dispatch({ type: SET_CHATFLOW, chatflow: null })
 
-                if (assistantDetails.instruction) {
-                    setCustomAssistantInstruction(assistantDetails.instruction)
-                }
-
-                if (assistantDetails.flowId) {
-                    setCustomAssistantFlowId(assistantDetails.flowId)
-                    getSpecificChatflowApi.request(assistantDetails.flowId)
-                }
-
-                if (assistantDetails.documentStores) {
-                    setSelectedDocumentStores(assistantDetails.documentStores)
-                }
-
-                if (assistantDetails.tools) {
-                    setSelectedTools(assistantDetails.tools)
-                }
-            } catch (error) {
-                console.error('Error parsing assistant details', error)
+            if (assistantDetails.flowId) {
+                getSpecificChatflowApi.request(expectedAssistantId, { signal: routeLoadAbortControllerRef.current?.signal })
             }
         }
 
@@ -788,16 +897,43 @@ const CustomAssistantConfigurePreview = () => {
     useEffect(() => {
         if (getSpecificChatflowApi.data) {
             const chatflow = getSpecificChatflowApi.data
+            const expectedFlowId = expectedBackingFlowIdRef.current
+            if (
+                expectedAssistantIdRef.current !== customAssistantId ||
+                loadedAssistantId !== customAssistantId ||
+                !isCustomAssistantBackingFlowReady(expectedFlowId, chatflow) ||
+                typeof chatflow.updatedDate !== 'string' ||
+                typeof chatflow.name !== 'string' ||
+                typeof chatflow.flowData !== 'string'
+            ) {
+                setChatflowSnapshot(null)
+                setValidatedBackingFlow(null)
+                dispatch({ type: SET_CHATFLOW, chatflow: null })
+                setError('关联流程响应与当前助手不匹配，请重新加载后重试。')
+                return
+            }
+            setError(null)
             dispatch({ type: SET_CHATFLOW, chatflow })
+            setValidatedBackingFlow(chatflow)
+            setChatflowSnapshot({
+                id: chatflow.id,
+                updatedDate: chatflow.updatedDate,
+                name: chatflow.name,
+                flowData: chatflow.flowData,
+                type: chatflow.type
+            })
         } else if (getSpecificChatflowApi.error) {
-            setError(`Failed to retrieve: ${getSpecificChatflowApi.error.response.data.message}`)
+            setChatflowSnapshot(null)
+            setValidatedBackingFlow(null)
+            dispatch({ type: SET_CHATFLOW, chatflow: null })
+            setError(`获取失败：${getErrorMessage(getSpecificChatflowApi.error, '未知错误')}`)
         }
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [getSpecificChatflowApi.data, getSpecificChatflowApi.error])
+    }, [getSpecificChatflowApi.data, getSpecificChatflowApi.error, customAssistantId, loadedAssistantId])
 
     useEffect(() => {
-        if (getSpecificAssistantApi.error) {
+        if (getSpecificAssistantApi.error && expectedAssistantIdRef.current === customAssistantId) {
             setLoadingAssistant(false)
             setError(getSpecificAssistantApi.error)
         }
@@ -822,7 +958,7 @@ const CustomAssistantConfigurePreview = () => {
     }, [getDocStoresApi.error])
 
     const defaultWidth = () => {
-        if (customAssistantFlowId && !loadingAssistant) {
+        if (isBackingFlowReady && activeBackingFlow && !loadingAssistant) {
             return 6
         }
         return 12
@@ -839,6 +975,11 @@ const CustomAssistantConfigurePreview = () => {
                     <ErrorBoundary error={error} />
                 ) : (
                     <Stack flexDirection='column'>
+                        {assistantDetailsError && (
+                            <Typography role='alert' color='error' sx={{ mb: 2 }}>
+                                {assistantDetailsError}
+                            </Typography>
+                        )}
                         <Box>
                             <Grid container spacing='2'>
                                 <Grid item xs={12} md={defaultWidth()} lg={defaultWidth()} sm={defaultWidth()}>
@@ -863,7 +1004,7 @@ const CustomAssistantConfigurePreview = () => {
                                                     <StyledFab
                                                         size='small'
                                                         color='secondary'
-                                                        aria-label='back'
+                                                        aria-label='返回'
                                                         title='返回'
                                                         onClick={() => navigate(-1)}
                                                     >
@@ -874,8 +1015,12 @@ const CustomAssistantConfigurePreview = () => {
                                                     </Typography>
                                                 </Box>
                                                 <div style={{ flex: 1 }}></div>
-                                                {customAssistantFlowId && !loadingAssistant && (
-                                                    <ButtonBase title='API Endpoint' sx={{ borderRadius: '50%', mr: 2 }}>
+                                                {isBackingFlowReady && activeBackingFlow && !loadingAssistant && (
+                                                    <ButtonBase
+                                                        title='API 端点'
+                                                        sx={{ borderRadius: '50%', mr: 2 }}
+                                                        onClick={onAPIDialogClick}
+                                                    >
                                                         <Avatar
                                                             variant='rounded'
                                                             sx={{
@@ -890,14 +1035,18 @@ const CustomAssistantConfigurePreview = () => {
                                                                 }
                                                             }}
                                                             color='inherit'
-                                                            onClick={onAPIDialogClick}
                                                         >
                                                             <IconCode stroke={1.5} size='1.3rem' />
                                                         </Avatar>
                                                     </ButtonBase>
                                                 )}
-                                                <Available permission={'assistants:create'}>
-                                                    <ButtonBase title={`Save`} sx={{ borderRadius: '50%', mr: 2 }}>
+                                                <Available permission={'assistants:update'}>
+                                                    <ButtonBase
+                                                        title='保存'
+                                                        sx={{ borderRadius: '50%', mr: 2 }}
+                                                        disabled={isSaveDisabled}
+                                                        onClick={onSaveAndProcess}
+                                                    >
                                                         <Avatar
                                                             variant='rounded'
                                                             sx={{
@@ -912,14 +1061,18 @@ const CustomAssistantConfigurePreview = () => {
                                                                 }
                                                             }}
                                                             color='inherit'
-                                                            onClick={onSaveAndProcess}
                                                         >
                                                             <IconDeviceFloppy stroke={1.5} size='1.3rem' />
                                                         </Avatar>
                                                     </ButtonBase>
                                                 </Available>
-                                                {customAssistantFlowId && !loadingAssistant && (
-                                                    <ButtonBase ref={settingsRef} title='设置' sx={{ borderRadius: '50%' }}>
+                                                {isBackingFlowReady && activeBackingFlow && !loadingAssistant && (
+                                                    <ButtonBase
+                                                        ref={settingsRef}
+                                                        title='设置'
+                                                        sx={{ borderRadius: '50%' }}
+                                                        onClick={() => setSettingsOpen(!isSettingsOpen)}
+                                                    >
                                                         <Avatar
                                                             variant='rounded'
                                                             sx={{
@@ -933,7 +1086,6 @@ const CustomAssistantConfigurePreview = () => {
                                                                     color: theme.palette.canvasHeader.settingsLight
                                                                 }
                                                             }}
-                                                            onClick={() => setSettingsOpen(!isSettingsOpen)}
                                                         >
                                                             <IconSettings stroke={1.5} size='1.3rem' />
                                                         </Avatar>
@@ -976,7 +1128,7 @@ const CustomAssistantConfigurePreview = () => {
                                         >
                                             <div style={{ display: 'flex', flexDirection: 'row' }}>
                                                 <Typography>
-                                                    Select Model<span style={{ color: 'red' }}>&nbsp;*</span>
+                                                    选择模型<span style={{ color: 'red' }}>&nbsp;*</span>
                                                 </Typography>
                                             </div>
                                             <Dropdown
@@ -1013,7 +1165,7 @@ const CustomAssistantConfigurePreview = () => {
                                         >
                                             <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
                                                 <Typography>
-                                                    Instructions<span style={{ color: 'red' }}>&nbsp;*</span>
+                                                    指令<span style={{ color: 'red' }}>&nbsp;*</span>
                                                 </Typography>
                                                 <div style={{ flex: 1 }}></div>
                                                 <IconButton
@@ -1030,14 +1182,14 @@ const CustomAssistantConfigurePreview = () => {
                                                 </IconButton>
                                                 {selectedChatModel?.name && (
                                                     <Button
-                                                        title='Generate instructions using model'
+                                                        title='使用模型生成指令'
                                                         sx={{ borderRadius: 20 }}
                                                         size='small'
                                                         variant='text'
                                                         onClick={() => generateInstruction()}
                                                         startIcon={<IconWand size={20} />}
                                                     >
-                                                        Generate
+                                                        生成
                                                     </Button>
                                                 )}
                                             </Stack>
@@ -1061,8 +1213,8 @@ const CustomAssistantConfigurePreview = () => {
                                             }}
                                         >
                                             <Stack sx={{ position: 'relative', alignItems: 'center' }} direction='row'>
-                                                <Typography>Knowledge (Document Stores)</Typography>
-                                                <TooltipWithParser title='Give your assistant context about different document sources. Document stores must be upserted in advance.' />
+                                                <Typography>知识（文档库）</Typography>
+                                                <TooltipWithParser title='为助手提供来自不同文档库的上下文。使用前需先完成文档库数据写入。' />
                                             </Stack>
                                             <MultiDropdown
                                                 key={JSON.stringify(selectedDocumentStores)}
@@ -1080,9 +1232,9 @@ const CustomAssistantConfigurePreview = () => {
                                             {selectedDocumentStores.length > 0 && (
                                                 <Stack sx={{ mt: 3, position: 'relative', alignItems: 'center' }} direction='row'>
                                                     <Typography>
-                                                        Describe Knowledge<span style={{ color: 'red' }}>&nbsp;*</span>
+                                                        知识库说明<span style={{ color: 'red' }}>&nbsp;*</span>
                                                     </Typography>
-                                                    <TooltipWithParser title='Describe what the knowledge base is about, this is useful for the AI to know when and how to search for correct information' />
+                                                    <TooltipWithParser title='说明文档库包含的内容，帮助人工智能判断何时以及如何检索正确信息。' />
                                                 </Stack>
                                             )}
                                             {selectedDocumentStores.map((ds, index) => {
@@ -1116,16 +1268,18 @@ const CustomAssistantConfigurePreview = () => {
                                                             </div>
                                                             <div style={{ flex: 1 }}></div>
                                                             {selectedChatModel?.name && (
-                                                                <Button
-                                                                    title='Generate description using model'
-                                                                    sx={{ borderRadius: 20 }}
-                                                                    size='small'
-                                                                    variant='text'
-                                                                    onClick={() => generateDocStoreToolDesc(ds.id)}
-                                                                    startIcon={<IconWand size={20} />}
-                                                                >
-                                                                    Generate
-                                                                </Button>
+                                                                <Available permission='documentStores:upsert-config'>
+                                                                    <Button
+                                                                        title='使用模型生成说明'
+                                                                        sx={{ borderRadius: 20 }}
+                                                                        size='small'
+                                                                        variant='text'
+                                                                        onClick={() => generateDocStoreToolDesc(ds.id)}
+                                                                        startIcon={<IconWand size={20} />}
+                                                                    >
+                                                                        生成
+                                                                    </Button>
+                                                                </Available>
                                                             )}
                                                         </Stack>
                                                         <OutlinedInput
@@ -1141,8 +1295,8 @@ const CustomAssistantConfigurePreview = () => {
                                                             }}
                                                         />
                                                         <Stack sx={{ mt: 2, position: 'relative', alignItems: 'center' }} direction='row'>
-                                                            <Typography>Return Source Documents</Typography>
-                                                            <TooltipWithParser title='返回用于回答问题的实际源文档' />
+                                                            <Typography>返回来源文档</Typography>
+                                                            <TooltipWithParser title='返回用于回答问题的原始文档' />
                                                         </Stack>
                                                         <SwitchInput
                                                             value={ds.returnSourceDocuments ?? false}
@@ -1208,10 +1362,11 @@ const CustomAssistantConfigurePreview = () => {
                                                         <Box sx={{ pl: 2, pr: 2, pt: 2, pb: 0 }}>
                                                             <div style={{ display: 'flex', flexDirection: 'row' }}>
                                                                 <Typography>
-                                                                    Tool<span style={{ color: 'red' }}>&nbsp;*</span>
+                                                                    工具<span style={{ color: 'red' }}>&nbsp;*</span>
                                                                 </Typography>
                                                                 <div style={{ flex: 1 }}></div>
                                                                 <IconButton
+                                                                    aria-label='删除工具'
                                                                     color='error'
                                                                     sx={{ height: 15, width: 15, p: 0 }}
                                                                     onClick={() => {
@@ -1278,16 +1433,16 @@ const CustomAssistantConfigurePreview = () => {
                                             })}
                                             <Button
                                                 fullWidth
-                                                title='Add Tool'
+                                                title='添加工具'
                                                 sx={{ mt: 1, mb: 1, borderRadius: 20 }}
                                                 variant='outlined'
                                                 onClick={() => setSelectedTools([...selectedTools, {}])}
                                             >
-                                                Add Tool
+                                                添加工具
                                             </Button>
                                         </Box>
                                         {selectedChatModel && Object.keys(selectedChatModel).length > 0 && (
-                                            <Available permission={'assistants:create'}>
+                                            <Available permission={'assistants:update'}>
                                                 <Button
                                                     fullWidth
                                                     title='保存助手'
@@ -1298,21 +1453,22 @@ const CustomAssistantConfigurePreview = () => {
                                                         background: 'linear-gradient(45deg, #673ab7 30%, #1e88e5 90%)'
                                                     }}
                                                     variant='contained'
+                                                    disabled={isSaveDisabled}
                                                     onClick={onSaveAndProcess}
                                                 >
-                                                    Save Assistant
+                                                    保存助手
                                                 </Button>
                                             </Available>
                                         )}
                                     </div>
                                 </Grid>
-                                {customAssistantFlowId && !loadingAssistant && (
+                                {isBackingFlowReady && activeBackingFlow && !loadingAssistant && (
                                     <Grid item xs={12} md={6} lg={6} sm={6}>
                                         <Box sx={{ mt: 2 }}>
                                             {customization.isDarkMode && (
                                                 <MemoizedFullPageChat
                                                     chatflowid={customAssistantFlowId}
-                                                    chatflow={canvas.chatflow}
+                                                    chatflow={activeBackingFlow}
                                                     apiHost={baseURL}
                                                     chatflowConfig={{}}
                                                     theme={{
@@ -1324,7 +1480,9 @@ const CustomAssistantConfigurePreview = () => {
                                                             height: pageHeight(),
                                                             showTitle: true,
                                                             backgroundColor: '#23262c',
-                                                            title: '  Preview',
+                                                            title: '  预览',
+                                                            welcomeMessage: '您好！有什么可以帮您？',
+                                                            errorMessage: '抱歉，处理请求时出现错误，请稍后重试。',
                                                             botMessage: {
                                                                 backgroundColor: '#32353b',
                                                                 textColor: '#ffffff'
@@ -1334,6 +1492,7 @@ const CustomAssistantConfigurePreview = () => {
                                                                 textColor: '#ffffff'
                                                             },
                                                             textInput: {
+                                                                placeholder: '请输入您的问题',
                                                                 backgroundColor: '#32353b',
                                                                 textColor: '#ffffff'
                                                             },
@@ -1347,7 +1506,7 @@ const CustomAssistantConfigurePreview = () => {
                                             {!customization.isDarkMode && (
                                                 <MemoizedFullPageChat
                                                     chatflowid={customAssistantFlowId}
-                                                    chatflow={canvas.chatflow}
+                                                    chatflow={activeBackingFlow}
                                                     apiHost={baseURL}
                                                     chatflowConfig={{}}
                                                     theme={{
@@ -1359,7 +1518,9 @@ const CustomAssistantConfigurePreview = () => {
                                                             height: pageHeight(),
                                                             showTitle: true,
                                                             backgroundColor: '#fafafa',
-                                                            title: '  Preview',
+                                                            title: '  预览',
+                                                            welcomeMessage: '您好！有什么可以帮您？',
+                                                            errorMessage: '抱歉，处理请求时出现错误，请稍后重试。',
                                                             botMessage: {
                                                                 backgroundColor: '#ffffff',
                                                                 textColor: '#303235'
@@ -1369,6 +1530,7 @@ const CustomAssistantConfigurePreview = () => {
                                                                 textColor: '#303235'
                                                             },
                                                             textInput: {
+                                                                placeholder: '请输入您的问题',
                                                                 backgroundColor: '#ffffff',
                                                                 textColor: '#303235'
                                                             },
@@ -1388,10 +1550,12 @@ const CustomAssistantConfigurePreview = () => {
                 )}
             </MainCard>
             {loading && <BackdropLoader open={loading} />}
-            {apiDialogOpen && <APICodeDialog show={apiDialogOpen} dialogProps={apiDialogProps} onCancel={() => setAPIDialogOpen(false)} />}
-            {isSettingsOpen && (
+            {apiDialogOpen && isBackingFlowReady && activeBackingFlow && (
+                <APICodeDialog show={apiDialogOpen} dialogProps={apiDialogProps} onCancel={() => setAPIDialogOpen(false)} />
+            )}
+            {isSettingsOpen && isBackingFlowReady && activeBackingFlow && (
                 <Settings
-                    chatflow={canvas.chatflow}
+                    chatflow={activeBackingFlow}
                     isSettingsOpen={isSettingsOpen}
                     anchorEl={settingsRef.current}
                     onClose={() => setSettingsOpen(false)}
@@ -1399,18 +1563,26 @@ const CustomAssistantConfigurePreview = () => {
                     isCustomAssistant={true}
                 />
             )}
-            <ViewMessagesDialog
-                show={viewMessagesDialogOpen}
-                dialogProps={viewMessagesDialogProps}
-                onCancel={() => setViewMessagesDialogOpen(false)}
-            />
-            <ViewLeadsDialog show={viewLeadsDialogOpen} dialogProps={viewLeadsDialogProps} onCancel={() => setViewLeadsDialogOpen(false)} />
-            <ChatflowConfigurationDialog
-                key='chatflowConfiguration'
-                show={chatflowConfigurationDialogOpen}
-                dialogProps={chatflowConfigurationDialogProps}
-                onCancel={() => setChatflowConfigurationDialogOpen(false)}
-            />
+            {isBackingFlowReady && activeBackingFlow && (
+                <>
+                    <ViewMessagesDialog
+                        show={viewMessagesDialogOpen}
+                        dialogProps={viewMessagesDialogProps}
+                        onCancel={() => setViewMessagesDialogOpen(false)}
+                    />
+                    <ViewLeadsDialog
+                        show={viewLeadsDialogOpen}
+                        dialogProps={viewLeadsDialogProps}
+                        onCancel={() => setViewLeadsDialogOpen(false)}
+                    />
+                    <ChatflowConfigurationDialog
+                        key='chatflowConfiguration'
+                        show={chatflowConfigurationDialogOpen}
+                        dialogProps={chatflowConfigurationDialogProps}
+                        onCancel={() => setChatflowConfigurationDialogOpen(false)}
+                    />
+                </>
+            )}
             <PromptGeneratorDialog
                 show={assistantPromptGeneratorDialogOpen}
                 dialogProps={assistantPromptGeneratorDialogProps}

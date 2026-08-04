@@ -15,6 +15,7 @@ import { executeDocStoreUpsert, insertIntoVectorStore, previewChunks, processLoa
 import { RedisOptions } from 'bullmq'
 import logger from '../utils/logger'
 import { UsageCacheManager } from '../UsageCacheManager'
+import { createDocumentStoreQueueFailedError } from './documentStoreQueueError'
 
 interface UpsertQueueOptions {
     appDataSource: DataSource
@@ -50,6 +51,14 @@ export class UpsertQueue extends BaseQueue {
         return this.queue
     }
 
+    private async processDocumentStoreJob<T>(operation: () => Promise<T>): Promise<T> {
+        try {
+            return await operation()
+        } catch (error) {
+            throw createDocumentStoreQueueFailedError(error)
+        }
+    }
+
     async processJob(
         data: IExecuteFlowParams | IExecuteDocStoreUpsert | IExecuteProcessLoader | IExecuteVectorStoreInsert | IExecutePreviewLoader
     ) {
@@ -62,25 +71,25 @@ export class UpsertQueue extends BaseQueue {
         // document-store/loader/preview
         if (Object.prototype.hasOwnProperty.call(data, 'isPreviewOnly')) {
             logger.info('Previewing loader...')
-            return await previewChunks(data as IExecutePreviewLoader)
+            return await this.processDocumentStoreJob(() => previewChunks(data as IExecutePreviewLoader))
         }
 
         // document-store/loader/process/:loaderId
         if (Object.prototype.hasOwnProperty.call(data, 'isProcessWithoutUpsert')) {
             logger.info('Processing loader...')
-            return await processLoader(data as IExecuteProcessLoader)
+            return await this.processDocumentStoreJob(() => processLoader(data as IExecuteProcessLoader))
         }
 
         // document-store/vectorstore/insert/:loaderId
         if (Object.prototype.hasOwnProperty.call(data, 'isVectorStoreInsert')) {
             logger.info('Inserting vector store...')
-            return await insertIntoVectorStore(data as IExecuteVectorStoreInsert)
+            return await this.processDocumentStoreJob(() => insertIntoVectorStore(data as IExecuteVectorStoreInsert))
         }
 
         // document-store/upsert/:storeId
         if (Object.prototype.hasOwnProperty.call(data, 'storeId')) {
             logger.info('Upserting to vector store via document loader...')
-            return await executeDocStoreUpsert(data as IExecuteDocStoreUpsert)
+            return await this.processDocumentStoreJob(() => executeDocStoreUpsert(data as IExecuteDocStoreUpsert))
         }
 
         // upsert-vector/:chatflowid

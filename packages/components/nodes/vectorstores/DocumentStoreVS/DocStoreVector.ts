@@ -1,6 +1,110 @@
 import { ICommonObject, IDatabaseEntity, INode, INodeData, INodeOptionsValue, INodeOutputsValue, INodeParams } from '../../../src/Interface'
 import { DataSource } from 'typeorm'
 
+const DOCUMENT_STORE_SCOPE_ERROR = 'Document Store workspace context is required'
+const DOCUMENT_STORE_UNAVAILABLE_ERROR = 'Document Store is unavailable'
+
+interface DocumentStoreNodeConfig {
+    name: string
+    config: ICommonObject
+}
+
+interface ResolvedDocumentStoreComponent {
+    component: ICommonObject
+    credentialId?: string
+}
+
+const isRecord = (value: unknown): value is Record<string, any> => Boolean(value && typeof value === 'object' && !Array.isArray(value))
+
+const parseDocumentStoreNodeConfig = (value: unknown): DocumentStoreNodeConfig | undefined => {
+    if (typeof value !== 'string' || !value.trim()) return undefined
+
+    try {
+        const parsed = JSON.parse(value)
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+        const name = typeof parsed.name === 'string' ? parsed.name.trim() : ''
+        const config = parsed.config
+        if (!name || !config || typeof config !== 'object' || Array.isArray(config)) return undefined
+        return { name, config }
+    } catch {
+        return undefined
+    }
+}
+
+const resolveDocumentStoreRuntimeComponent = (
+    componentNodes: ICommonObject,
+    selection: DocumentStoreNodeConfig,
+    expectedCategory: 'Embeddings' | 'Vector Stores',
+    requiredBaseClass: 'Embeddings' | 'VectorStoreRetriever'
+): ResolvedDocumentStoreComponent | undefined => {
+    const component = componentNodes?.[selection.name]
+    if (
+        !isRecord(component) ||
+        component.name !== selection.name ||
+        component.category !== expectedCategory ||
+        !Array.isArray(component.baseClasses) ||
+        !component.baseClasses.includes(requiredBaseClass) ||
+        typeof component.filePath !== 'string' ||
+        !component.filePath.trim() ||
+        !Array.isArray(component.inputs)
+    ) {
+        return undefined
+    }
+
+    const allowedInputs = new Set<string>(['FLOWISE_CREDENTIAL_ID'])
+    for (const input of component.inputs) {
+        if (isRecord(input) && typeof input.name === 'string' && input.name) allowedInputs.add(input.name)
+    }
+    const credentialInputName = isRecord(component.credential) ? component.credential.name : undefined
+    if (typeof credentialInputName === 'string' && credentialInputName) allowedInputs.add(credentialInputName)
+    if (expectedCategory === 'Vector Stores') {
+        for (const retrievalInput of ['topK', 'searchType', 'fetchK', 'lambda']) allowedInputs.add(retrievalInput)
+    }
+    for (const key of Object.keys(selection.config)) {
+        if (key === 'customFunction' || key === '__proto__' || key === 'prototype' || key === 'constructor' || !allowedInputs.has(key)) {
+            return undefined
+        }
+    }
+
+    const credentialCandidates = [
+        selection.config.FLOWISE_CREDENTIAL_ID,
+        typeof credentialInputName === 'string' ? selection.config[credentialInputName] : undefined
+    ].filter((candidate) => candidate !== undefined && candidate !== null && candidate !== '')
+    const credentialIds = [...new Set(credentialCandidates)]
+    if (credentialIds.length > 1 || credentialIds.some((candidate) => typeof candidate !== 'string' || !candidate.trim())) {
+        return undefined
+    }
+    return { component, credentialId: credentialIds[0] as string | undefined }
+}
+
+const assertDocumentStoreRuntimeCredential = async (
+    credentialId: string | undefined,
+    workspaceId: string,
+    appDataSource: DataSource,
+    databaseEntities: IDatabaseEntity
+): Promise<boolean> => {
+    if (!credentialId) return true
+    const credentialEntity = databaseEntities['Credential']
+    if (!credentialEntity) return false
+    try {
+        const credentialRepository = appDataSource.getRepository(credentialEntity)
+        const ownedCredential = await credentialRepository.findOneBy({ id: credentialId, workspaceId })
+        if (ownedCredential) return true
+
+        const workspaceSharedEntity = databaseEntities['WorkspaceShared']
+        if (!workspaceSharedEntity) return false
+        const sharedCredential = await appDataSource.getRepository(workspaceSharedEntity).findOneBy({
+            workspaceId,
+            sharedItemId: credentialId,
+            itemType: 'credential'
+        })
+        if (!sharedCredential) return false
+        return Boolean(await credentialRepository.findOneBy({ id: credentialId }))
+    } catch {
+        return false
+    }
+}
+
 class DocStore_VectorStores implements INode {
     label: string
     name: string
@@ -73,20 +177,42 @@ class DocStore_VectorStores implements INode {
     }
 
     async init(nodeData: INodeData, _: string, options: ICommonObject): Promise<any> {
-        const selectedStore = nodeData.inputs?.selectedStore as string
+        const workspaceId = typeof options.workspaceId === 'string' ? options.workspaceId.trim() : ''
+        if (!workspaceId) throw new Error(DOCUMENT_STORE_SCOPE_ERROR)
+
+        const selectedStore = typeof nodeData.inputs?.selectedStore === 'string' ? nodeData.inputs.selectedStore.trim() : ''
+        if (!selectedStore) throw new Error(DOCUMENT_STORE_UNAVAILABLE_ERROR)
+
         const appDataSource = options.appDataSource as DataSource
         const databaseEntities = options.databaseEntities as IDatabaseEntity
         const output = nodeData.outputs?.output as string
 
-        const entity = await appDataSource.getRepository(databaseEntities['DocumentStore']).findOneBy({ id: selectedStore })
-        if (!entity) {
-            return { error: 'Store not found' }
+        const entity = await appDataSource.getRepository(databaseEntities['DocumentStore']).findOneBy({ id: selectedStore, workspaceId })
+        if (!entity || entity.status !== 'UPSERTED') throw new Error(DOCUMENT_STORE_UNAVAILABLE_ERROR)
+
+        const embeddingConfig = parseDocumentStoreNodeConfig(entity.embeddingConfig)
+        const vectorStoreConfig = parseDocumentStoreNodeConfig(entity.vectorStoreConfig)
+        if (!embeddingConfig || !vectorStoreConfig) throw new Error(DOCUMENT_STORE_UNAVAILABLE_ERROR)
+
+        const embeddingSelection = resolveDocumentStoreRuntimeComponent(options.componentNodes, embeddingConfig, 'Embeddings', 'Embeddings')
+        const vectorStoreSelection = resolveDocumentStoreRuntimeComponent(
+            options.componentNodes,
+            vectorStoreConfig,
+            'Vector Stores',
+            'VectorStoreRetriever'
+        )
+        if (!embeddingSelection || !vectorStoreSelection) throw new Error(DOCUMENT_STORE_UNAVAILABLE_ERROR)
+        if (
+            !(await assertDocumentStoreRuntimeCredential(embeddingSelection.credentialId, workspaceId, appDataSource, databaseEntities)) ||
+            !(await assertDocumentStoreRuntimeCredential(vectorStoreSelection.credentialId, workspaceId, appDataSource, databaseEntities))
+        ) {
+            throw new Error(DOCUMENT_STORE_UNAVAILABLE_ERROR)
         }
+
         const data: ICommonObject = {}
         data.output = output
 
         // Prepare Embeddings Instance
-        const embeddingConfig = JSON.parse(entity.embeddingConfig)
         data.embeddingName = embeddingConfig.name
         data.embeddingConfig = embeddingConfig.config
         let embeddingObj = await _createEmbeddingsObject(options.componentNodes, data, options)
@@ -95,11 +221,10 @@ class DocStore_VectorStores implements INode {
         }
 
         // Prepare Vector Store Instance
-        const vsConfig = JSON.parse(entity.vectorStoreConfig)
-        data.vectorStoreName = vsConfig.name
-        data.vectorStoreConfig = vsConfig.config
+        data.vectorStoreName = vectorStoreConfig.name
+        data.vectorStoreConfig = vectorStoreConfig.config
         if (data.inputs) {
-            data.vectorStoreConfig = { ...vsConfig.config, ...data.inputs }
+            data.vectorStoreConfig = { ...vectorStoreConfig.config, ...data.inputs }
         }
 
         // Prepare Vector Store Node Data

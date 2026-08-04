@@ -27,6 +27,7 @@ import CancelIcon from '@mui/icons-material/Cancel'
 
 // const
 import { baseURL, AGENTFLOW_ICONS } from '@/store/constant'
+import { resolveInstanceDisplayLabel } from '@/utils/componentMetadataDisplay'
 
 const CardWrapper = styled(MainCard)(({ theme }) => ({
     background: theme.palette.card.main,
@@ -51,6 +52,7 @@ const StyledNodeToolbar = styled(NodeToolbar)(({ theme }) => ({
 const IterationNode = ({ data }) => {
     const theme = useTheme()
     const customization = useSelector((state) => state.customization)
+    const canvas = useSelector((state) => state.canvas)
     const ref = useRef(null)
     const reactFlowWrapper = useRef(null)
 
@@ -61,6 +63,7 @@ const IterationNode = ({ data }) => {
     const { deleteNode, duplicateNode, reactFlowInstance } = useContext(flowContext)
     const [showInfoDialog, setShowInfoDialog] = useState(false)
     const [infoDialogProps, setInfoDialogProps] = useState({})
+    const componentNode = canvas.componentNodes.find((node) => node.name === data.name)
 
     const [cardDimensions, setCardDimensions] = useState({
         width: '300px',
@@ -209,12 +212,12 @@ const IterationNode = ({ data }) => {
                             ml: 1
                         }}
                     >
-                        {data.label}
+                        {resolveInstanceDisplayLabel(data, componentNode)}
                     </Typography>
                 </Box>
             </NodeToolbar>
             <StyledNodeToolbar align='end'>
-                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='Basic button group'>
+                <ButtonGroup sx={{ gap: 1 }} variant='outlined' aria-label='基础操作按钮组'>
                     <IconButton
                         size={'small'}
                         title='复制'
@@ -249,7 +252,7 @@ const IterationNode = ({ data }) => {
                         size={'small'}
                         title='提示'
                         onClick={() => {
-                            setInfoDialogProps({ data })
+                            setInfoDialogProps({ data, componentMetadata: componentNode })
                             setShowInfoDialog(true)
                         }}
                         sx={{
@@ -283,7 +286,7 @@ const IterationNode = ({ data }) => {
                 border={false}
             >
                 {data && data.status && (
-                    <Tooltip title={data.status === 'ERROR' ? data.error || 'Error' : ''}>
+                    <Tooltip title={data.status === 'ERROR' ? data.error || '错误' : ''}>
                         <Avatar
                             variant='rounded'
                             sx={{

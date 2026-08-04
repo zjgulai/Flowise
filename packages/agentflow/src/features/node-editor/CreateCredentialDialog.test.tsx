@@ -172,7 +172,7 @@ describe('CreateCredentialDialog', () => {
         await waitFor(() => {
             expect(mockGetComponentCredentialSchema).toHaveBeenCalledWith('openAIApi')
             expect(screen.getByText('OpenAI API')).toBeInTheDocument()
-            expect(screen.getByText('Credential Name')).toBeInTheDocument()
+            expect(screen.getByText('凭据名称')).toBeInTheDocument()
             expect(screen.getByText('OpenAI Api Key')).toBeInTheDocument()
         })
     })
@@ -217,7 +217,7 @@ describe('CreateCredentialDialog', () => {
         renderWithTheme(<CreateCredentialDialog {...defaultProps} />)
 
         await waitFor(() => {
-            expect(screen.getByText('Add')).toBeDisabled()
+            expect(screen.getByText('添加')).toBeDisabled()
         })
     })
 
@@ -229,7 +229,7 @@ describe('CreateCredentialDialog', () => {
         // Fill credential name but leave required field empty
         fireEvent.change(screen.getByPlaceholderText('OpenAI API'), { target: { value: 'My Key' } })
 
-        expect(screen.getByText('Add')).toBeDisabled()
+        expect(screen.getByText('添加')).toBeDisabled()
     })
 
     it('Add button is enabled when credential name and required fields are filled', async () => {
@@ -240,7 +240,7 @@ describe('CreateCredentialDialog', () => {
         fireEvent.change(screen.getByPlaceholderText('OpenAI API'), { target: { value: 'My Key' } })
         fireEvent.change(screen.getByDisplayValue(''), { target: { value: 'sk-test-key' } })
 
-        expect(screen.getByText('Add')).not.toBeDisabled()
+        expect(screen.getByText('添加')).not.toBeDisabled()
     })
 
     it('submits credential and calls onCreated with new ID', async () => {
@@ -252,7 +252,7 @@ describe('CreateCredentialDialog', () => {
         fireEvent.change(screen.getByDisplayValue(''), { target: { value: 'sk-test-key' } })
 
         await act(async () => {
-            fireEvent.click(screen.getByText('Add'))
+            fireEvent.click(screen.getByText('添加'))
         })
 
         expect(mockCreateCredential).toHaveBeenCalledWith({
@@ -273,7 +273,7 @@ describe('CreateCredentialDialog', () => {
         fireEvent.change(screen.getByDisplayValue(''), { target: { value: 'sk-test-key' } })
 
         await act(async () => {
-            fireEvent.click(screen.getByText('Add'))
+            fireEvent.click(screen.getByText('添加'))
         })
 
         await waitFor(() => {
@@ -284,16 +284,16 @@ describe('CreateCredentialDialog', () => {
     it('calls onClose when Cancel is clicked', async () => {
         renderWithTheme(<CreateCredentialDialog {...defaultProps} />)
 
-        await waitFor(() => screen.getByText('Cancel'))
+        await waitFor(() => screen.getByText('取消'))
 
-        fireEvent.click(screen.getByText('Cancel'))
+        fireEvent.click(screen.getByText('取消'))
         expect(defaultProps.onClose).toHaveBeenCalled()
     })
 
     it('does not render when open is false', () => {
         renderWithTheme(<CreateCredentialDialog {...defaultProps} open={false} />)
 
-        expect(screen.queryByText('Credential Name')).not.toBeInTheDocument()
+        expect(screen.queryByText('凭据名称')).not.toBeInTheDocument()
     })
 })
 
@@ -307,7 +307,7 @@ describe('CreateCredentialDialog – multiple credential types', () => {
         renderWithTheme(<CreateCredentialDialog {...defaultProps} credentialNames={['openAIApi', 'awsApi']} />)
 
         await waitFor(() => {
-            expect(screen.getByText('Add New Credential')).toBeInTheDocument()
+            expect(screen.getByText('新增凭据')).toBeInTheDocument()
             expect(screen.getByText('OpenAI API')).toBeInTheDocument()
             expect(screen.getByText('AWS security credentials')).toBeInTheDocument()
         })
@@ -380,7 +380,7 @@ describe('CredentialField – field types', () => {
         renderWithTheme(<CreateCredentialDialog {...defaultProps} credentialNames={['fullSchema']} />)
 
         await waitFor(() => {
-            expect(screen.getByTitle('Expand')).toBeInTheDocument()
+            expect(screen.getByTitle('展开')).toBeInTheDocument()
         })
     })
 

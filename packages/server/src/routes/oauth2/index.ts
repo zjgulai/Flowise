@@ -15,10 +15,10 @@
  * - tenant_id: Microsoft Graph tenant ID (if using Microsoft Graph)
  * - authorization_endpoint: Custom authorization URL (defaults to Microsoft Graph if tenant_id provided)
  * - token_endpoint: Custom token URL (defaults to Microsoft Graph if tenant_id provided)
- * - redirect_uri: Custom redirect URI (defaults to this callback endpoint)
+ * - redirect_uri: Ignored; the callback is always derived from canonical APP_URL
  * - scope: OAuth2 scopes to request (e.g., "user.read mail.read")
- * - response_type: OAuth2 response type (defaults to "code")
- * - response_mode: OAuth2 response mode (defaults to "query")
+ * - response_type: Ignored; authorization code flow always uses "code"
+ * - response_mode: Ignored; callback handling always uses "query"
  *
  * ENDPOINTS:
  *
@@ -57,10 +57,9 @@
  * - token_received_at: When token was received (ISO string)
  */
 
-import axios from 'axios'
 import { randomBytes } from 'crypto'
 import express, { NextFunction, Request, Response } from 'express'
-import { secureAxiosRequest } from 'flowise-components'
+import { createFixedOriginPolicy, resolveFlowiseRequestTarget, secureAxiosRequest } from 'flowise-components'
 import { StatusCodes } from 'http-status-codes'
 import { Credential } from '../../database/entities/Credential'
 import { ErrorMessage, LoggedInUser } from '../../enterprise/Interface.Enterprise'
@@ -71,13 +70,20 @@ import { getActiveWorkspaceIdForRequest, getLoggedInUser } from '../../enterpris
 import { InternalFlowiseError } from '../../errors/internalFlowiseError'
 import { decryptCredentialData, encryptCredentialData } from '../../utils'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
-import { extractOAuth2TokenFields, validateOAuth2Url } from '../../utils/oauth2Security'
+import { MAX_OAUTH2_TOKEN_LENGTH, normalizeOAuth2TokenResponse, validateStrictOAuth2Url } from '../../utils/oauth2Security'
+import { refreshOAuth2CredentialForWorkspace } from '../../services/oauth2CredentialRefresh'
 import { generateErrorPage, generateSuccessPage } from './templates'
 
 const router = express.Router()
 
 const OAUTH2_STATE_TTL_MS = 10 * 60 * 1000
 const MAX_PENDING_OAUTH2_STATES = 10
+const MAX_TOKEN_RESPONSE_BYTES = 1024 * 1024
+const OAUTH_CONFIGURATION_INVALID = 'OAuth2 credential configuration is invalid'
+const RESERVED_AUTHORIZATION_PARAMETERS = new Set(['client_id', 'response_type', 'response_mode', 'state', 'redirect_uri', 'scope'])
+
+const isBoundedOAuth2String = (value: unknown, required: boolean): value is string =>
+    typeof value === 'string' && (!required || value.length > 0) && value.length <= MAX_OAUTH2_TOKEN_LENGTH
 
 type PendingOAuth2State = {
     credentialId: string
@@ -175,20 +181,12 @@ const authorizeOAuth2 = async (req: Request, res: Response, next: NextFunction) 
         // Decrypt the credential data to get OAuth configuration
         const decryptedData = await decryptCredentialData(credential.encryptedData)
 
-        const {
-            clientId,
-            authorizationUrl,
-            redirect_uri,
-            scope,
-            response_type = 'code',
-            response_mode = 'query',
-            additionalParameters = ''
-        } = decryptedData
+        const { clientId, authorizationUrl, scope, additionalParameters = '' } = decryptedData
 
-        if (!clientId) {
+        if (!isBoundedOAuth2String(clientId, true) || (scope !== undefined && !isBoundedOAuth2String(scope, false))) {
             return res.status(400).json({
                 success: false,
-                message: 'Missing clientId in credential data'
+                message: OAUTH_CONFIGURATION_INVALID
             })
         }
 
@@ -200,18 +198,52 @@ const authorizeOAuth2 = async (req: Request, res: Response, next: NextFunction) 
         }
 
         try {
-            validateOAuth2Url(authorizationUrl)
-        } catch (err) {
+            validateStrictOAuth2Url(authorizationUrl)
+        } catch {
             return res.status(400).json({
                 success: false,
-                message: err instanceof Error ? err.message : 'Invalid authorization URL'
+                message: OAUTH_CONFIGURATION_INVALID
             })
         }
 
-        const defaultRedirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth2-credential/callback`
-        const finalRedirectUri = redirect_uri || defaultRedirectUri
+        let finalRedirectUri: string
+        try {
+            finalRedirectUri = `${resolveFlowiseRequestTarget().canonicalOrigin}/api/v1/oauth2-credential/callback`
+        } catch {
+            return res.status(400).json({ success: false, message: OAUTH_CONFIGURATION_INVALID })
+        }
+
+        const authorizationEndpoint = new URL(validateStrictOAuth2Url(authorizationUrl))
+        if ([...authorizationEndpoint.searchParams.keys()].some((key) => RESERVED_AUTHORIZATION_PARAMETERS.has(key.toLowerCase()))) {
+            return res.status(400).json({ success: false, message: OAUTH_CONFIGURATION_INVALID })
+        }
 
         const state = randomBytes(32).toString('base64url')
+        const authParams = new URLSearchParams({
+            client_id: clientId,
+            response_type: 'code',
+            response_mode: 'query',
+            state,
+            redirect_uri: finalRedirectUri
+        })
+
+        if (scope) {
+            authParams.append('scope', scope)
+        }
+
+        if (additionalParameters) {
+            if (typeof additionalParameters !== 'string' || additionalParameters.length > 4096) {
+                return res.status(400).json({ success: false, message: OAUTH_CONFIGURATION_INVALID })
+            }
+            const additionalAuthParams = new URLSearchParams(additionalParameters.replace(/^\?/, ''))
+            for (const [key, value] of additionalAuthParams) {
+                if (!key || RESERVED_AUTHORIZATION_PARAMETERS.has(key.toLowerCase())) {
+                    return res.status(400).json({ success: false, message: OAUTH_CONFIGURATION_INVALID })
+                }
+                authParams.append(key, value)
+            }
+        }
+
         await storeOAuth2State(req, state, {
             credentialId,
             workspaceId,
@@ -222,27 +254,6 @@ const authorizeOAuth2 = async (req: Request, res: Response, next: NextFunction) 
             expiresAt: Date.now() + OAUTH2_STATE_TTL_MS
         })
 
-        const authParams = new URLSearchParams({
-            client_id: clientId,
-            response_type,
-            response_mode,
-            state,
-            redirect_uri: finalRedirectUri
-        })
-
-        if (scope) {
-            authParams.append('scope', scope)
-        }
-
-        if (additionalParameters) {
-            const reservedParameters = new Set(['client_id', 'response_type', 'response_mode', 'state', 'redirect_uri'])
-            const additionalAuthParams = new URLSearchParams(additionalParameters.toString().replace(/^\?/, ''))
-            for (const [key, value] of additionalAuthParams) {
-                if (!reservedParameters.has(key)) authParams.append(key, value)
-            }
-        }
-
-        const authorizationEndpoint = new URL(authorizationUrl)
         for (const [key, value] of authParams) authorizationEndpoint.searchParams.set(key, value)
         const fullAuthorizationUrl = authorizationEndpoint.toString()
 
@@ -257,12 +268,7 @@ const authorizeOAuth2 = async (req: Request, res: Response, next: NextFunction) 
         if (error instanceof InternalFlowiseError) {
             return next(error)
         }
-        next(
-            new InternalFlowiseError(
-                StatusCodes.INTERNAL_SERVER_ERROR,
-                `OAuth2 authorization error: ${error instanceof Error ? error.message : 'Unknown error'}`
-            )
-        )
+        next(new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'OAuth2 authorization failed'))
     }
 }
 
@@ -271,7 +277,7 @@ router.post('/authorize/:credentialId', requireInteractiveSession, checkPermissi
 // OAuth2 callback endpoint
 router.get('/callback', requireCurrentOAuthCallbackSession, checkPermission('credentials:update'), async (req: Request, res: Response) => {
     try {
-        const { code, state, error, error_description } = req.query
+        const { code, state, error } = req.query
 
         if (typeof state !== 'string') {
             const errorHtml = generateErrorPage('Invalid authorization state', 'The authorization request is invalid or expired.')
@@ -288,11 +294,7 @@ router.get('/callback', requireCurrentOAuthCallbackSession, checkPermission('cre
         }
 
         if (error) {
-            const errorHtml = generateErrorPage(
-                error as string,
-                (error_description as string) || 'An error occurred',
-                error_description ? `Description: ${error_description}` : undefined
-            )
+            const errorHtml = generateErrorPage('Authorization denied', 'The OAuth provider did not authorize this request.')
 
             res.setHeader('Content-Type', 'text/html')
             return res.status(400).send(errorHtml)
@@ -322,10 +324,14 @@ router.get('/callback', requireCurrentOAuthCallbackSession, checkPermission('cre
 
         const { clientId, clientSecret, accessTokenUrl, scope } = decryptedData
 
-        if (!clientId || !clientSecret) {
+        if (
+            !isBoundedOAuth2String(clientId, true) ||
+            !isBoundedOAuth2String(clientSecret, true) ||
+            (scope !== undefined && !isBoundedOAuth2String(scope, false))
+        ) {
             const errorHtml = generateErrorPage(
                 'Missing OAuth configuration',
-                'Missing clientId or clientSecret',
+                'The OAuth credential configuration is invalid.',
                 'Please check your credential setup.'
             )
 
@@ -333,8 +339,7 @@ router.get('/callback', requireCurrentOAuthCallbackSession, checkPermission('cre
             return res.status(400).send(errorHtml)
         }
 
-        let tokenUrl = accessTokenUrl
-        if (!tokenUrl) {
+        if (!accessTokenUrl) {
             const errorHtml = generateErrorPage(
                 'Missing token endpoint URL',
                 'No Access Token URL specified in credential data',
@@ -345,12 +350,13 @@ router.get('/callback', requireCurrentOAuthCallbackSession, checkPermission('cre
             return res.status(400).send(errorHtml)
         }
 
+        let tokenUrl: string
         try {
-            validateOAuth2Url(tokenUrl)
-        } catch (err) {
+            tokenUrl = validateStrictOAuth2Url(accessTokenUrl)
+        } catch {
             const errorHtml = generateErrorPage(
                 'Invalid token endpoint URL',
-                err instanceof Error ? err.message : 'Token endpoint URL is not allowed',
+                'The configured token endpoint is not allowed.',
                 'Please check your credential configuration.'
             )
 
@@ -372,27 +378,38 @@ router.get('/callback', requireCurrentOAuthCallbackSession, checkPermission('cre
             tokenRequestData.scope = scope
         }
 
-        const tokenResponse = await secureAxiosRequest({
-            method: 'POST',
-            url: tokenUrl,
-            data: new URLSearchParams(tokenRequestData).toString(),
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                Accept: 'application/json'
-            }
-        })
+        const tokenResponse = await secureAxiosRequest(
+            {
+                method: 'POST',
+                url: tokenUrl,
+                data: new URLSearchParams(tokenRequestData).toString(),
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    Accept: 'application/json'
+                },
+                maxContentLength: MAX_TOKEN_RESPONSE_BYTES,
+                maxBodyLength: MAX_TOKEN_RESPONSE_BYTES,
+                timeout: 30_000
+            },
+            5,
+            undefined,
+            createFixedOriginPolicy(new URL(tokenUrl).origin)
+        )
 
-        if (tokenResponse.status >= 400) {
-            const errorHtml = generateErrorPage(
-                tokenResponse.data?.error || 'token_exchange_failed',
-                tokenResponse.data?.error_description || 'Token exchange failed',
-                tokenResponse.data?.error_description ? `Description: ${tokenResponse.data.error_description}` : undefined
-            )
+        if (tokenResponse.status < 200 || tokenResponse.status >= 300) {
+            const errorHtml = generateErrorPage('Token exchange failed', 'The OAuth provider did not return a successful token response.')
             res.setHeader('Content-Type', 'text/html')
-            return res.status(tokenResponse.status).send(errorHtml)
+            return res.status(StatusCodes.BAD_GATEWAY).send(errorHtml)
         }
 
-        const tokenData = extractOAuth2TokenFields(tokenResponse.data)
+        let tokenData: Record<string, any>
+        try {
+            tokenData = normalizeOAuth2TokenResponse(tokenResponse.data)
+        } catch {
+            const errorHtml = generateErrorPage('Token exchange failed', 'The OAuth provider returned an invalid token response.')
+            res.setHeader('Content-Type', 'text/html')
+            return res.status(StatusCodes.BAD_GATEWAY).send(errorHtml)
+        }
 
         const updatedCredentialData: any = {
             ...decryptedData,
@@ -409,10 +426,16 @@ router.get('/callback', requireCurrentOAuthCallbackSession, checkPermission('cre
         const encryptedData = await encryptCredentialData(updatedCredentialData)
 
         // Update the credential in the database
-        await credentialRepository.update(credential.id, {
-            encryptedData,
-            updatedDate: new Date()
-        })
+        const updateResult = await credentialRepository.update(
+            { id: credential.id, workspaceId: pendingState.workspaceId, encryptedData: credential.encryptedData },
+            {
+                encryptedData,
+                updatedDate: new Date()
+            }
+        )
+        if (updateResult?.affected !== 1) {
+            throw new InternalFlowiseError(StatusCodes.CONFLICT, 'OAuth credential update conflict')
+        }
 
         // Return HTML that closes the popup window on success
         const successHtml = generateSuccessPage(credential.id)
@@ -420,24 +443,7 @@ router.get('/callback', requireCurrentOAuthCallbackSession, checkPermission('cre
         res.setHeader('Content-Type', 'text/html')
         res.send(successHtml)
     } catch (error) {
-        if (axios.isAxiosError(error)) {
-            const axiosError = error
-            const errorHtml = generateErrorPage(
-                axiosError.response?.data?.error || 'token_exchange_failed',
-                axiosError.response?.data?.error_description || 'Token exchange failed',
-                axiosError.response?.data?.error_description ? `Description: ${axiosError.response?.data?.error_description}` : undefined
-            )
-
-            res.setHeader('Content-Type', 'text/html')
-            return res.status(400).send(errorHtml)
-        }
-
-        // Generic error HTML page
-        const errorHtml = generateErrorPage(
-            'An unexpected error occurred',
-            'Please try again later.',
-            error instanceof Error ? error.message : 'Unknown error'
-        )
+        const errorHtml = generateErrorPage('OAuth callback failed', 'The authorization could not be completed.')
 
         res.setHeader('Content-Type', 'text/html')
         res.status(500).send(errorHtml)
@@ -449,120 +455,22 @@ const refreshOAuth2AccessToken = async (req: Request, res: Response, next: NextF
     try {
         const { credentialId } = req.params
         const workspaceId = getActiveWorkspaceIdForRequest(req)
-        const { credential, credentialRepository } = await getOwnedCredential(credentialId, workspaceId)
-
-        if (!credential) {
-            return res.status(404).json({
-                success: false,
-                message: 'Credential not found'
-            })
-        }
-
-        const decryptedData = await decryptCredentialData(credential.encryptedData)
-
-        const { clientId, clientSecret, refresh_token, accessTokenUrl, scope } = decryptedData
-
-        if (!clientId || !clientSecret || !refresh_token) {
-            return res.status(400).json({
-                success: false,
-                message: 'Missing required OAuth configuration: clientId, clientSecret, or refresh_token'
-            })
-        }
-
-        let tokenUrl = accessTokenUrl
-        if (!tokenUrl) {
-            return res.status(400).json({
-                success: false,
-                message: 'No Access Token URL specified in credential data'
-            })
-        }
-
-        try {
-            validateOAuth2Url(tokenUrl)
-        } catch (err) {
-            return res.status(400).json({
-                success: false,
-                message: err instanceof Error ? err.message : 'Token endpoint URL is not allowed'
-            })
-        }
-
-        const refreshRequestData: any = {
-            client_id: clientId,
-            client_secret: clientSecret,
-            grant_type: 'refresh_token',
-            refresh_token
-        }
-
-        if (scope) {
-            refreshRequestData.scope = scope
-        }
-
-        const tokenResponse = await secureAxiosRequest({
-            method: 'POST',
-            url: tokenUrl,
-            data: new URLSearchParams(refreshRequestData).toString(),
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                Accept: 'application/json'
-            }
-        })
-
-        if (tokenResponse.status >= 400) {
-            return res.status(tokenResponse.status).json({
-                success: false,
-                message: `Token refresh failed: ${tokenResponse.data?.error_description || tokenResponse.statusText}`,
-                details: tokenResponse.data
-            })
-        }
-
-        const tokenData = extractOAuth2TokenFields(tokenResponse.data)
-
-        const updatedCredentialData: any = {
-            ...decryptedData,
-            ...tokenData,
-            token_received_at: new Date().toISOString()
-        }
-
-        if (tokenData.expires_in) {
-            const expiryTime = new Date(Date.now() + tokenData.expires_in * 1000)
-            updatedCredentialData.expires_at = expiryTime.toISOString()
-        }
-
-        // Encrypt the updated credential data
-        const encryptedData = await encryptCredentialData(updatedCredentialData)
-
-        // Update the credential in the database
-        await credentialRepository.update(credential.id, {
-            encryptedData,
-            updatedDate: new Date()
-        })
+        const updatedCredentialData = await refreshOAuth2CredentialForWorkspace(credentialId, workspaceId)
 
         res.json({
             success: true,
             message: 'OAuth2 token refreshed successfully',
-            credentialId: credential.id,
+            credentialId,
             tokenInfo: {
-                token_type: tokenData.token_type,
-                has_new_refresh_token: !!tokenData.refresh_token,
+                token_type: updatedCredentialData.token_type,
+                has_refresh_token:
+                    typeof updatedCredentialData.refresh_token === 'string' && updatedCredentialData.refresh_token.length > 0,
                 expires_at: updatedCredentialData.expires_at
             }
         })
     } catch (error) {
-        if (axios.isAxiosError(error)) {
-            const axiosError = error
-            return res.status(400).json({
-                success: false,
-                message: `Token refresh failed: ${axiosError.response?.data?.error_description || axiosError.message}`,
-                details: axiosError.response?.data
-            })
-        }
-
-        next(
-            new InternalFlowiseError(
-                StatusCodes.INTERNAL_SERVER_ERROR,
-                `OAuth2 token refresh error: ${error instanceof Error ? error.message : 'Unknown error'}`
-            )
-        )
+        if (error instanceof InternalFlowiseError) return next(error)
+        next(new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'OAuth2 credential refresh failed'))
     }
 }
 

@@ -154,7 +154,7 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
     return (
         <>
             <TableContainer sx={{ border: 1, borderColor: theme.palette.grey[900] + 25, borderRadius: 2 }} component={Paper}>
-                <Table sx={{ minWidth: 650 }} size='small' aria-label='a dense table'>
+                <Table sx={{ minWidth: 650 }} size='small' aria-label='执行记录表'>
                     <TableHead
                         sx={{
                             backgroundColor: customization.isDarkMode ? theme.palette.common.black : theme.palette.grey[100],
@@ -169,7 +169,7 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
                                     checked={data.length > 0 && selected.length === data.length}
                                     onChange={handleSelectAllClick}
                                     inputProps={{
-                                        'aria-label': 'select all executions'
+                                        'aria-label': '选择全部执行记录'
                                     }}
                                 />
                             </StyledTableCell>
@@ -180,7 +180,7 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
                                     direction={order}
                                     onClick={() => handleRequestSort('updatedDate')}
                                 >
-                                    Last Updated
+                                    最近更新时间
                                 </TableSortLabel>
                             </StyledTableCell>
                             <StyledTableCell component='th' scope='row'>
@@ -195,7 +195,7 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
                                     direction={order}
                                     onClick={() => handleRequestSort('createdDate')}
                                 >
-                                    Created
+                                    创建时间
                                 </TableSortLabel>
                             </StyledTableCell>
                         </TableRow>
@@ -248,7 +248,6 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
                             <>
                                 {sortedData.map((row, index) => {
                                     const isItemSelected = isSelected(row.id)
-                                    const labelId = `enhanced-table-checkbox-${index}`
 
                                     return (
                                         <StyledTableRow
@@ -262,7 +261,7 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
                                                     checked={isItemSelected}
                                                     onClick={(event) => handleClick(event, row.id)}
                                                     inputProps={{
-                                                        'aria-labelledby': labelId
+                                                        'aria-label': `选择执行记录 ${row.agentflow?.name || row.id}（ID：${row.id}）`
                                                     }}
                                                 />
                                             </StyledTableCell>
@@ -274,14 +273,14 @@ export const ExecutionsListTable = ({ data, isLoading, onExecutionRowClick, onSe
                                                 />
                                             </StyledTableCell>
                                             <StyledTableCell onClick={() => onExecutionRowClick(row)}>
-                                                {moment(row.updatedDate).format('MMM D, YYYY h:mm A')}
+                                                {moment(row.updatedDate).format('YYYY-MM-DD HH:mm:ss')}
                                             </StyledTableCell>
                                             <StyledTableCell onClick={() => onExecutionRowClick(row)}>
                                                 {row.agentflow?.name}
                                             </StyledTableCell>
                                             <StyledTableCell onClick={() => onExecutionRowClick(row)}>{row.sessionId}</StyledTableCell>
                                             <StyledTableCell onClick={() => onExecutionRowClick(row)}>
-                                                {moment(row.createdDate).format('MMM D, YYYY h:mm A')}
+                                                {moment(row.createdDate).format('YYYY-MM-DD HH:mm:ss')}
                                             </StyledTableCell>
                                         </StyledTableRow>
                                     )

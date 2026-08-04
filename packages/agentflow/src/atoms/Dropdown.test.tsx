@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
+import { createMetadataDisplayView } from '@/core/primitives'
+
 import { Dropdown, DropdownOption } from './Dropdown'
 
 const mockOnSelect = jest.fn()
@@ -73,5 +75,44 @@ describe('Dropdown', () => {
         render(<Dropdown value='gpt-4o' options={options} onSelect={mockOnSelect} />)
 
         expect(screen.getByRole('combobox')).toHaveValue('GPT-4o')
+    })
+
+    it.each(['创建频道', 'Create Channel', 'createChannel'])(
+        'finds a localized option by Chinese, raw English, or machine name: %s',
+        async (query) => {
+            const localizedOptions = createMetadataDisplayView([
+                {
+                    name: 'createChannel',
+                    label: 'Create Channel',
+                    displayLabel: '创建频道',
+                    description: 'Create a channel',
+                    displayDescription: '创建频道操作'
+                }
+            ])
+            render(<Dropdown value='' options={localizedOptions} onSelect={mockOnSelect} />)
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: query } })
+            await waitFor(() => expect(screen.getByText('创建频道')).toBeInTheDocument())
+            fireEvent.click(screen.getByText('创建频道'))
+
+            expect(mockOnSelect).toHaveBeenCalledWith('createChannel')
+            expect(JSON.stringify(localizedOptions)).not.toContain('Create Channel')
+        }
+    )
+
+    it('handles string and malformed options without throwing or selecting a non-string machine value', async () => {
+        const malformedOptions = [
+            'legacy',
+            null,
+            { name: 'safeName', label: { malicious: true }, description: { malicious: true } },
+            { name: { malicious: true }, label: 'discard me' }
+        ] as unknown as DropdownOption[]
+
+        render(<Dropdown value='' options={malformedOptions} onSelect={mockOnSelect} />)
+
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'safeName' } })
+        await waitFor(() => expect(screen.getByText('safeName')).toBeInTheDocument())
+        fireEvent.click(screen.getByText('safeName'))
+        expect(mockOnSelect).toHaveBeenCalledWith('safeName')
     })
 })

@@ -5,6 +5,8 @@ import { useTheme } from '@mui/material/styles'
 
 import { AGENTFLOW_ICONS } from '@/core'
 
+import { getEdgeDisplayLabel } from './edgeDisplayLabel'
+
 interface EdgeLabelProps {
     transform: string
     isHumanInput?: boolean
@@ -93,7 +95,7 @@ function ConnectionLineComponent({ fromX, fromY, toX, toY, fromPosition, toPosit
                     <EdgeLabel
                         color={color}
                         isHumanInput={nodeName === 'humanInputAgentflow'}
-                        label={getEdgeLabel()}
+                        label={getEdgeDisplayLabel(getEdgeLabel(), nodeName === 'humanInputAgentflow')}
                         transform={`translate(-50%, 0%) translate(${fromX}px,${fromY}px)`}
                     />
                 </EdgeLabelRenderer>

@@ -6,6 +6,7 @@ import { useTheme } from '@mui/material/styles'
 import { AGENTFLOW_ICONS } from '@/core'
 import { tokens } from '@/core/theme/tokens'
 import type { NodeDataSchema } from '@/core/types'
+import { getMetadataDisplayText, stripDisplayMetadata } from '@/core/utils'
 
 const NODE_ICON_SIZE = 30
 const NODE_AVATAR_SIZE = 50
@@ -22,7 +23,7 @@ function NodeListItemComponent({ node, apiBaseUrl, isLast, onDragStart, onClick 
     const theme = useTheme()
 
     const handleDragStart = (event: React.DragEvent) => {
-        event.dataTransfer.setData('application/reactflow', JSON.stringify(node))
+        event.dataTransfer.setData('application/reactflow', JSON.stringify(stripDisplayMetadata(node)))
         event.dataTransfer.effectAllowed = 'move'
         onDragStart(event, node)
     }
@@ -90,7 +91,7 @@ function NodeListItemComponent({ node, apiBaseUrl, isLast, onDragStart, onClick 
                         sx={{ ml: 1 }}
                         primary={
                             <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
-                                <span>{node.label}</span>
+                                <span>{getMetadataDisplayText(node, 'label', node.label)}</span>
                                 {typeof node.badge === 'string' && node.badge && (
                                     <>
                                         &nbsp;
@@ -104,13 +105,13 @@ function NodeListItemComponent({ node, apiBaseUrl, isLast, onDragStart, onClick 
                                                 color: node.badge !== 'DEPRECATING' ? 'white' : 'inherit'
                                             }}
                                             size='small'
-                                            label={node.badge}
+                                            label={getMetadataDisplayText(node, 'badge', node.badge)}
                                         />
                                     </>
                                 )}
                             </Box>
                         }
-                        secondary={node.description}
+                        secondary={getMetadataDisplayText(node, 'description', node.description)}
                     />
                 </ListItem>
             </ListItemButton>

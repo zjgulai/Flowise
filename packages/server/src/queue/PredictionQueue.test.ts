@@ -36,8 +36,17 @@ jest.mock('../utils/executeCustomNodeFunction', () => ({
     executeCustomNodeFunction: jest.fn()
 }))
 
+const mockRefreshOAuth2Credential = jest.fn()
+const mockCreateWorkspaceOAuth2RefreshCapability = jest.fn((_workspaceId: string) => mockRefreshOAuth2Credential)
+jest.mock('../services/oauth2CredentialRefresh', () => ({
+    createWorkspaceOAuth2RefreshCapability: (workspaceId: string) => mockCreateWorkspaceOAuth2RefreshCapability(workspaceId)
+}))
+
 import { AbortControllerPool } from '../AbortControllerPool'
+import { generateAgentflowv2 } from 'flowise-components'
 import { PredictionQueue } from './PredictionQueue'
+
+const mockGenerateAgentflowv2 = generateAgentflowv2 as jest.Mock
 
 const makeQueue = (abortControllerPool: AbortControllerPool) => {
     const queue = new PredictionQueue('test-prediction', {} as any, {
@@ -106,5 +115,49 @@ describe('PredictionQueue request-scoped cancellation', () => {
 
         await expect(queue.processJob(data)).rejects.toThrow('provider failed')
         expect(pool.get(abortControllerId)).toBeUndefined()
+    })
+})
+
+describe('PredictionQueue Agentflow generator workspace scoping', () => {
+    it('passes the serialized workspace to component credential resolution', async () => {
+        const queue = makeQueue(new AbortControllerPool())
+        mockGenerateAgentflowv2.mockResolvedValue({ nodes: [], edges: [] })
+
+        await expect(
+            queue.processJob({
+                prompt: 'system prompt',
+                question: 'Create a flow',
+                toolNodes: {},
+                selectedChatModel: { name: 'chatModel' },
+                workspaceId: 'workspace-queue',
+                isAgentFlowGenerator: true
+            } as any)
+        ).resolves.toEqual({ nodes: [], edges: [] })
+
+        expect(mockGenerateAgentflowv2).toHaveBeenCalledWith(
+            expect.objectContaining({ selectedChatModel: { name: 'chatModel' } }),
+            'Create a flow',
+            expect.objectContaining({
+                workspaceId: 'workspace-queue',
+                skipVariables: true,
+                refreshOAuth2Credential: mockRefreshOAuth2Credential
+            })
+        )
+        expect(mockCreateWorkspaceOAuth2RefreshCapability).toHaveBeenCalledWith('workspace-queue')
+    })
+
+    it('fails closed before component execution when legacy queue data has no workspace', async () => {
+        const queue = makeQueue(new AbortControllerPool())
+
+        await expect(
+            queue.processJob({
+                prompt: 'system prompt',
+                question: 'Create a flow',
+                toolNodes: {},
+                selectedChatModel: { name: 'chatModel' },
+                isAgentFlowGenerator: true
+            } as any)
+        ).rejects.toThrow('Agentflow generator workspace is required')
+        expect(mockGenerateAgentflowv2).not.toHaveBeenCalled()
     })
 })

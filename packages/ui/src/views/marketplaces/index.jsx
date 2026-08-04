@@ -53,6 +53,7 @@ import useConfirm from '@/hooks/useConfirm'
 import { useAuth } from '@/hooks/useAuth'
 
 // Utils
+import { getErrorMessage } from '@/utils/getErrorMessage'
 import useNotifier from '@/utils/useNotifier'
 
 // const
@@ -117,8 +118,8 @@ const Marketplace = () => {
     const share = (template) => {
         const dialogProps = {
             type: 'EDIT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Share',
+            cancelButtonName: '取消',
+            confirmButtonName: '分享',
             data: {
                 id: template.id,
                 name: template.name,
@@ -218,10 +219,10 @@ const Marketplace = () => {
 
     const onDeleteCustomTemplate = async (template) => {
         const confirmPayload = {
-            title: `Delete`,
-            description: `Delete Custom Template ${template.name}?`,
-            confirmButtonName: 'Delete',
-            cancelButtonName: 'Cancel'
+            title: '删除自定义模板',
+            description: `确定删除自定义模板“${template.name}”吗？`,
+            confirmButtonName: '删除',
+            cancelButtonName: '取消'
         }
         const isConfirmed = await confirm(confirmPayload)
 
@@ -230,7 +231,7 @@ const Marketplace = () => {
                 const deleteResp = await marketplacesApi.deleteCustomTemplate(template.id)
                 if (deleteResp.data) {
                     enqueueSnackbar({
-                        message: 'Custom Template deleted successfully!',
+                        message: '自定义模板已删除',
                         options: {
                             key: new Date().getTime() + Math.random(),
                             variant: 'success',
@@ -245,9 +246,7 @@ const Marketplace = () => {
                 }
             } catch (error) {
                 enqueueSnackbar({
-                    message: `Failed to delete custom template: ${
-                        typeof error.response.data === 'object' ? error.response.data.message : error.response.data
-                    }`,
+                    message: `删除自定义模板失败：${getErrorMessage(error, '未知错误')}`,
                     options: {
                         key: new Date().getTime() + Math.random(),
                         variant: 'error',
@@ -323,8 +322,8 @@ const Marketplace = () => {
         const dialogProp = {
             title: '添加新工具',
             type: 'IMPORT',
-            cancelButtonName: 'Cancel',
-            confirmButtonName: 'Add',
+            cancelButtonName: '取消',
+            confirmButtonName: '添加',
             data: selectedTool
         }
         setToolDialogProps(dialogProp)
@@ -399,8 +398,12 @@ const Marketplace = () => {
                 setIcons(icons)
                 setUsecases(Array.from(new Set(usecases)).sort())
                 setEligibleUsecases(Array.from(new Set(usecases)).sort())
-            } catch (e) {
-                console.error(e)
+            } catch {
+                setImages({})
+                setIcons({})
+                setUsecases([])
+                setEligibleUsecases([])
+                setSelectedUsecases([])
             }
         }
     }, [getAllTemplatesMarketplacesApi.data])
@@ -454,8 +457,12 @@ const Marketplace = () => {
                 setTemplateIcons(tIcons)
                 setTemplateUsecases(Array.from(new Set(usecases)).sort())
                 setEligibleTemplateUsecases(Array.from(new Set(usecases)).sort())
-            } catch (e) {
-                console.error(e)
+            } catch {
+                setTemplateImages({})
+                setTemplateIcons({})
+                setTemplateUsecases([])
+                setEligibleTemplateUsecases([])
+                setSelectedTemplateUsecases([])
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -488,7 +495,7 @@ const Marketplace = () => {
                                         }}
                                     >
                                         <InputLabel size='small' id='filter-badge-label'>
-                                            Tag
+                                            标签
                                         </InputLabel>
                                         <Select
                                             labelId='filter-badge-label'
@@ -524,7 +531,7 @@ const Marketplace = () => {
                                         }}
                                     >
                                         <InputLabel size='small' id='type-badge-label'>
-                                            Type
+                                            类型
                                         </InputLabel>
                                         <Select
                                             size='small'
@@ -560,7 +567,7 @@ const Marketplace = () => {
                                         }}
                                     >
                                         <InputLabel size='small' id='type-fw-label'>
-                                            Framework
+                                            框架
                                         </InputLabel>
                                         <Select
                                             size='small'
@@ -569,7 +576,7 @@ const Marketplace = () => {
                                             multiple
                                             value={frameworkFilter}
                                             onChange={handleFrameworkFilterChange}
-                                            input={<OutlinedInput label='Framework' />}
+                                            input={<OutlinedInput label='框架' />}
                                             renderValue={(selected) => selected.join(', ')}
                                             MenuProps={MenuProps}
                                             sx={getSelectStyles(theme.palette.grey[900] + 25, theme?.customization?.isDarkMode)}
@@ -592,7 +599,7 @@ const Marketplace = () => {
                             search={true}
                             searchPlaceholder='搜索名称/描述/节点'
                             title='模板市场'
-                            description='Explore and use pre-built templates'
+                            description='探索并使用预构建模板，快速创建流程和工具'
                         >
                             <ToggleButtonGroup
                                 sx={{ borderRadius: 2, height: '100%' }}
@@ -630,7 +637,7 @@ const Marketplace = () => {
                         {hasPermission('templates:marketplace') && hasPermission('templates:custom') && (
                             <Stack direction='row' justifyContent='space-between' sx={{ mb: 2 }}>
                                 <Tabs value={activeTabValue} onChange={handleTabChange} textColor='primary' aria-label='标签页'>
-                                    <PermissionTab permissionId='templates:marketplace' value={0} label='Community Templates' />
+                                    <PermissionTab permissionId='templates:marketplace' value={0} label='社区模板' />
                                     <PermissionTab permissionId='templates:custom' value={1} label='我的模板' />
                                 </Tabs>
                                 <Autocomplete
@@ -794,10 +801,10 @@ const Marketplace = () => {
                                                 <img
                                                     style={{ objectFit: 'cover', height: '25vh', width: 'auto' }}
                                                     src={WorkflowEmptySVG}
-                                                    alt='WorkflowEmptySVG'
+                                                    alt='暂无社区模板'
                                                 />
                                             </Box>
-                                            <div>No Marketplace Yet</div>
+                                            <div>模板市场暂无内容</div>
                                         </Stack>
                                     )}
                             </TabPanel>
@@ -838,7 +845,7 @@ const Marketplace = () => {
                                         onClick={() => clearAllUsecases()}
                                         startIcon={<IconX />}
                                     >
-                                        Clear All
+                                        清除全部
                                     </Button>
                                 )}
                                 {!view || view === 'card' ? (
@@ -927,10 +934,10 @@ const Marketplace = () => {
                                             <img
                                                 style={{ objectFit: 'cover', height: '25vh', width: 'auto' }}
                                                 src={WorkflowEmptySVG}
-                                                alt='WorkflowEmptySVG'
+                                                alt='暂无自定义模板'
                                             />
                                         </Box>
-                                        <div>No Saved Custom Templates</div>
+                                        <div>暂无已保存的自定义模板</div>
                                     </Stack>
                                 )}
                             </TabPanel>

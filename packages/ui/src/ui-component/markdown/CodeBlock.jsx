@@ -98,7 +98,7 @@ export const CodeBlock = memo(({ language, chatflowid, isFullWidth, value }) => 
                         }}
                     >
                         <Typography variant='h6' sx={{ pl: 1, pr: 1, color: 'white', background: theme.palette.success.dark }}>
-                            Copied!
+                            已复制
                         </Typography>
                     </Popover>
                     <IconButton size='small' title='下载' color='primary' onClick={downloadAsFile}>

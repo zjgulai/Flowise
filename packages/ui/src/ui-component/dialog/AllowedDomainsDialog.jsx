@@ -35,7 +35,7 @@ const AllowedDomainsDialog = ({ show, dialogProps, onCancel, onConfirm }) => {
             aria-describedby='alert-dialog-description'
         >
             <DialogTitle sx={{ fontSize: '1rem' }} id='alert-dialog-title'>
-                {dialogProps.title || 'Allowed Domains'}
+                {dialogProps.title || '允许的域名'}
             </DialogTitle>
             <DialogContent>
                 <AllowedDomains dialogProps={dialogProps} onConfirm={onConfirm} />

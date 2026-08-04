@@ -7,6 +7,61 @@ import { DocumentStoreDTO } from '../../Interface'
 import { getRunningExpressApp } from '../../utils/getRunningExpressApp'
 import { FLOWISE_COUNTER_STATUS, FLOWISE_METRIC_COUNTERS } from '../../Interface.Metrics'
 import { getPageAndLimitParams } from '../../utils/pagination'
+import { removeSpecificFileFromUpload } from 'flowise-components'
+import logger from '../../utils/logger'
+import {
+    createDocumentStoreOperationIdentity,
+    parseDocumentStoreIfMatch,
+    type DocumentStoreOperationIdentity
+} from '../../services/documentstore/documentStoreVersion'
+
+const hasDocumentStorePermission = (req: Request, permission: string): boolean =>
+    Boolean(req.user?.isOrganizationAdmin || req.user?.permissions?.includes(permission))
+
+const getDocumentStoreOperationIdentity = (req: Request, storeId: string, workspaceId: string): DocumentStoreOperationIdentity =>
+    createDocumentStoreOperationIdentity(storeId, workspaceId, parseDocumentStoreIfMatch(req.headers['if-match']))
+
+const cleanupRejectedDocumentStoreUploads = async (files: Express.Multer.File[]): Promise<void> => {
+    const uploadPaths = [
+        ...new Set(
+            files
+                .map((file) => file.path ?? file.key)
+                .filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0)
+        )
+    ]
+    const results = await Promise.allSettled(uploadPaths.map((filePath) => removeSpecificFileFromUpload(filePath)))
+    const failedCount = results.filter((result) => result.status === 'rejected').length
+    if (failedCount > 0) {
+        logger.error('document_store_rejected_upload_cleanup_failed', { failedCount, totalCount: uploadPaths.length })
+        throw new InternalFlowiseError(StatusCodes.INTERNAL_SERVER_ERROR, 'Document store upload cleanup failed')
+    }
+}
+
+const recordVectorStoreMetric = async (status: FLOWISE_COUNTER_STATUS): Promise<void> => {
+    let failedCount = 0
+    try {
+        await Promise.resolve().then(() =>
+            getRunningExpressApp().metricsProvider?.incrementCounter(FLOWISE_METRIC_COUNTERS.VECTORSTORE_UPSERT, { status })
+        )
+    } catch {
+        failedCount = 1
+    }
+    if (failedCount > 0) {
+        try {
+            logger.error('document_store_vector_metric_failed', { failedCount, totalCount: 1, status })
+        } catch {
+            // Observability must never reverse or mask the document-store result.
+        }
+    }
+}
+
+const assertDocumentStoreUpsertPermission = async (req: Request, files: Express.Multer.File[], createNewDocStore = false) => {
+    const permitted =
+        hasDocumentStorePermission(req, 'documentStores:upsert-config') &&
+        (!createNewDocStore || hasDocumentStorePermission(req, 'documentStores:create'))
+    if (permitted) return
+    throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store operation is not authorized')
+}
 
 const createDocumentStore = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -36,7 +91,7 @@ const createDocumentStore = async (req: Request, res: Response, next: NextFuncti
         const docStore = DocumentStoreDTO.toEntity(body)
         docStore.workspaceId = workspaceId
         const apiResponse = await documentStoreService.createDocumentStore(docStore, orgId)
-        return res.json(apiResponse)
+        return res.json(DocumentStoreDTO.fromEntity(apiResponse))
     } catch (error) {
         next(error)
     }
@@ -102,13 +157,15 @@ const deleteLoaderFromDocumentStore = async (req: Request, res: Response, next: 
                 `Error: documentStoreController.createDocumentStore - workspaceId not provided!`
             )
         }
+        const operationIdentity = getDocumentStoreOperationIdentity(req, storeId, workspaceId)
 
         const apiResponse = await documentStoreService.deleteLoaderFromDocumentStore(
             storeId,
             loaderId,
             orgId,
             workspaceId,
-            getRunningExpressApp().usageCacheManager
+            getRunningExpressApp().usageCacheManager,
+            operationIdentity
         )
         return res.json(DocumentStoreDTO.fromEntity(apiResponse))
     } catch (error) {
@@ -204,11 +261,13 @@ const deleteDocumentStoreFileChunk = async (req: Request, res: Response, next: N
                 `Error: documentStoreController.deleteDocumentStoreFileChunk - workspaceId not provided!`
             )
         }
+        const operationIdentity = getDocumentStoreOperationIdentity(req, req.params.storeId, workspaceId)
         const apiResponse = await documentStoreService.deleteDocumentStoreFileChunk(
             req.params.storeId,
             req.params.loaderId,
             req.params.chunkId,
-            workspaceId
+            workspaceId,
+            operationIdentity
         )
         return res.json(apiResponse)
     } catch (error) {
@@ -250,13 +309,15 @@ const editDocumentStoreFileChunk = async (req: Request, res: Response, next: Nex
                 `Error: documentStoreController.editDocumentStoreFileChunk - workspaceId not provided!`
             )
         }
+        const operationIdentity = getDocumentStoreOperationIdentity(req, req.params.storeId, workspaceId)
         const apiResponse = await documentStoreService.editDocumentStoreFileChunk(
             req.params.storeId,
             req.params.loaderId,
             req.params.chunkId,
             body.pageContent,
             body.metadata,
-            workspaceId
+            workspaceId,
+            operationIdentity
         )
         return res.json(apiResponse)
     } catch (error) {
@@ -281,7 +342,8 @@ const saveProcessingLoader = async (req: Request, res: Response, next: NextFunct
                 `Error: documentStoreController.saveProcessingLoader - workspaceId not provided!`
             )
         }
-        const apiResponse = await documentStoreService.saveProcessingLoader(appServer.AppDataSource, body, workspaceId)
+        const operationIdentity = getDocumentStoreOperationIdentity(req, body.storeId, workspaceId)
+        const apiResponse = await documentStoreService.saveProcessingLoader(appServer.AppDataSource, body, workspaceId, operationIdentity)
         return res.json(apiResponse)
     } catch (error) {
         next(error)
@@ -319,6 +381,7 @@ const processLoader = async (req: Request, res: Response, next: NextFunction) =>
         const subscriptionId = req.user?.activeOrganizationSubscriptionId || ''
         const docLoaderId = req.params.loaderId
         const body = req.body
+        const operationIdentity = getDocumentStoreOperationIdentity(req, body.storeId, workspaceId)
         const isInternalRequest = req.headers['x-request-from'] === 'internal'
         const apiResponse = await documentStoreService.processLoaderMiddleware(
             body,
@@ -327,7 +390,8 @@ const processLoader = async (req: Request, res: Response, next: NextFunction) =>
             workspaceId,
             subscriptionId,
             getRunningExpressApp().usageCacheManager,
-            isInternalRequest
+            isInternalRequest,
+            operationIdentity
         )
         return res.json(apiResponse)
     } catch (error) {
@@ -356,6 +420,11 @@ const updateDocumentStore = async (req: Request, res: Response, next: NextFuncti
                 `Error: documentStoreController.updateDocumentStore - workspaceId not provided!`
             )
         }
+        const operationIdentity = getDocumentStoreOperationIdentity(req, req.params.id, workspaceId)
+        const body = req.body
+        if (body.name === undefined && body.description === undefined) {
+            throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Document store metadata update is required')
+        }
         const store = await documentStoreService.getDocumentStoreById(req.params.id, workspaceId)
         if (!store) {
             throw new InternalFlowiseError(
@@ -363,17 +432,12 @@ const updateDocumentStore = async (req: Request, res: Response, next: NextFuncti
                 `Error: documentStoreController.updateDocumentStore - DocumentStore ${req.params.id} not found in the database`
             )
         }
-        const body = req.body
         const updateDocStore = new DocumentStore()
-        // Explicit allowlist — id/workspaceId/timestamps must not be overrideable by client
+        // Public update is metadata-only. Loader, usage, vector configuration,
+        // status and concurrency fields are owned by dedicated permissioned routes.
         if (body.name !== undefined) updateDocStore.name = body.name
         if (body.description !== undefined) updateDocStore.description = body.description
-        if (body.vectorStoreConfig !== undefined) updateDocStore.vectorStoreConfig = body.vectorStoreConfig
-        if (body.embeddingConfig !== undefined) updateDocStore.embeddingConfig = body.embeddingConfig
-        if (body.recordManagerConfig !== undefined) updateDocStore.recordManagerConfig = body.recordManagerConfig
-        if (body.loaders !== undefined) updateDocStore.loaders = body.loaders
-        if (body.whereUsed !== undefined) updateDocStore.whereUsed = body.whereUsed
-        const apiResponse = await documentStoreService.updateDocumentStore(store, updateDocStore)
+        const apiResponse = await documentStoreService.updateDocumentStore(store, updateDocStore, operationIdentity)
         return res.json(DocumentStoreDTO.fromEntity(apiResponse))
     } catch (error) {
         next(error)
@@ -402,11 +466,13 @@ const deleteDocumentStore = async (req: Request, res: Response, next: NextFuncti
                 `Error: documentStoreController.createDocumentStore - workspaceId not provided!`
             )
         }
+        const operationIdentity = getDocumentStoreOperationIdentity(req, req.params.id, workspaceId)
         const apiResponse = await documentStoreService.deleteDocumentStore(
             req.params.id,
             orgId,
             workspaceId,
-            getRunningExpressApp().usageCacheManager
+            getRunningExpressApp().usageCacheManager,
+            operationIdentity
         )
         return res.json(apiResponse)
     } catch (error) {
@@ -489,22 +555,20 @@ const insertIntoVectorStore = async (req: Request, res: Response, next: NextFunc
         const subscriptionId = req.user?.activeOrganizationSubscriptionId || ''
         const body = req.body
         const isStrictSave = body.isStrictSave ?? false
+        const operationIdentity = getDocumentStoreOperationIdentity(req, body.storeId, workspaceId)
         const apiResponse = await documentStoreService.insertIntoVectorStoreMiddleware(
             body,
             isStrictSave,
             orgId,
             workspaceId,
             subscriptionId,
-            getRunningExpressApp().usageCacheManager
+            getRunningExpressApp().usageCacheManager,
+            operationIdentity
         )
-        getRunningExpressApp().metricsProvider?.incrementCounter(FLOWISE_METRIC_COUNTERS.VECTORSTORE_UPSERT, {
-            status: FLOWISE_COUNTER_STATUS.SUCCESS
-        })
-        return res.json(DocumentStoreDTO.fromEntity(apiResponse))
+        await recordVectorStoreMetric(FLOWISE_COUNTER_STATUS.SUCCESS)
+        return res.json(apiResponse)
     } catch (error) {
-        getRunningExpressApp().metricsProvider?.incrementCounter(FLOWISE_METRIC_COUNTERS.VECTORSTORE_UPSERT, {
-            status: FLOWISE_COUNTER_STATUS.FAILURE
-        })
+        await recordVectorStoreMetric(FLOWISE_COUNTER_STATUS.FAILURE)
         next(error)
     }
 }
@@ -514,8 +578,12 @@ const queryVectorStore = async (req: Request, res: Response, next: NextFunction)
         if (typeof req.body === 'undefined') {
             throw new Error('Error: documentStoreController.queryVectorStore - body not provided!')
         }
+        const workspaceId = req.user?.activeWorkspaceId
+        if (!workspaceId) {
+            throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store query is not authorized')
+        }
         const body = req.body
-        const apiResponse = await documentStoreService.queryVectorStore(body)
+        const apiResponse = await documentStoreService.queryVectorStore(body, workspaceId)
         return res.json(apiResponse)
     } catch (error) {
         next(error)
@@ -537,10 +605,12 @@ const deleteVectorStoreFromStore = async (req: Request, res: Response, next: Nex
                 `Error: documentStoreController.deleteVectorStoreFromStore - workspaceId not provided!`
             )
         }
+        const operationIdentity = getDocumentStoreOperationIdentity(req, req.params.storeId, workspaceId)
         const apiResponse = await documentStoreService.deleteVectorStoreFromStore(
             req.params.storeId,
             workspaceId,
-            (req.query.docId as string) || undefined
+            (req.query.docId as string) || undefined,
+            operationIdentity
         )
         return res.json(apiResponse)
     } catch (error) {
@@ -562,8 +632,16 @@ const saveVectorStoreConfig = async (req: Request, res: Response, next: NextFunc
                 `Error: documentStoreController.saveVectorStoreConfig - workspaceId not provided!`
             )
         }
-        const apiResponse = await documentStoreService.saveVectorStoreConfig(appDataSource, body, true, workspaceId)
-        return res.json(apiResponse)
+        const operationIdentity = getDocumentStoreOperationIdentity(req, body.storeId, workspaceId)
+        const apiResponse = await documentStoreService.saveVectorStoreConfig(
+            appDataSource,
+            body,
+            true,
+            workspaceId,
+            false,
+            operationIdentity
+        )
+        return res.json(DocumentStoreDTO.fromEntity(apiResponse))
     } catch (error) {
         next(error)
     }
@@ -582,8 +660,9 @@ const updateVectorStoreConfigOnly = async (req: Request, res: Response, next: Ne
                 `Error: documentStoreController.updateVectorStoreConfigOnly - workspaceId not provided!`
             )
         }
-        const apiResponse = await documentStoreService.updateVectorStoreConfigOnly(body, workspaceId)
-        return res.json(apiResponse)
+        const operationIdentity = getDocumentStoreOperationIdentity(req, body.storeId, workspaceId)
+        const apiResponse = await documentStoreService.updateVectorStoreConfigOnly(body, workspaceId, operationIdentity)
+        return res.json(DocumentStoreDTO.fromEntity(apiResponse))
     } catch (error) {
         next(error)
     }
@@ -617,7 +696,11 @@ const getRecordManagerProviders = async (req: Request, res: Response, next: Next
 }
 
 const upsertDocStoreMiddleware = async (req: Request, res: Response, next: NextFunction) => {
+    const files = (req.files as Express.Multer.File[]) || []
+    let cleanupDelegatedToService = false
     try {
+        const createNewDocStore = req.body?.createNewDocStore === true || req.body?.createNewDocStore === 'true'
+        await assertDocumentStoreUpsertPermission(req, files, createNewDocStore)
         if (typeof req.params.id === 'undefined' || req.params.id === '') {
             throw new InternalFlowiseError(
                 StatusCodes.PRECONDITION_FAILED,
@@ -643,7 +726,8 @@ const upsertDocStoreMiddleware = async (req: Request, res: Response, next: NextF
         }
         const subscriptionId = req.user?.activeOrganizationSubscriptionId || ''
         const body = req.body
-        const files = (req.files as Express.Multer.File[]) || []
+        const operationIdentity = createNewDocStore ? undefined : getDocumentStoreOperationIdentity(req, req.params.id, workspaceId)
+        cleanupDelegatedToService = true
         const apiResponse = await documentStoreService.upsertDocStoreMiddleware(
             req.params.id,
             body,
@@ -651,22 +735,28 @@ const upsertDocStoreMiddleware = async (req: Request, res: Response, next: NextF
             orgId,
             workspaceId,
             subscriptionId,
-            getRunningExpressApp().usageCacheManager
+            getRunningExpressApp().usageCacheManager,
+            operationIdentity
         )
-        getRunningExpressApp().metricsProvider?.incrementCounter(FLOWISE_METRIC_COUNTERS.VECTORSTORE_UPSERT, {
-            status: FLOWISE_COUNTER_STATUS.SUCCESS
-        })
+        await recordVectorStoreMetric(FLOWISE_COUNTER_STATUS.SUCCESS)
         return res.json(apiResponse)
     } catch (error) {
-        getRunningExpressApp().metricsProvider?.incrementCounter(FLOWISE_METRIC_COUNTERS.VECTORSTORE_UPSERT, {
-            status: FLOWISE_COUNTER_STATUS.FAILURE
-        })
-        next(error)
+        let responseError = error
+        if (!cleanupDelegatedToService) {
+            try {
+                await cleanupRejectedDocumentStoreUploads(files)
+            } catch (cleanupError) {
+                responseError = cleanupError
+            }
+        }
+        await recordVectorStoreMetric(FLOWISE_COUNTER_STATUS.FAILURE)
+        next(responseError)
     }
 }
 
 const refreshDocStoreMiddleware = async (req: Request, res: Response, next: NextFunction) => {
     try {
+        await assertDocumentStoreUpsertPermission(req, [])
         if (typeof req.params.id === 'undefined' || req.params.id === '') {
             throw new InternalFlowiseError(
                 StatusCodes.PRECONDITION_FAILED,
@@ -689,28 +779,29 @@ const refreshDocStoreMiddleware = async (req: Request, res: Response, next: Next
         }
         const subscriptionId = req.user?.activeOrganizationSubscriptionId || ''
         const body = req.body
+        const operationIdentity = getDocumentStoreOperationIdentity(req, req.params.id, workspaceId)
         const apiResponse = await documentStoreService.refreshDocStoreMiddleware(
             req.params.id,
             body,
             orgId,
             workspaceId,
             subscriptionId,
-            getRunningExpressApp().usageCacheManager
+            getRunningExpressApp().usageCacheManager,
+            operationIdentity
         )
-        getRunningExpressApp().metricsProvider?.incrementCounter(FLOWISE_METRIC_COUNTERS.VECTORSTORE_UPSERT, {
-            status: FLOWISE_COUNTER_STATUS.SUCCESS
-        })
+        await recordVectorStoreMetric(FLOWISE_COUNTER_STATUS.SUCCESS)
         return res.json(apiResponse)
     } catch (error) {
-        getRunningExpressApp().metricsProvider?.incrementCounter(FLOWISE_METRIC_COUNTERS.VECTORSTORE_UPSERT, {
-            status: FLOWISE_COUNTER_STATUS.FAILURE
-        })
+        await recordVectorStoreMetric(FLOWISE_COUNTER_STATUS.FAILURE)
         next(error)
     }
 }
 
 const generateDocStoreToolDesc = async (req: Request, res: Response, next: NextFunction) => {
     try {
+        if (!hasDocumentStorePermission(req, 'documentStores:upsert-config')) {
+            throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store operation is not authorized')
+        }
         if (typeof req.params.id === 'undefined' || req.params.id === '') {
             throw new InternalFlowiseError(
                 StatusCodes.PRECONDITION_FAILED,
@@ -720,7 +811,11 @@ const generateDocStoreToolDesc = async (req: Request, res: Response, next: NextF
         if (typeof req.body === 'undefined') {
             throw new Error('Error: documentStoreController.generateDocStoreToolDesc - body not provided!')
         }
-        const apiResponse = await documentStoreService.generateDocStoreToolDesc(req.params.id, req.body.selectedChatModel)
+        const workspaceId = req.user?.activeWorkspaceId
+        if (!workspaceId) {
+            throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store tool description generation is not authorized')
+        }
+        const apiResponse = await documentStoreService.generateDocStoreToolDesc(req.params.id, req.body.selectedChatModel, workspaceId)
         return res.json(apiResponse)
     } catch (error) {
         next(error)
@@ -741,7 +836,9 @@ const getDocStoreConfigs = async (req: Request, res: Response, next: NextFunctio
                 `Error: documentStoreController.getDocStoreConfigs - doc loader Id not provided!`
             )
         }
-        const apiResponse = await documentStoreService.findDocStoreAvailableConfigs(req.params.id, req.params.loaderId)
+        const workspaceId = req.user?.activeWorkspaceId
+        if (!workspaceId) throw new InternalFlowiseError(StatusCodes.FORBIDDEN, 'Document store operation is not authorized')
+        const apiResponse = await documentStoreService.findDocStoreAvailableConfigs(req.params.id, req.params.loaderId, workspaceId)
         return res.json(apiResponse)
     } catch (error) {
         next(error)

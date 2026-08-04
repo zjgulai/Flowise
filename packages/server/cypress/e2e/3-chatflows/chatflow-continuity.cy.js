@@ -26,6 +26,8 @@ describe('authenticated Chatflow continuity', () => {
         expect(flowData.nodes).to.have.length(1)
         expect(flowData.nodes[0].type).to.eq('stickyNote')
         expect(flowData.nodes[0].data.name).to.eq('stickyNote')
+        expect(flowData.nodes[0].data.inputParams[0].placeholder).to.eq('Type something here')
+        expect(flowData.nodes[0].data.inputParams[0].displayPlaceholder).to.eq(undefined)
         expect(flowData.nodes[0].data.inputs.note).to.eq(noteText)
     }
 
@@ -66,10 +68,10 @@ describe('authenticated Chatflow continuity', () => {
             })
 
     const createChatflowThroughUi = (expectedName) => {
-        cy.get('button[title="Save Chatflow"]').click()
+        cy.get('button[title="保存对话流程"]').click()
         cy.get('#chatflow-name').type(expectedName)
         cy.get('[role="dialog"]').contains('button', '保存').click()
-        cy.contains('Chatflow saved', { timeout: 30_000 }).should('be.visible')
+        cy.contains('对话流程已保存', { timeout: 30_000 }).should('be.visible')
 
         return getCurrentChatflowId().then((id) => {
             createdChatflowIds.push(id)
@@ -94,7 +96,7 @@ describe('authenticated Chatflow continuity', () => {
         cy.contains(expectedName).should('be.visible').click()
         cy.location('pathname', { timeout: 30_000 }).should('eq', `/canvas/${id}`)
         cy.get('.react-flow__node-stickyNote').should('have.length', 1)
-        cy.get('[placeholder="Type something here"]').should('have.value', noteText)
+        cy.get('[placeholder="在此输入内容"]').should('have.value', noteText)
         return readStoredChatflow(id, expectedName)
     }
 
@@ -110,7 +112,7 @@ describe('authenticated Chatflow continuity', () => {
         cy.contains('button', '新增流程').click()
         cy.location('pathname', { timeout: 30_000 }).should('eq', '/canvas')
         cy.get('.react-flow__node-stickyNote').should('have.length', 1)
-        cy.get('[placeholder="Type something here"]').should('have.value', noteText)
+        cy.get('[placeholder="在此输入内容"]').should('have.value', noteText)
         return createChatflowThroughUi(copyName).then((copyId) => {
             expect(copyId).not.to.eq(originalId)
             return copyId
@@ -125,7 +127,7 @@ describe('authenticated Chatflow continuity', () => {
         cy.get('[role="dialog"]')
             .should('be.visible')
             .within(() => {
-                cy.contains('button', 'Delete').click()
+                cy.contains('button', '删除').click()
             })
         cy.location('pathname', { timeout: 30_000 }).should('eq', '/')
         return confirmChatflowDeleted(id)
@@ -183,9 +185,9 @@ describe('authenticated Chatflow continuity', () => {
         cy.visit('/canvas')
         cy.get('button[title="添加节点"]').click()
         cy.get('[id^="nodes-accordian-header-"]').should('exist')
-        cy.contains('[role="tab"]', 'Utilities').click().should('have.attr', 'aria-selected', 'true')
+        cy.contains('[role="tab"]', '工具').click().should('have.attr', 'aria-selected', 'true')
         cy.get('#input-search-node').type('Sticky Note')
-        cy.contains('span', 'Sticky Note')
+        cy.contains('span', '便签')
             .parents('[draggable="true"]')
             .first()
             .should('be.visible')
@@ -198,7 +200,7 @@ describe('authenticated Chatflow continuity', () => {
             })
 
         cy.get('.react-flow__node-stickyNote').should('have.length', 1)
-        cy.get('[placeholder="Type something here"]').clear().type(noteText)
+        cy.get('[placeholder="在此输入内容"]').clear().type(noteText)
 
         let originalId
         let copyId

@@ -22,7 +22,8 @@ import {
 } from '@mui/material'
 import { IconBook2, IconInfoCircle } from '@tabler/icons-react'
 
-import type { NodeConfigEntry, NodeData, NodeDataSchema } from '@/core/types'
+import type { InputParam, NodeConfigEntry, NodeData, NodeDataSchema } from '@/core/types'
+import { getMetadataDisplayText, resolveInstanceDisplayLabel } from '@/core/utils'
 import { useApiContext } from '@/infrastructure/store'
 
 import { renderNodeIcon } from '../nodeIcons'
@@ -64,13 +65,13 @@ function SchemaTooltipContent({ schema }: { schema: NodeConfigEntry['schema'] })
     } else if (typeof schema === 'object') {
         content = JSON.stringify(schema, null, 2)
     } else {
-        content = 'No schema available'
+        content = '暂无可用 Schema'
     }
 
     return (
         <Box>
             <Typography variant='caption' fontWeight={600}>
-                Schema:
+                Schema：
             </Typography>
             <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', fontSize: '0.75rem' }}>{content}</pre>
         </Box>
@@ -123,7 +124,9 @@ function NodeInfoDialogComponent({ open, onClose, data }: NodeInfoDialogProps) {
     const badge = data.badge ?? componentDef?.badge
     const tags = data.tags ?? componentDef?.tags
     const documentation = data.documentation ?? componentDef?.documentation
-    const description = data.description ?? componentDef?.description
+    const description = getMetadataDisplayText(componentDef, 'description', data.description ?? componentDef?.description)
+    const displayLabel = resolveInstanceDisplayLabel(data, componentDef ?? undefined)
+    const displayBadge = getMetadataDisplayText(componentDef, 'badge', badge)
 
     return (
         <Dialog onClose={onClose} open={open} fullWidth maxWidth='md' aria-labelledby='node-info-dialog-title'>
@@ -179,14 +182,14 @@ function NodeInfoDialogComponent({ open, onClose, data }: NodeInfoDialogProps) {
                         {/* Label and badges */}
                         <Box sx={{ display: 'flex', flexDirection: 'column', ml: 1.25 }}>
                             <Typography variant='subtitle1' fontWeight={600}>
-                                {data.label}
+                                {displayLabel}
                             </Typography>
                             <Box sx={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 1 }}>
                                 <InfoBadge label={data.id} bgColor='rgb(254,252,191)' textColor='rgb(116,66,16)' />
-                                {version != null && <InfoBadge label={`version ${version}`} bgColor='#e9edc9' textColor='#606c38' />}
+                                {version != null && <InfoBadge label={`版本 ${version}`} bgColor='#e9edc9' textColor='#606c38' />}
                                 {badge && (
                                     <InfoBadge
-                                        label={badge}
+                                        label={displayBadge}
                                         bgColor={badge === 'DEPRECATING' ? '#ffe57f' : '#52b69a'}
                                         textColor={badge === 'DEPRECATING' ? 'inherit' : 'white'}
                                     />
@@ -205,11 +208,11 @@ function NodeInfoDialogComponent({ open, onClose, data }: NodeInfoDialogProps) {
                             <Button
                                 variant='outlined'
                                 color='primary'
-                                title='Open Documentation'
+                                title='打开文档'
                                 onClick={() => window.open(documentation, '_blank', 'noopener,noreferrer')}
                                 startIcon={<IconBook2 />}
                             >
-                                Documentation
+                                文档
                             </Button>
                         )}
                     </Box>
@@ -221,16 +224,34 @@ function NodeInfoDialogComponent({ open, onClose, data }: NodeInfoDialogProps) {
                         <Typography variant='body2'>{description}</Typography>
                     </Box>
                 )}
-                {nodeConfig.length > 0 && <NodeConfigTable config={nodeConfig} />}
+                {nodeConfig.length > 0 && <NodeConfigTable config={nodeConfig} componentDef={componentDef} />}
             </DialogContent>
         </Dialog>
     )
 }
 
 /** Table displaying the node configuration (parameters, types, overrides) */
-function NodeConfigTable({ config }: { config: NodeConfigEntry[] }) {
+function findInputParamExact(inputs: InputParam[] | undefined, name: string): InputParam | undefined {
+    for (const input of inputs ?? []) {
+        if (input.name === name) return input
+        const nested = findInputParamExact(input.array, name)
+        if (nested) return nested
+    }
+    return undefined
+}
+
+function findInputParam(inputs: InputParam[] | undefined, name: string): InputParam | undefined {
+    return (
+        findInputParamExact(inputs, name) ??
+        (name.endsWith('Config') ? findInputParamExact(inputs, name.slice(0, -'Config'.length)) : undefined)
+    )
+}
+
+function NodeConfigTable({ config, componentDef }: { config: NodeConfigEntry[]; componentDef: NodeDataSchema | null }) {
     // Determine columns from the first entry, excluding 'node' and 'nodeId'
-    const allKeys = Object.keys(config[0]).filter((k) => k !== 'node' && k !== 'nodeId' && k !== 'id' && k !== 'schema')
+    const allKeys = Object.keys(config[0]).filter(
+        (k) => k !== 'node' && k !== 'nodeId' && k !== 'id' && k !== 'schema' && k !== 'displayLabel'
+    )
     // Typically: label, name, type, enabled
 
     return (
@@ -242,16 +263,22 @@ function NodeConfigTable({ config }: { config: NodeConfigEntry[] }) {
                             <TableCell key={col}>
                                 {col === 'enabled' ? (
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                        Override
+                                        允许覆盖
                                         <Tooltip
-                                            title='If enabled, this variable can be overridden in API calls and embeds. If disabled, any overrides will be ignored. To change this, go to Security settings in Chatflow Configuration.'
+                                            title='启用后，可在 API 调用和嵌入组件中覆盖此变量；禁用后将忽略所有覆盖值。如需修改，请前往对话流程配置中的安全设置。'
                                             arrow
                                         >
                                             <IconInfoCircle size={16} style={{ cursor: 'help', opacity: 0.6 }} />
                                         </Tooltip>
                                     </Box>
+                                ) : col === 'label' ? (
+                                    '参数'
+                                ) : col === 'name' ? (
+                                    '名称'
+                                ) : col === 'type' ? (
+                                    '类型'
                                 ) : (
-                                    col.charAt(0).toUpperCase() + col.slice(1)
+                                    col
                                 )}
                             </TableCell>
                         ))}
@@ -261,7 +288,7 @@ function NodeConfigTable({ config }: { config: NodeConfigEntry[] }) {
                     {config.map((row, rowIndex) => (
                         <TableRow key={rowIndex} sx={{ '&:last-child td, &:last-child th': { border: 0 } }}>
                             {allKeys.map((key) => (
-                                <TableCell key={key}>{renderConfigCell(key, row)}</TableCell>
+                                <TableCell key={key}>{renderConfigCell(key, row, componentDef)}</TableCell>
                             ))}
                         </TableRow>
                     ))}
@@ -272,13 +299,20 @@ function NodeConfigTable({ config }: { config: NodeConfigEntry[] }) {
 }
 
 /** Render a single cell in the config table */
-function renderConfigCell(key: string, row: NodeConfigEntry) {
+function renderConfigCell(key: string, row: NodeConfigEntry, componentDef: NodeDataSchema | null) {
     const value = row[key as keyof NodeConfigEntry]
 
     if (value === null || value === undefined) return ''
 
     if (key === 'enabled') {
-        return value ? <Chip label='Enabled' color='primary' size='small' /> : <Chip label='Disabled' size='small' />
+        return value ? <Chip label='已启用' color='primary' size='small' /> : <Chip label='未启用' size='small' />
+    }
+
+    if (key === 'label' && typeof row.name === 'string') {
+        const input = findInputParam(componentDef?.inputs, row.name)
+        return typeof row.displayLabel === 'string' && row.displayLabel
+            ? row.displayLabel
+            : getMetadataDisplayText(input, 'label', String(value))
     }
 
     if (key === 'type' && row.schema) {
