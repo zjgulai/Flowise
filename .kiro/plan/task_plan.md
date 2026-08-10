@@ -499,6 +499,8 @@ Wave 1C 交付结论：现有 isolated Cypress runner 已补齐 public UI/API �
 -   [x] W1D-B：先提交 mutation fixtures/tests，覆盖新增债务、等量替换、拆字符串/template、aria/placeholder/toast/dialog、危险机器字段、baseline digest 漂移、缺失/空 baseline 与未知分类 fail-closed；取得实现缺失 RED。
 -   [x] W1D-C：实现 dependency-stable AST scanner、canonical baseline/receipt 与 explicit update/check 模式；删除债务必须显式收紧，新增/变更必须带 allowlisted reason，禁止自动创建与固定 ceiling 假绿。
 -   [x] W1D-D：生成并人工抽查 current baseline，运行合同 tests、现有 built metadata fingerprint/validator、UI focused tests、Prettier/ESLint/diff/secret-safe 与纯 Node 回归；未批量修改 UI 产品文案。
--   [~] W1D-E：scanner/baseline/receipt 原子提交=`7919554511f853728f19da1fa5164c852dd559f6`；正在完成 docs commit、CodeGraph sync、target clean、原 dirty worktree preservation 与下一门禁收口。
+-   [x] W1D-E：scanner/baseline/receipt commit=`7919554511f853728f19da1fa5164c852dd559f6`、docs commit=`313621ed0f564cdd59a5936a57180b117fb8e9ff`；CodeGraph up to date，目标 clean checkpoint 与原 dirty worktree preservation 已验证。
+
+Wave 1D 交付结论：全树 UI 静态文案 debt baseline/ratchet 已完成，current receipt=`exact`；本批只形成 L2 静态/fixture 证据，未翻译产品文案、未修改 metadata canonical validator、未触发任何外部或生产副作用。Wave 1 本地 deferred contracts 至此全部闭环。下一推荐门禁为 Wave 2A exact-head 远端 CI 候选门禁，必须由 Owner 单独批准，且授权只覆盖 push/CI，不包含 merge、registry、Docker 或生产。
 
 停止规则：若 AST 入口无法区分用户文案与机器字段、baseline 需要保存 secret/用户数据、或变更会自动重写 UI/metadata/生产资源，则停止并记录 blocker，不以 regex 条数或 `|| true` 降级门禁。

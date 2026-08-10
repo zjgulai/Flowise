@@ -355,3 +355,5 @@ last_updated: 2026-08-10
 -   built metadata validator 首次正确拒绝 stale local dist；执行 canonical components rebuild 后 fingerprint=`2/2`、311 nodes、91 dynamic methods、unknown=`0`，没有修改 metadata validator 或 catalog。
 -   实现 7-path atomic commit=`7919554511f853728f19da1fa5164c852dd559f6`，pre-commit pretty-quick/lint-staged/ESLint 通过；post-commit UI-copy tests=`9/9` 与 baseline receipt=`exact`。运维说明和四份状态文档仍作为独立 docs concern 待提交。
 -   CodeGraph sync GREEN：识别 3 个 changed code files，added 3／86 nodes；终态 index=`2212 files / 30602 nodes / 67564 edges`、up to date。该索引仅为本地结构证据，不代表远端 CI 或发布。
+-   运维说明与四份状态文档 atomic commit=`313621ed0f564cdd59a5936a57180b117fb8e9ff`；提交钩子通过。该提交后目标 branch=`codex/flowise-main-convergence-20260810`、status clean、ahead `origin/main` 15 commits，仍未 push。
+-   原 dirty worktree preservation：`/Users/pray/project/FlowAgentic/flowise` HEAD 保持 `4d56ffd3f9cd1e7aa9eebf63045758069b04c608`、staged=`0`、既有 dirty entries=`15`；未 stash/reset/clean/stage。Wave 1D 本地门禁完成，下一推荐为另行授权的 Wave 2A exact-head push/remote CI only。
