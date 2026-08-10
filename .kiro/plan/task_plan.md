@@ -417,3 +417,25 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   [~] 生成新的精确 temp-index 候选、路径清单与二进制 patch 哈希，执行秘密／生成物／symlink 检查和冻结后双审；旧 G1-J 全量结果和 `48573043` 远端证据不能替代。
 -   [ ] 仅在新候选代码／安全双审 GO、路径与二进制 patch 哈希复算一致、真实索引仍为空后，才允许精确原子提交和 non-force push；不授权 merge、镜像发布或部署。
 -   [!] `workspace:import` 明确是可引入流程、模板和 Custom Tool 代码的高信任能力，只授予受控管理员；production promotion 继续受 durable outbox、公开 BOLA／multipart、API Key、TLS、历史 Provider 凭据、main readiness、备份恢复、密钥连续性和部署验收阻断。
+
+## Wave 0 / D0 主线收敛（2026-08-10，Owner 已批准）
+
+目标：以已合并 PR #14 的 exact `origin/main=96f6ae464f7f4757883a5ba6bec26ca951b4da4d` 为唯一代码基线，对旧发布基础分支的 8 个独有提交和 OpenCode dirty assets 做逐项收敛；仅形成 local main convergence commits，不继承旧 SHA 的 release/production 结论。
+
+授权边界：允许本地文档、源码、测试、格式/构建前置检查和原子 commit；禁止 push/merge/PR、Docker、生产、Provider/SMTP、restore、GitHub/Docker Hub 写入。
+
+-   [x] D0-A/B：冻结原 dirty worktree，创建本 worktree/branch；HEAD exact、初始 status clean，原工作树未 stash/reset/clean/stage。
+-   [x] D0-C：完成 active-only commits 与 dirty/untracked assets 的 forward-port ledger，纠正已合并但计划未同步的 G1 状态。
+-   [x] D0-D1：低风险 compatibility cleanup——在 main 版本上重实现 AboutDialog 无外联、CSV Agent 归档、Python cache ignore，并运行 focused tests。
+-   [x] D0-D2：RBAC L1 测试——适配主线并明确证据只覆盖 PermissionCheck；不冒充真实 route/member L4。
+-   [x] D0-D3：CSP/monitor/Playwright/observability/i18n——只先冻结 RED 合同和分流决定，不复制已知 fail-open/无输入/重复门禁实现。
+-   [x] D0-E：按 concern explicit stage、focused verification、secret-safe/diff/format gate，形成原子 local commits。
+-   [x] D0-F：CodeGraph/status/commit graph 与原 dirty preservation 收口；列出未前移项和下一门禁。
+
+### D0 终态与下一门禁
+
+-   D0 终态：5 个 concern-scoped local commits，目标 worktree/index clean，未 push/merge/PR/deploy。
+-   未前移：CSP/staleness/observability/public browser/UI i18n 只有 RED 合同；RBAC 只有 L1 middleware 合同；真实 route/member L4、release candidate、生产与 restore 均未执行。
+-   下一推荐门禁：Wave 1A local-only——先为 release staleness/observability schema 和 macOS `sha256sum` portability 建 RED fixtures 与最小修复；继续不接生产 monitor、不触碰 Docker。
+
+停止规则：发现需要外部 secret、Provider、Docker、生产、restore、push/merge/PR，或变更会扩大到 durable outbox/public API 等 Wave 1/2 范围时立即分流，不以 D0 授权替代后续门禁。

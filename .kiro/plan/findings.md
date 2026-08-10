@@ -325,3 +325,21 @@ last_updated: 2026-08-03
 -   Provider 分页对象的 `data` 缺失或类型错误不是“空结果”。若把畸形页降级为 `[]`，已成功更新的 Vector Store 会被误报为没有关联文件，Assistant 详情也会掩盖 Provider 合同漂移。列表和详情路径必须统一固定失败，并在任何后续文件 retrieve 前停止。
 -   `workspace:import` 会创建未部署 Flow、Template 和 Custom Tool 可执行代码，因此它是高信任内容引入能力，不应被误解为普通文件上传权限。凭据 scrub 关闭了 credential 使用链，但权限授予仍需管理员治理和代码审查。
 -   本批没有关闭全局 parser、公开 multipart、公开 flow/file/feedback/leads BOLA、API Key 明文／URL、Redis／SMTP／用户节点 TLS、durable outbox 或历史 Provider 凭据事件；这些是独立 production blockers，专项绿测不能替代。
+
+# 2026-08-10 Wave 0 / D0 主线收敛发现
+
+-   本 worktree 从 exact `origin/main=96f6ae46...` 创建且初始 clean；旧 `flowise` worktree 继续保留 HEAD=`4d56ffd3...` 的 8 个 active-only commits 和全部 ambient dirty/untracked 文件，未 stash/reset/clean/stage。
+-   8 个 commits 中只有 AboutDialog、CSV Agent compatibility 与 RBAC H3 设计直接携带下一主线价值；其余主要是旧 SHA 的计划、candidate/production evidence、历史归档和替代 Dockerfile，不能继承为 main release evidence，也不应 wholesale cherry-pick。
+-   main 已有 built metadata localization validator 和 Cypress authenticated E2E；OpenCode regex i18n 与弱 Playwright public-route 草案不能直接作为缺口答案，需先定义互补 RED 合同。
+-   main 仍包含 `CSV Agent.json`，但 runtime `csvAgent` node 已不存在，且已有 marketplace compatibility test 预期缺失 runtime node 的模板不返回。归档/删除方向成立，但现有测试在模板被删后可能成为 vacuous pass，需要增强存在性/归档合同。
+-   main 未包含 OpenCode RBAC/CSP/staleness/i18n/Playwright/observability 资产；旧实现已确认 CSP 空输入 fail-open、staleness 无持久输入、Playwright 配置冲突、observability 指标/鉴权错误，因此这些文件不得直接复制。
+-   AboutDialog main 版本已有 loading/error/empty/ready、唯一 aria IDs、URL 校验与 5 个 focused tests；正确前移是删除 GitHub request/latest-release/date/link 列，只保留同源 current version，并把现有测试改为断言唯一同源请求和完整状态机，不能换回旧分支的空 catch/固定 aria ID。
+-   现有 marketplace 测试用“排除 csvAgent 后 CSV 不返回”验证 missing-node filtering；模板归档后该断言会 vacuous pass。Group 2 将拆成两个合同：一个动态选取仍在 active 目录的模板并删掉一个 mock runtime node，另一个显式证明 CSV 只存在 archived 子目录且包含已退出的 `csvAgent`。
+-   Marketplace focused Jest 首轮没有运行断言，而是在 import service 时暴露 main 源码既有 TS2339：`IReactFlowNode.data` 的类型缺 `category/name`。必须用未修改 main/g1 对照或 direct Jest 正确参数确认基线；若为基线缺陷，只允许在 Group 2 另开最小 type-contract 修复，不能用 transpile-only 绕过。
+-   基线对照后 TS2339 根因收敛为 fresh workspace build order：server 的 `INodeDataFromComponent` 从 workspace package dist 解析，source 已含 name/category，但 frozen install 不构建 dist；已有 G1 worktree 的 built dist 使同 suite 2/2 通过。正确恢复是先 build `flowise-components`，不是修改 runtime service 或禁用 ts-jest diagnostics。
+-   OpenCode RBAC 文件的可继承价值是 `PermissionCheck` / `checkAnyPermission` 的 22 项 L1 负向与正向对照合同；它不经过真实路由、session、workspace membership、数据库副作用或清理器，不能证明受限 member 的 L4 越权防护。
+-   旧 H3 设计把执行依赖写成“等待 X0-E8-7 Docker Hub push”，该条件绑定旧候选且已过时。当前正确阻断是：current main 独立发布/L4 部署、Owner 明确授权 run-scoped member、non-personal acceptance workspace，以及双 reaper 的持久化 pre/post receipt。
+-   OpenCode deferred 草案不能以“新文件”判断是否补齐能力：main 已有 CSP 结构化模式/receiver、immutable release receipts、隔离 Cypress 和 built metadata validator。真正缺口是把观察输入、current SHA、窗口、receiver/coverage、低基数 telemetry、no-data 语义和持久 receipt 绑定成 fail-closed contract。
+-   Prometheus 当前导出的 histogram 基名是 `http_request_duration_ms`，PromQL series 因而是 `http_request_duration_ms_bucket`；旧 observability 文档使用的无 `_ms` 名称错误。`/api/v1/metrics` 注册在通用鉴权 middleware 之后，后续应先冻结 private listener 与 protected scrape 二选一 ADR，不能简单加入 public whitelist。
+-   `scripts/publish-verified-image.sh` 直接调用 GNU `sha256sum`，macOS 基线只有 `/usr/bin/shasum`，导致 publisher 合同 4 项在测试 fixture 的成功路径失败；临时兼容 wrapper 可使 77/77 全绿，证明根因是工具可移植性而非 manifest/publisher 逻辑，但正式修复仍需单独原子 concern。
+-   `verify-security.sh` 将纯静态检查和 Docker Compose render 合并为同一终态；在明确 Docker no-touch 的门禁中只能报告 340 个静态 PASS 与 1 个未执行的 Compose blocker，不能用跳过或伪造 binary 把它包装成 341/341。
