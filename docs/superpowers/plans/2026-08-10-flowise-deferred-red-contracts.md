@@ -2,7 +2,7 @@
 
 日期：2026-08-10
 
-状态：`wave_1b_local_csp_contract_implemented_external_observation_deferred`
+状态：`wave_1c_local_public_browser_implemented_external_release_validation_deferred`
 
 证据等级：L1/L2 设计合同；不构成发布或生产证据
 
@@ -181,3 +181,31 @@ Docker/registry、真实 candidate、生产部署/回滚或 restore 验证已经
 coverage 完成、真实 CSP violation 为零或 enforcement 可以晋级。本轮没有启动 AUT/浏览器、读取真实日志、
 修改 CSP runtime/env、写 candidate evidence、运行 Docker/远端 CI 或访问生产。下一推荐门禁为 Wave 1C
 public browser gap analysis：先对照现有 authenticated Cypress 能力，只在确有公开路由缺口时扩展 local runner。
+
+## 11. Wave 1C Public Browser 本地运行回执（2026-08-10）
+
+### 11.1 已交付
+
+-   在既有 `local-authenticated-e2e.mjs` approved specs 中加入 public route spec；没有新增 Playwright runner。
+-   `public-routes.cy.js` 覆盖 `/signin`、`/register`、`/forgot-password`、ping 与 auth resolve GET/POST，
+    同时约束移动端 overflow、console error/warning、external HTTP(S) 和 exact loopback identity。
+-   runner/config 回执新增 exact Git SHA、Node 24、base URL、run ID、browser/version、spec/test/failure/artifact
+    与 cleanup 绑定；未知 provenance fail-closed，不输出 artifact path 或环境值。
+
+### 11.2 验证证据
+
+-   local commits：`7ea9bbf6`（public spec/runner contract）、`3833edff`（Cypress browser provenance）。
+-   RED=`26/28`；GREEN runner unit=`30/30`、production UI route contract=`39/39`、纯 Node
+    release/monitor/CSP=`111/111`，UI/server current candidate build、Prettier、ESLint 与 diff-check 通过。
+-   final local browser：candidate=`3833edff813c2a845b1d6be5a2914487e4353e2f`、
+    run=`f999bc59-4c6c-467c-9222-ce5ba43fb99f`、Node=`24.18.0`、Chrome=`151.0.7922.77`、
+    specs=`1`、tests=`4`、failures=`0`、artifacts=`0`、cleanup=`complete`。
+-   CodeGraph 已增量同步 5 个 changed code files（added 2 / modified 3，89 nodes）。
+
+### 11.3 证据边界与下一门禁
+
+该回执只有 local isolated runtime 证据；fresh SQLite 的 auth resolve POST `/organization-setup` 不替代
+已初始化生产实例 `/signin`，本地 mutable build 也不替代远端 CI、不可变镜像、Firefox 或生产浏览器验收。
+本轮没有提交登录/重置表单、创建账号、发送 SMTP、调用 Provider、触碰 Docker/生产或执行 push/merge/PR。
+下一推荐门禁为 Wave 1D UI 文案 baseline ratchet；必须保持 built metadata validator 为 canonical 合同，
+并由 Owner 单独批准。

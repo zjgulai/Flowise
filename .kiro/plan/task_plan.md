@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改与生产验收执行计划
 date: 2026-07-10
-last_updated: 2026-08-03
+last_updated: 2026-08-10
 status: in_progress
 evidence_model: L0-L4
 ---
@@ -472,3 +472,19 @@ Wave 1A 交付结论：local-only 门禁完成；未接生产 monitor/Prometheus
 Wave 1B 交付结论：CSP observation local contract 完成，证据等级严格保持 L2；未启用 report-only/enforcement、未读取真实日志、未启动 AUT/浏览器、未写生产或 candidate evidence。下一推荐门禁为 Wave 1C public browser gap analysis，仍须 Owner 单独批准。
 
 停止规则：任何输入若要求读取生产 event/log、真实 endpoint、secret，或任何动作会启用 report-only/enforcement、写 candidate evidence/生产配置，立即停止并保留为后续独立授权。
+
+## Wave 1C Public Browser Gap Analysis（2026-08-10，Owner 已批准）
+
+目标：在 Wave 1B exact HEAD `10c8d7aa4bc8bf44ce61fb014f0fd00f8b49ecd7` 上，对照 RED-BROWSER 合同盘点现有 isolated Cypress runner；若确认公开路由缺口，优先扩展同一 runner，覆盖公开页面/API 的强断言、移动端 overflow、console/error、网络隔离和 cleanup receipt。
+
+授权边界：允许修改本地 Cypress spec/runner/tests、启动 runner 自有的 loopback AUT 与隔离临时 SQLite、使用已安装本地浏览器、生成并清理 run-scoped artifacts、文档、CodeGraph 和 local commits；禁止远程 URL/账号、Provider/SMTP、Docker/Compose、生产、持久 DB、远端 CI、push/merge/PR。任何 `.env` 存在或外部网络请求均 fail-closed。
+
+-   [x] W1C-A：建立 gap matrix，核对 `/signin`、`/register`、`/forgot-password`、`/api/v1/ping`、auth resolve GET/POST、移动端、console/network、candidate/browser/Node/artifact/cleanup receipt。
+-   [x] W1C-B：以 runner unit RED 固定 public spec allowlist、exact candidate SHA/Node/base URL/run ID 与 cleanup/receipt 绑定；不新建 Playwright 配置。
+-   [x] W1C-C：新增 Cypress public-route spec，使用既有 self-start/loopback/network guard/owned temp cleanup；每条 route/API 至少一个会在真实漂移时失败的断言，不提交表单或触发 SMTP。
+-   [x] W1C-D：运行 runner unit、production UI route contracts、focused public Cypress isolated run、format/lint/diff/secret-safe 与纯 Node release/monitor/CSP 回归；证据仅标记 local runtime，不冒充生产。
+-   [x] W1C-E：按 public browser contract 与 plan receipt explicit stage/commit，CodeGraph sync、target clean、原 dirty preservation 与下一门禁收口。
+
+Wave 1C 交付结论：现有 isolated Cypress runner 已补齐 public UI/API 互补门禁，并在 exact local commit `3833edff813c2a845b1d6be5a2914487e4353e2f` 上以 Chrome `151.0.7922.77` 完成 `4/4`、failures=`0`、cleanup=`complete`。该证据只支持 local isolated runtime，不代表远端 CI、不可变镜像或生产验收。下一推荐门禁为 Wave 1D UI 文案 baseline ratchet，仍须 Owner 单独批准。
+
+停止规则：runner 若不能证明 exact loopback AUT、环境隔离、外部网络阻断和 cleanup complete，则只记录 blocker，不以手工已启动服务或旧 Playwright 草案补证。

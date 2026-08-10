@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改执行日志
 date: 2026-07-10
-last_updated: 2026-08-03
+last_updated: 2026-08-10
 ---
 
 # 2026-07-10
@@ -328,3 +328,17 @@ last_updated: 2026-08-03
 -   W1B-D 纯 Node 回归 GREEN：release/baseline/publisher/deployment bundle + Wave 1A monitor + Wave 1B CSP=`111/111`；fixture symlink scan、empty index、package/lockfile no-diff 与强秘密模式扫描通过。未运行浏览器、Docker、真实 collector 或生产读取。
 -   CSP contract 已形成独立 local commit `f6c26ec7`（`test(security): freeze local CSP observation contract`）；7 个路径、721 insertions，pre-commit pretty-quick/lint-staged/ESLint 与 post-commit `16/16` 全绿，计划文档未混入。
 -   本地 CodeGraph 首轮 sync GREEN：识别 3 个 changed code files，added 3，新增 21 nodes；只证明本地索引刷新，不构成浏览器、report-only 或生产证据。
+
+# 2026-08-10 Wave 1C Public Browser Gap Analysis
+
+-   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`10c8d7aa...`、target status/index clean；允许 isolated loopback Cypress/AUT，禁止 remote URL/account、Provider/SMTP、Docker、生产、远端 CI 与 GitHub 写入。
+-   初步 inventory：canonical runner=`packages/server/cypress/scripts/local-authenticated-e2e.mjs`，已具备 self-start loopback AUT、随机 run ID、owned temp SQLite/artifacts、环境 allowlist、外部 HTTP/WebSocket guard、超时和 process-group cleanup；当前 5 个 approved specs 全为 authenticated，公开路由没有 Cypress spec，gap 成立。
+-   W1C-B RED=`26/28`：新增 public spec allowlist 与 source contract 后，失败精确来自 allowlist 缺项和 `public-routes.cy.js` 不存在；其余 runner 隔离/清理合同保持通过，没有以 SKIP 或空输入假绿。
+-   W1C-C GREEN：复用同一 runner，新 spec 覆盖 `/signin`、`/register -> /signin`、`/forgot-password`、ping 200/pong、auth resolve GET 405/Allow POST/fixed body 与 fresh isolated SQLite POST `/organization-setup`；移动视口=`375x812`，断言无横向溢出、console error/warning 为空、外部 HTTP(S) 阻断。登录和忘记密码按钮只展示，不提交表单，不创建账号或发 SMTP。
+-   Runner 现在把 Git exact HEAD、Node 24、loopback URL、run ID、请求 browser/spec 数写入 start event，并通过 Cypress `after:run` 写低敏 browser version/spec/test/failure/artifact receipt；环境 contract 同时绑定 candidate revision 与 Node version。
+-   首个 post-commit run `b5b12641-2323-4c28-968e-d39eaa7a3633` 在浏览器前因当前 worktree 缺少 `packages/server/dist` 以 exit 2 失败，cleanup complete；有界诊断确认 Oclif `command start not found`。随后 exact candidate 的 UI production build（21,214 modules）与 server TypeScript/gulp build 均通过，仅生成 gitignored 本地产物。
+-   Chrome 首次功能 run `36a5a449-37e2-4777-8d19-f0f05ea1b1ce` 为 4/4 且 cleanup complete，但结构化 browser 字段因错误读取 nested object 而为 unavailable，未作为最终回执。按 Cypress 13 本地类型改用 `browserName/browserVersion`，新增单测并形成 follow-up commit `3833edff`。
+-   最终 exact browser receipt：candidate=`3833edff813c2a845b1d6be5a2914487e4353e2f`、run=`f999bc59-4c6c-467c-9222-ce5ba43fb99f`、Node=`24.18.0`、Chrome=`151.0.7922.77`、specs=`1`、tests=`4`、failures=`0`、artifacts=`0`、cleanup=`complete`。0 artifact 表示成功运行未产出失败截图且 video=false，不表示缺少 cleanup。
+-   回归 GREEN：runner unit=`30/30`、production UI route contract=`39/39`、纯 Node release/monitor/CSP=`111/111`；target Prettier、ESLint、diff-check 与 pre-commit hooks 通过。实现 commits=`7ea9bbf6`、`3833edff`。
+-   CodeGraph 增量 sync 识别 5 个 changed code files，added 2 / modified 3，新增/更新 89 nodes；只证明本地代码索引刷新。全程 `remote_url=false`、`account_create=false`、`form_submit=false`、`provider_call=false`、`smtp_send=false`、`docker=false`、`production=false`、`push=false`、`merge=false`、`pr=false`。
+-   原 dirty worktree preservation 复核：`/Users/pray/project/FlowAgentic/flowise` HEAD 仍为 `4d56ffd3f9cd1e7aa9eebf63045758069b04c608`、index empty，既有 `.github`/计划/OpenCode untracked 集合未被 stash/reset/clean/stage。目标 worktree 除本回执 4 份文档外无源码或 index 漂移。

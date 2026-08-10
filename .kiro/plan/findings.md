@@ -363,3 +363,14 @@ last_updated: 2026-08-03
 -   复用 Wave 1A 的 dependency-free Draft 2020-12 subset validator 即可；CSP evaluator 单独加载自己的 input/receipt schema，避免把 CSP 状态机混入 monitoring evaluator，也不新增 Ajv/lockfile 变更。
 -   Receiver 可达不等于零违规证据完整：当 accepted violation 为 0、但 invalid/oversized/rate-limited/unknown 任一计数非零时，被丢弃的请求可能包含违规；因此该组合必须 `RECEIVER_EVIDENCE_INCOMPLETE`，不能输出 clean。已有明确违规时仍可如实输出 `violations_observed` 和异常计数，但绝不授权晋级。
 -   Wave 1B 没有理由改动 `packages/server/src/utils/csp.ts` 或 `cspReport.ts`：现有 102/102 focused tests 已覆盖 runtime mode、body/rate limits 与脱敏。新增 analyzer 是后置 observation contract，唯一支持的声明是 L2 fixtures 证明其 fail-closed 语义。
+
+# 2026-08-10 Wave 1C 发现
+
+-   现有 Cypress runner 的生命周期与隔离能力足以表达 public routes：它自行选择 loopback port、启动 server、等待 ping、使用 run-scoped SQLite/artifacts、注入 HTTP/WebSocket exact-origin guard 并清理 process group/temp dir。因此缺口是 approved public spec 与候选回执字段，不是需要第二套 Playwright runner。
+-   当前 approved 5 specs 均先 `cy.loginAsLocalOwner()` 或面向认证模块；仓库只有静态 `productionUiContracts.test.js` 覆盖 `/signin`、`/register` 路由形状，没有浏览器级 `/forgot-password`、ping、auth resolve GET/POST、移动端 overflow 与 public console/network 联合合同。
+-   Wave 1C 的最高声明应是 local isolated runtime evidence；即使浏览器全绿，也不能证明生产路由、生产响应头、真实外网依赖或 release candidate 已部署。公开表单只验证展示/导航，不提交 forgot-password/register，避免 SMTP 或账号副作用。
+-   Public browser runner 不是 self-build：fresh worktree 若缺少 `packages/server/dist`，Oclif dev CLI 会在浏览器前以 `command start not found` 退出；先构建当前 UI/server 后 runner 可正常 self-start。该前置条件应写入使用说明或后续单独增加安全 preflight，不能把 exit 2 误判成 public route 回归。
+-   Cypress 13 的 `after:run` 结果把浏览器身份放在顶层 `browserName/browserVersion`，不是 nested `browser.name/version`。功能 4/4 但 browser receipt unavailable 仍不满足 provenance gate；修正并复跑后才形成可接受回执。
+-   Fresh isolated SQLite 的 auth resolve POST 预期是 `/organization-setup`；已初始化生产实例通常是 `/signin`。因此该断言证明本地 bootstrap 语义与隔离 DB 新鲜度，不替代生产 auth resolve 验收。
+-   最终 public spec 未调用 `loginAsLocalOwner`，未点击登录/重置提交按钮；4 个用例只执行 public DOM/redirect/read-like API contract。外部 HTTP(S)/WebSocket 由 runner 全局 exact-origin guard 阻断，spec 另加浏览器级 origin guard 与 console/overflow 断言。
+-   成功 run 的 artifacts=`0` 是 exact 结果：Cypress failure screenshot 未触发且 video=false；runner 仍以相同 run ID 给出 cleanup complete 并删除 owned temp SQLite/artifact 目录。
