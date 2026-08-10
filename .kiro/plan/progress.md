@@ -315,3 +315,16 @@ last_updated: 2026-08-03
 -   Monitor contracts 已形成独立 local commit `8ea347fc`（`test(ops): freeze local monitoring contracts`）；15 个路径、1323 insertions，pre-commit pretty-quick/lint-staged/ESLint 全绿，计划文档未混入。
 -   Node 24 完整纯本地回归 GREEN：release manifest/baseline/publisher/deployment bundle + monitor contracts=`95/95`（既有 release `81/81` + 新合同 `14/14`）；Bash syntax、Prettier、ESLint、diff-check 与 empty index 同时通过。未运行含 Docker integration 的 `pnpm test:release`。
 -   本地 CodeGraph 首轮 sync GREEN：识别 4 个 changed code files，added 3 / modified 1，新增 43 nodes；这只证明本地索引刷新，不构成发布或生产证据。
+
+# 2026-08-10 Wave 1B CSP 观察合同
+
+-   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`cddd4735...`、target status/index clean；范围固定为 CSP analyzer receipt、receiver health/coverage schema/fixtures/tests 与 local commits。
+-   证据门禁固定为最高 `L2-fixture-or-dry-run`：允许声明“本地合同通过”，禁止声明 report-only 已部署、生产 receiver healthy、真实页面 coverage 完成或 enforcement 可晋级。边界为 `aut=false`、`browser=false`、`real_log_read=false`、`csp_mode_change=false`、`docker=false`、`remote_ci=false`、`production=false`、`push=false`、`merge=false`、`pr=false`。
+-   W1B-A inventory 完成：current mode ladder=`compat < no-eval < strict-script < strict`，report-only 必须严格更强；receiver 是 16 KiB/120 rpm、legacy + Reporting API、最多 10 envelopes/单行脱敏日志。Wave 1B 不改这些 runtime 文件，只在 `scripts/contracts/` 增加纯合同层。
+-   W1B-B RED 成立：2 个 Draft 2020-12 schema、clean/violations 正例和 12 个负例先存在，Node 24 执行因 `csp-observation.mjs` 缺失得到 `ERR_MODULE_NOT_FOUND`；没有无输入/SKIPPED 假绿，也没有读取真实日志或启动服务。
+-   W1B-C attempt1=`14/15`：唯一失败来自隐私断言 `/sample/i` 误命中合法回执字段 `healthSamples`，实际 receipt 不含 URL/token/raw field。修复方向是收紧到 URL/token 字面量和被禁止的键名，不删除隐私负例或改弱 schema。
+-   W1B-C GREEN=`16/16`：clean/violations 两个正例与 13 个 fail-closed 场景全部通过；receipt 只含 digest/count/fixed category，不保留 source path 或 URL/body/header/token/sample，并固定 `evidenceGrade=L2`、`promotionDecision=not_authorized`、`providerCall=false`、`enforcementChanged=false`。
+-   W1B-D runtime cross-check GREEN：现有 server XSS/CSP/report receiver/auth policy=`4/4 suites, 102/102 tests`；新增合同没有修改 server runtime 文件。CSP contract ESLint、Prettier、diff-check 全绿。
+-   W1B-D 纯 Node 回归 GREEN：release/baseline/publisher/deployment bundle + Wave 1A monitor + Wave 1B CSP=`111/111`；fixture symlink scan、empty index、package/lockfile no-diff 与强秘密模式扫描通过。未运行浏览器、Docker、真实 collector 或生产读取。
+-   CSP contract 已形成独立 local commit `f6c26ec7`（`test(security): freeze local CSP observation contract`）；7 个路径、721 insertions，pre-commit pretty-quick/lint-staged/ESLint 与 post-commit `16/16` 全绿，计划文档未混入。
+-   本地 CodeGraph 首轮 sync GREEN：识别 3 个 changed code files，added 3，新增 21 nodes；只证明本地索引刷新，不构成浏览器、report-only 或生产证据。

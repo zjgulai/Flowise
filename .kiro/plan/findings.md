@@ -353,3 +353,13 @@ last_updated: 2026-08-03
 -   Observability 不能只冻结 metric 字符串；合同还必须同时绑定 `rate(http_request_duration_ms_bucket...)`、protected/private scrape 模式、public whitelist=false、OCI/runtime/build-info revision 相等、精确低基数 label 集及六类 SLO 的非 healthy no-data 语义。
 -   CodeGraph 的实际仓库索引由 `codegraph` CLI 和 gitignored `.codegraph/` 维护；GitNexus project-local runner 在该 worktree 不存在。使用现有 `codegraph sync .` 可增量刷新，不需要清理或重建 62.55 MB 索引。
 -   当前 `scripts/` 没有通用 JSON Schema/Ajv 约定，root 也未声明可直接依赖的 schema validator。Monitoring 合同应避免新增依赖：提交 Draft 2020-12 schema、checked-in 正负 fixtures，并用 repo-owned Node exact-shape test 验证关键 required/enum/pattern/additionalProperties 语义；本门禁不实现或接入生产 monitor。
+
+# 2026-08-10 Wave 1B 发现
+
+-   Wave 1B 的决策对象不是“是否现在收紧 CSP”，而是“给定一份已持久化、不可变且低敏的观察导出，能否生成 L2 receipt”。本地 fixture 无法提供生产 receiver/coverage 或晋级授权，因此 receipt 必须固定 `promotionDecision=not_authorized` 与 `enforcementChanged=false`。
+-   0 violation 不能单独视为 clean：source 必须非空且有 health/event 证据，receiver 必须可达，观察窗口必须相等，公开/认证/lazy 三类 required coverage 必须完整；否则 fail-closed，而不是输出 clean。
+-   Current server 已在 `csp.ts` 以 rank 强制 report-only 严格强于 enforcement，并在 `cspReport.ts` 限制 16 KiB、120 rpm、10 envelopes、单行日志和 origin-only 脱敏；Wave 1B analyzer 应消费二次低基数汇总，不重新解析 raw URL/body/header，也不修改这两个 runtime 模块。
+-   为避免调用方把 required coverage 缩成一条而假绿，本地合同将绑定命名 profile `wave1b_minimum_v1`：公开、认证、lazy 三类均有固定枚举清单；只接收 executed 类别，缺任何一项均 `COVERAGE_INCOMPLETE`。
+-   复用 Wave 1A 的 dependency-free Draft 2020-12 subset validator 即可；CSP evaluator 单独加载自己的 input/receipt schema，避免把 CSP 状态机混入 monitoring evaluator，也不新增 Ajv/lockfile 变更。
+-   Receiver 可达不等于零违规证据完整：当 accepted violation 为 0、但 invalid/oversized/rate-limited/unknown 任一计数非零时，被丢弃的请求可能包含违规；因此该组合必须 `RECEIVER_EVIDENCE_INCOMPLETE`，不能输出 clean。已有明确违规时仍可如实输出 `violations_observed` 和异常计数，但绝不授权晋级。
+-   Wave 1B 没有理由改动 `packages/server/src/utils/csp.ts` 或 `cspReport.ts`：现有 102/102 focused tests 已覆盖 runtime mode、body/rate limits 与脱敏。新增 analyzer 是后置 observation contract，唯一支持的声明是 L2 fixtures 证明其 fail-closed 语义。

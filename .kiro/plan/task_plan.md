@@ -456,3 +456,19 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 Wave 1A 交付结论：local-only 门禁完成；未接生产 monitor/Prometheus/OTLP、未触碰 Docker/registry、未 push/merge/PR。下一推荐门禁为 Wave 1B 的 CSP analyzer receipt/receiver/coverage fixtures，仍须 Owner 单独批准。
 
 停止规则：schema/fixture 不接入 production workflow；任何实现若需要 Docker、registry、真实 collector、生产 receipt 路径、secret 或外部账号，立即保留为后续授权门禁。
+
+## Wave 1B CSP 观察合同（2026-08-10，Owner 已批准）
+
+目标：在 Wave 1A exact HEAD `cddd47357ff75acef76efc7fad8f16b985c6dc7d` 上，为 CSP report-only 观察冻结纯本地 input/receipt schema、receiver health/coverage 正负 fixtures、低基数 analyzer 与非 vacuous RED/GREEN tests；保持 enforcement 不变。
+
+授权边界：允许本地 schema、fixtures、纯内存 Node analyzer/tests、现有 CSP focused tests、文档、CodeGraph 和原子 commit；禁止启动 AUT/浏览器、读取真实日志、修改 CSP middleware/mode/env、Docker/Compose、远端 CI、生产、Provider/SMTP、restore、push/merge/PR。
+
+-   [x] W1B-A：复核 current CSP mode/receiver 合同，冻结持久 source、UTC window、receiver health、coverage、低基数 summary 与 evidence-grade 字段边界。
+-   [x] W1B-B：先提交 input/receipt schema、clean/violation 正例和空 source、receiver、coverage、mode、identity、clock/count 负例，取得实现缺失 RED。
+-   [x] W1B-C：实现纯内存 CSP observation evaluator；exact schema、SHA/window/mode/count/coverage fail-closed，receipt 固定 `L2`、`promotionDecision=not_authorized`、`enforcementChanged=false`。
+-   [x] W1B-D：运行 CSP contract、现有 server CSP focused tests、format/lint/diff/secret-safe 与纯 Node release/monitor 回归；不运行浏览器、Docker 或外部 collector。
+-   [x] W1B-E：按 CSP contract 与 plan receipt explicit stage/commit，CodeGraph sync，目标 clean、原 dirty worktree preservation 与下一门禁收口。
+
+Wave 1B 交付结论：CSP observation local contract 完成，证据等级严格保持 L2；未启用 report-only/enforcement、未读取真实日志、未启动 AUT/浏览器、未写生产或 candidate evidence。下一推荐门禁为 Wave 1C public browser gap analysis，仍须 Owner 单独批准。
+
+停止规则：任何输入若要求读取生产 event/log、真实 endpoint、secret，或任何动作会启用 report-only/enforcement、写 candidate evidence/生产配置，立即停止并保留为后续独立授权。

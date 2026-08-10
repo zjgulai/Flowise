@@ -2,7 +2,7 @@
 
 日期：2026-08-10
 
-状态：`wave_1a_local_contracts_implemented_external_integration_deferred`
+状态：`wave_1b_local_csp_contract_implemented_external_observation_deferred`
 
 证据等级：L1/L2 设计合同；不构成发布或生产证据
 
@@ -153,4 +153,31 @@ release staleness。每条告警记录 query、窗口、阈值、数据源、run
 
 本回执不代表生产 monitor、Prometheus/OTLP collector、scrape 凭据、告警规则部署、远端 CI、
 Docker/registry、真实 candidate、生产部署/回滚或 restore 验证已经执行。上述每类外部动作仍需
-独立门禁与 Owner 授权；下一本地推荐门禁仍为 Wave 1B CSP analyzer receipt/coverage fixtures。
+独立门禁与 Owner 授权。该本地缺口已由下节 Wave 1B 回执关闭；外部 observation 仍未执行。
+
+## 10. Wave 1B CSP 本地观察合同回执（2026-08-10）
+
+### 10.1 已交付
+
+-   `scripts/contracts/csp-observation.input.schema.json` 与 `csp-observation.receipt.schema.json`：
+    冻结 candidate/OCI SHA、UTC window、严格 mode ladder、不可变非临时 source、receiver health/count、
+    `wave1b_minimum_v1` coverage 和低基数 directive/disposition summary。
+-   `scripts/contracts/csp-observation.mjs`：只消费内存中的已脱敏观察输入；空 source、receiver 不可达、
+    coverage 缺口、mode/SHA/window/clock/count 漂移、重复桶和“零违规但有丢弃事件”均 fail-closed。
+-   clean/violations 两个正例和 13 个对抗性负例。输出不包含 source path、URL、query、header、body、
+    token 或 sample；固定 `evidenceGrade=L2`、`promotionDecision=not_authorized`、
+    `providerCall=false`、`enforcementChanged=false`。
+
+### 10.2 验证证据
+
+-   local commit：`f6c26ec7`（`test(security): freeze local CSP observation contract`）。
+-   CSP contract=`16/16`；既有 server XSS/CSP/report receiver/auth policy=`4/4 suites, 102/102 tests`。
+-   纯 Node release + Wave 1A monitor + Wave 1B CSP=`111/111`；Prettier、ESLint、diff、secret-safe、
+    fixture symlink 与 package/lockfile no-diff 门禁通过；CodeGraph 已增量同步 3 个代码文件、21 nodes。
+
+### 10.3 仍未交付
+
+本回执只有 L2 fixture 证据，不证明 report-only 已启用、生产 receiver healthy、真实 public/auth/lazy
+coverage 完成、真实 CSP violation 为零或 enforcement 可以晋级。本轮没有启动 AUT/浏览器、读取真实日志、
+修改 CSP runtime/env、写 candidate evidence、运行 Docker/远端 CI 或访问生产。下一推荐门禁为 Wave 1C
+public browser gap analysis：先对照现有 authenticated Cypress 能力，只在确有公开路由缺口时扩展 local runner。
