@@ -1,0 +1,91 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://flowise.dev/contracts/release-staleness.input.schema.json",
+    "title": "Flowise release staleness observation input",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schemaVersion",
+        "observedAt",
+        "maxAgeSeconds",
+        "mainRevision",
+        "candidateManifest",
+        "deployment",
+        "runtime",
+        "backup",
+        "disk"
+    ],
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "maxAgeSeconds": { "type": "integer", "minimum": 1 },
+        "mainRevision": { "$ref": "#/$defs/revision" },
+        "candidateManifest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "digest", "revision", "ociRevision"],
+            "properties": {
+                "path": { "type": "string", "pattern": "^/[^\\u0000]+$" },
+                "digest": { "$ref": "#/$defs/sha256" },
+                "revision": { "$ref": "#/$defs/revision" },
+                "ociRevision": { "$ref": "#/$defs/revision" }
+            }
+        },
+        "deployment": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["runId", "receiptPath", "receiptDigest", "operation", "state", "revision", "createdAt", "evidenceGrade"],
+            "properties": {
+                "runId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+                "receiptPath": {
+                    "type": "string",
+                    "pattern": "^/opt/flowise/deployments/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/(prepare|cutover|rollback)-receipt\\.json$"
+                },
+                "receiptDigest": { "$ref": "#/$defs/sha256" },
+                "operation": { "enum": ["prepare", "cutover", "rollback"] },
+                "state": { "enum": ["prepared", "complete_candidate_active", "manual_rollback_complete"] },
+                "revision": { "$ref": "#/$defs/revision" },
+                "createdAt": { "$ref": "#/$defs/utcTimestamp" },
+                "evidenceGrade": { "$ref": "#/$defs/evidenceGrade" }
+            }
+        },
+        "runtime": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["revision", "observedAt", "health", "evidenceGrade"],
+            "properties": {
+                "revision": { "$ref": "#/$defs/revision" },
+                "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "health": { "enum": ["healthy", "unhealthy", "no_data"] },
+                "evidenceGrade": { "$ref": "#/$defs/evidenceGrade" }
+            }
+        },
+        "backup": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["observedAt", "checksumStatus", "evidenceGrade"],
+            "properties": {
+                "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "checksumStatus": { "enum": ["verified", "mismatch", "no_data"] },
+                "evidenceGrade": { "$ref": "#/$defs/evidenceGrade" }
+            }
+        },
+        "disk": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["observedAt", "freeBytes", "source", "evidenceGrade"],
+            "properties": {
+                "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "freeBytes": { "type": "integer", "minimum": 0 },
+                "source": { "enum": ["statvfs", "filesystem_api", "no_data"] },
+                "evidenceGrade": { "$ref": "#/$defs/evidenceGrade" }
+            }
+        }
+    },
+    "$defs": {
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "utcTimestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "evidenceGrade": { "enum": ["L1", "L2", "L3", "L4"] }
+    }
+}

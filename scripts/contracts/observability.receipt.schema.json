@@ -1,0 +1,68 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://flowise.dev/contracts/observability.receipt.schema.json",
+    "title": "Flowise observability readiness receipt",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schemaVersion",
+        "status",
+        "observedAt",
+        "candidateRevision",
+        "runtimeRevision",
+        "scrape",
+        "metrics",
+        "labels",
+        "alerts",
+        "evidenceGrade",
+        "providerCall"
+    ],
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "status": { "const": "ready" },
+        "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "candidateRevision": { "$ref": "#/$defs/revision" },
+        "runtimeRevision": { "$ref": "#/$defs/revision" },
+        "scrape": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mode", "authenticated", "publicWhitelist"],
+            "properties": {
+                "mode": { "enum": ["protected_endpoint", "private_listener_sidecar"] },
+                "authenticated": { "type": "boolean" },
+                "publicWhitelist": { "const": false }
+            }
+        },
+        "metrics": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requestCounter", "durationBucket", "buildInfo"],
+            "properties": {
+                "requestCounter": { "const": "http_requests_total" },
+                "durationBucket": { "const": "http_request_duration_ms_bucket" },
+                "buildInfo": { "const": "flowise_build_info" }
+            }
+        },
+        "labels": {
+            "type": "array",
+            "items": { "enum": ["method", "route", "status"] },
+            "minItems": 3,
+            "uniqueItems": true
+        },
+        "alerts": {
+            "type": "array",
+            "items": {
+                "enum": ["http_5xx_ratio", "http_p95_latency", "process_restart", "disk_free", "csp_receiver_health", "release_staleness"]
+            },
+            "minItems": 6,
+            "uniqueItems": true
+        },
+        "evidenceGrade": { "$ref": "#/$defs/evidenceGrade" },
+        "providerCall": { "const": false }
+    },
+    "$defs": {
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "utcTimestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "evidenceGrade": { "enum": ["L1", "L2", "L3", "L4"] }
+    }
+}

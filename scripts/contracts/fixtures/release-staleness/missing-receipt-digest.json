@@ -1,0 +1,38 @@
+{
+    "schemaVersion": 1,
+    "observedAt": "2026-08-10T12:00:00.000Z",
+    "maxAgeSeconds": 900,
+    "mainRevision": "1111111111111111111111111111111111111111",
+    "candidateManifest": {
+        "path": "/var/lib/flowise/releases/git-1111111111111111111111111111111111111111/release-manifest.json",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "revision": "1111111111111111111111111111111111111111",
+        "ociRevision": "1111111111111111111111111111111111111111"
+    },
+    "deployment": {
+        "runId": "20260810T115500Z-candidate",
+        "receiptPath": "/opt/flowise/deployments/20260810T115500Z-candidate/cutover-receipt.json",
+        "operation": "cutover",
+        "state": "complete_candidate_active",
+        "revision": "1111111111111111111111111111111111111111",
+        "createdAt": "2026-08-10T11:55:00.000Z",
+        "evidenceGrade": "L3"
+    },
+    "runtime": {
+        "revision": "1111111111111111111111111111111111111111",
+        "observedAt": "2026-08-10T12:00:00.000Z",
+        "health": "healthy",
+        "evidenceGrade": "L3"
+    },
+    "backup": {
+        "observedAt": "2026-08-10T11:50:00.000Z",
+        "checksumStatus": "verified",
+        "evidenceGrade": "L3"
+    },
+    "disk": {
+        "observedAt": "2026-08-10T12:00:00.000Z",
+        "freeBytes": 21474836480,
+        "source": "statvfs",
+        "evidenceGrade": "L3"
+    }
+}

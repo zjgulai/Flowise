@@ -1,0 +1,79 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://flowise.dev/contracts/release-staleness.receipt.schema.json",
+    "title": "Flowise release staleness receipt",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schemaVersion",
+        "status",
+        "observedAt",
+        "mainRevision",
+        "candidateRevision",
+        "deployedRevision",
+        "runtimeRevision",
+        "runId",
+        "receiptDigest",
+        "phase",
+        "ageSeconds",
+        "backup",
+        "disk",
+        "evidenceGrades",
+        "reasons",
+        "providerCall"
+    ],
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "status": { "enum": ["fresh", "stale", "rolled_back"] },
+        "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "mainRevision": { "$ref": "#/$defs/revision" },
+        "candidateRevision": { "$ref": "#/$defs/revision" },
+        "deployedRevision": { "$ref": "#/$defs/revision" },
+        "runtimeRevision": { "$ref": "#/$defs/revision" },
+        "runId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+        "receiptDigest": { "$ref": "#/$defs/sha256" },
+        "phase": { "enum": ["candidate_active", "prepared", "rolled_back"] },
+        "ageSeconds": { "type": "integer", "minimum": 0 },
+        "backup": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ageSeconds", "checksumStatus"],
+            "properties": {
+                "ageSeconds": { "type": "integer", "minimum": 0 },
+                "checksumStatus": { "const": "verified" }
+            }
+        },
+        "disk": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["freeBytes", "source"],
+            "properties": {
+                "freeBytes": { "type": "integer", "minimum": 0 },
+                "source": { "enum": ["statvfs", "filesystem_api"] }
+            }
+        },
+        "evidenceGrades": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["deployment", "runtime", "backup", "disk"],
+            "properties": {
+                "deployment": { "$ref": "#/$defs/evidenceGrade" },
+                "runtime": { "$ref": "#/$defs/evidenceGrade" },
+                "backup": { "$ref": "#/$defs/evidenceGrade" },
+                "disk": { "$ref": "#/$defs/evidenceGrade" }
+            }
+        },
+        "reasons": {
+            "type": "array",
+            "items": { "enum": ["deployment_age_exceeded", "backup_age_exceeded"] },
+            "uniqueItems": true
+        },
+        "providerCall": { "const": false }
+    },
+    "$defs": {
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "utcTimestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "evidenceGrade": { "enum": ["L1", "L2", "L3", "L4"] }
+    }
+}
