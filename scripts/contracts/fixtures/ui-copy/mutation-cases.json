@@ -1,0 +1,55 @@
+{
+    "schemaVersion": 1,
+    "cases": [
+        {
+            "id": "jsx-text",
+            "source": "const View = () => <Button>Save changes</Button>",
+            "expectedDebtKind": "jsx-text"
+        },
+        {
+            "id": "aria-label",
+            "source": "const View = () => <Button aria-label='Delete item' />",
+            "expectedDebtKind": "attribute"
+        },
+        {
+            "id": "placeholder",
+            "source": "const View = () => <Input placeholder='Search flows' />",
+            "expectedDebtKind": "attribute"
+        },
+        {
+            "id": "toast",
+            "source": "enqueueSnackbar('Save failed')",
+            "expectedDebtKind": "notification"
+        },
+        {
+            "id": "dialog-property",
+            "source": "const dialog = { dialogTitle: 'Delete flow' }",
+            "expectedDebtKind": "property"
+        },
+        {
+            "id": "binary-split",
+            "source": "const View = () => <Button>{'Save ' + 'changes'}</Button>",
+            "expectedDebtKind": "jsx-expression"
+        },
+        {
+            "id": "template-split",
+            "source": "const View = ({ name }) => <Alert>{`Delete ${name} now`}</Alert>",
+            "expectedDebtKind": "jsx-expression"
+        },
+        {
+            "id": "machine-attribute",
+            "source": "const View = () => <RequireAuth permissionId='凭据:创建' />",
+            "expectedMachineSink": "permissionId"
+        },
+        {
+            "id": "machine-property",
+            "source": "const route = { path: '设置' }",
+            "expectedMachineSink": "path"
+        },
+        {
+            "id": "non-display-identifier",
+            "source": "const internalCode = 'Save changes'",
+            "expectedDebtCount": 0
+        }
+    ]
+}
