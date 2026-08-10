@@ -1791,8 +1791,10 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
     assert.doesNotMatch(workflow, /^\s*run:\s*pnpm test:coverage\s*$/m)
     const cypressStep = workflow.match(/^ {12}- name: Cypress test\n(?:^ {14,}.*(?:\n|$))+/m)?.[0]
     assert.ok(cypressStep, 'main CI must retain the Cypress test step')
-    assert.match(cypressStep, /^ {18}ADMIN_ONLY_MODE: 'false'\s*$/m)
-    assert.equal(workflow.match(/^\s+ADMIN_ONLY_MODE: 'false'\s*$/gm)?.length, 1)
+    assert.match(cypressStep, /^ {14}working-directory: packages\/server\s*$/m)
+    assert.match(cypressStep, /^ {14}run: pnpm cypress:ci\s*$/m)
+    assert.doesNotMatch(cypressStep, /^\s+uses:\s*cypress-io\/github-action@/m)
+    assert.equal(workflow.match(/^\s+uses:\s*cypress-io\/github-action@/gm)?.length ?? 0, 0)
     assert.equal(workflow.match(/^\s+run:\s*pnpm metadata:i18n:validate:built\s*$/gm)?.length, 1)
     assert.ok(workflow.indexOf('run: pnpm build') < workflow.indexOf('run: pnpm metadata:i18n:validate:built'))
 
