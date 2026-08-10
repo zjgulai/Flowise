@@ -1,0 +1,150 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://flowise.dev/contracts/csp-observation.input.schema.json",
+    "title": "Flowise CSP observation input",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schemaVersion",
+        "evaluatedAt",
+        "evidenceGrade",
+        "candidateRevision",
+        "ociRevision",
+        "window",
+        "modes",
+        "source",
+        "receiver",
+        "coverage",
+        "summaries"
+    ],
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "evaluatedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "evidenceGrade": { "const": "L2" },
+        "candidateRevision": { "$ref": "#/$defs/revision" },
+        "ociRevision": { "$ref": "#/$defs/revision" },
+        "window": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["startedAt", "endedAt"],
+            "properties": {
+                "startedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "endedAt": { "$ref": "#/$defs/utcTimestamp" }
+            }
+        },
+        "modes": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["enforcement", "reportOnly"],
+            "properties": {
+                "enforcement": { "$ref": "#/$defs/cspMode" },
+                "reportOnly": { "$ref": "#/$defs/cspMode" }
+            }
+        },
+        "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "path", "digest", "byteLength", "eventCount", "exportedAt", "immutable"],
+            "properties": {
+                "kind": { "const": "csp_sanitized_event_export_v1" },
+                "path": {
+                    "type": "string",
+                    "pattern": "^/(?!tmp(?:/|$)|private/tmp(?:/|$))[^\\u0000]+$"
+                },
+                "digest": { "$ref": "#/$defs/sha256" },
+                "byteLength": { "type": "integer", "minimum": 1 },
+                "eventCount": { "type": "integer", "minimum": 1 },
+                "exportedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "immutable": { "const": true }
+            }
+        },
+        "receiver": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "reachable",
+                "windowStartedAt",
+                "windowEndedAt",
+                "healthSamples",
+                "acceptedReports",
+                "invalidRequests",
+                "oversizedRequests",
+                "rateLimitedRequests",
+                "unknownShapeRequests"
+            ],
+            "properties": {
+                "reachable": { "type": "boolean" },
+                "windowStartedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "windowEndedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "healthSamples": { "type": "integer", "minimum": 1 },
+                "acceptedReports": { "type": "integer", "minimum": 0 },
+                "invalidRequests": { "type": "integer", "minimum": 0 },
+                "oversizedRequests": { "type": "integer", "minimum": 0 },
+                "rateLimitedRequests": { "type": "integer", "minimum": 0 },
+                "unknownShapeRequests": { "type": "integer", "minimum": 0 }
+            }
+        },
+        "coverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["profile", "publicExecuted", "authenticatedExecuted", "lazyExecuted"],
+            "properties": {
+                "profile": { "const": "wave1b_minimum_v1" },
+                "publicExecuted": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/publicCoverage" },
+                    "minItems": 1,
+                    "uniqueItems": true
+                },
+                "authenticatedExecuted": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/authenticatedCoverage" },
+                    "minItems": 1,
+                    "uniqueItems": true
+                },
+                "lazyExecuted": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/lazyCoverage" },
+                    "minItems": 1,
+                    "uniqueItems": true
+                }
+            }
+        },
+        "summaries": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["directive", "disposition", "count"],
+                "properties": {
+                    "directive": { "$ref": "#/$defs/directiveClass" },
+                    "disposition": { "enum": ["report", "enforce", "unknown"] },
+                    "count": { "type": "integer", "minimum": 1 }
+                }
+            }
+        }
+    },
+    "$defs": {
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "utcTimestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "cspMode": { "enum": ["compat", "no-eval", "strict-script", "strict"] },
+        "publicCoverage": { "enum": ["signin", "register", "forgot_password", "ping"] },
+        "authenticatedCoverage": { "enum": ["chatflow_editor", "agentflow_editor", "credentials"] },
+        "lazyCoverage": { "enum": ["marketplace", "document_store", "code_viewer"] },
+        "directiveClass": {
+            "enum": [
+                "default-src",
+                "script-src",
+                "style-src",
+                "connect-src",
+                "img-src",
+                "font-src",
+                "frame-src",
+                "frame-ancestors",
+                "other"
+            ]
+        }
+    }
+}

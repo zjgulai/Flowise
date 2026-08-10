@@ -1,0 +1,42 @@
+{
+    "schemaVersion": 1,
+    "evaluatedAt": "2026-08-10T11:05:00.000Z",
+    "evidenceGrade": "L2",
+    "candidateRevision": "1111111111111111111111111111111111111111",
+    "ociRevision": "1111111111111111111111111111111111111111",
+    "window": {
+        "startedAt": "2026-08-10T10:00:00.000Z",
+        "endedAt": "2026-08-10T11:00:00.000Z"
+    },
+    "modes": {
+        "enforcement": "compat",
+        "reportOnly": "no-eval"
+    },
+    "source": {
+        "kind": "csp_sanitized_event_export_v1",
+        "path": "/var/lib/flowise/evidence/csp/1111111111111111111111111111111111111111/events.jsonl",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "byteLength": 512,
+        "eventCount": 2,
+        "exportedAt": "2026-08-10T11:01:00.000Z",
+        "immutable": true
+    },
+    "receiver": {
+        "reachable": true,
+        "windowStartedAt": "2026-08-10T10:00:00.000Z",
+        "windowEndedAt": "2026-08-10T11:00:00.000Z",
+        "healthSamples": 2,
+        "acceptedReports": 0,
+        "invalidRequests": 0,
+        "oversizedRequests": 0,
+        "rateLimitedRequests": 0,
+        "unknownShapeRequests": 0
+    },
+    "coverage": {
+        "profile": "wave1b_minimum_v1",
+        "publicExecuted": ["signin", "register", "forgot_password", "ping"],
+        "authenticatedExecuted": ["chatflow_editor", "agentflow_editor", "credentials"],
+        "lazyExecuted": ["marketplace", "document_store", "code_viewer"]
+    },
+    "summaries": []
+}
