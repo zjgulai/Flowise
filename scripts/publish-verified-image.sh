@@ -158,7 +158,9 @@ raw_config_digest() {
 }
 
 raw_manifest_digest() {
-    printf '%s' "$1" | sha256sum | awk '{print "sha256:" $1}'
+    local digest
+    digest=$(printf '%s' "$1" | bash "$script_dir/sha256-stream.sh") || fail 'remote manifest digest verification failed'
+    printf 'sha256:%s\n' "$digest"
 }
 
 git_exists=false

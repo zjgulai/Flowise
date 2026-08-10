@@ -7,6 +7,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPT_PATH = fileURLToPath(new URL('./publish-verified-image.sh', import.meta.url))
+const SHA256_SCRIPT_PATH = fileURLToPath(new URL('./sha256-stream.sh', import.meta.url))
 const SHA = '1'.repeat(40)
 const CONFIG_DIGEST = `sha256:${'a'.repeat(64)}`
 const OTHER_CONFIG_DIGEST = `sha256:${'b'.repeat(64)}`
@@ -15,6 +16,72 @@ const REPOSITORY_URL = 'https://example.invalid/owner/flowise.git'
 const IMAGE_CREATED = '2026-07-27T00:00:00.000Z'
 const RAW_MANIFEST = JSON.stringify({ schemaVersion: 2, config: { digest: CONFIG_DIGEST }, layers: [] })
 const OTHER_RAW_MANIFEST = JSON.stringify({ schemaVersion: 2, config: { digest: OTHER_CONFIG_DIGEST }, layers: [] })
+
+const runSha256Helper = ({ sha256sumDigest, shasumDigest } = {}) => {
+    const root = mkdtempSync(join(tmpdir(), 'flowise-sha256-test-'))
+    const bin = join(root, 'bin')
+    mkdirSync(bin)
+
+    if (sha256sumDigest !== undefined) {
+        const command = join(bin, 'sha256sum')
+        writeFileSync(
+            command,
+            `#!/bin/sh
+test "$#" -eq 0 || exit 91
+printf '%s  -\\n' '${sha256sumDigest}'
+`
+        )
+        chmodSync(command, 0o755)
+    }
+    if (shasumDigest !== undefined) {
+        const command = join(bin, 'shasum')
+        writeFileSync(
+            command,
+            `#!/bin/sh
+test "$#" -eq 2 || exit 92
+test "$1" = '-a' && test "$2" = '256' || exit 93
+printf '%s  -\\n' '${shasumDigest}'
+`
+        )
+        chmodSync(command, 0o755)
+    }
+
+    const result = spawnSync('/bin/bash', [SHA256_SCRIPT_PATH], {
+        encoding: 'utf8',
+        input: 'portable digest input',
+        env: { PATH: bin }
+    })
+    rmSync(root, { recursive: true, force: true })
+    return result
+}
+
+test('SHA-256 helper prefers GNU sha256sum when both reviewed tools are present', () => {
+    const gnuDigest = '1'.repeat(64)
+    const result = runSha256Helper({ sha256sumDigest: gnuDigest, shasumDigest: '2'.repeat(64) })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, `${gnuDigest}\n`)
+})
+
+test('SHA-256 helper falls back to macOS shasum with the exact SHA-256 arguments', () => {
+    const macDigest = '3'.repeat(64)
+    const result = runSha256Helper({ shasumDigest: macDigest })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, `${macDigest}\n`)
+})
+
+test('SHA-256 helper fails closed when no reviewed tool is available', () => {
+    const result = runSha256Helper()
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /SHA-256 tool is unavailable/)
+    assert.equal(result.stdout, '')
+})
+
+test('SHA-256 helper rejects malformed tool output without trying a second implementation', () => {
+    const result = runSha256Helper({ sha256sumDigest: 'not-a-digest', shasumDigest: '4'.repeat(64) })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /SHA-256 tool returned invalid output/)
+    assert.equal(result.stdout, '')
+})
 
 const createFixture = () => {
     const root = mkdtempSync(join(tmpdir(), 'flowise-publisher-test-'))
