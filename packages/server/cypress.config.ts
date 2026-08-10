@@ -129,7 +129,6 @@ const safeToken = (value: unknown) => {
 
 export const formatBrowserResultReceipt = (rawResults: unknown) => {
     const results = rawResults && typeof rawResults === 'object' ? (rawResults as Record<string, unknown>) : {}
-    const browser = results.browser && typeof results.browser === 'object' ? (results.browser as Record<string, unknown>) : {}
     const runs = Array.isArray(results.runs) ? (results.runs as Array<Record<string, unknown>>) : []
     const artifacts = runs.reduce((count, run) => {
         const screenshots = Array.isArray(run.screenshots) ? run.screenshots.length : 0
@@ -137,8 +136,8 @@ export const formatBrowserResultReceipt = (rawResults: unknown) => {
         return count + screenshots + video
     }, 0)
     return `[flowise-e2e] phase=browser-result run=${runId} revision=${candidateRevision} node=${nodeVersion} browser=${safeToken(
-        browser.name
-    )}@${safeToken(browser.version)} specs=${runs.length} tests=${safeMetric(results.totalTests)} failures=${safeMetric(
+        results.browserName
+    )}@${safeToken(results.browserVersion)} specs=${runs.length} tests=${safeMetric(results.totalTests)} failures=${safeMetric(
         results.totalFailed
     )} artifacts=${artifacts}\n`
 }

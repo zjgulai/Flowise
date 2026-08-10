@@ -579,7 +579,8 @@ describe('isolated Chrome launch contract', () => {
         assert.equal(runtimeConfig.env.nodeVersion, isolatedEnvironment.FLOWISE_E2E_NODE_VERSION)
         assert.equal(
             cypressConfigModule.formatBrowserResultReceipt({
-                browser: { name: 'chrome', version: '150.0.0.0' },
+                browserName: 'chrome',
+                browserVersion: '150.0.0.0',
                 totalTests: 4,
                 totalFailed: 0,
                 runs: [{ screenshots: [{ path: '/sensitive/path.png' }], video: null }]
