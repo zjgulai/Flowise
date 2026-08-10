@@ -2,7 +2,7 @@
 
 日期：2026-08-10
 
-状态：`contract_frozen_implementation_deferred`
+状态：`wave_1a_local_contracts_implemented_external_integration_deferred`
 
 证据等级：L1/L2 设计合同；不构成发布或生产证据
 
@@ -129,3 +129,28 @@ release staleness。每条告警记录 query、窗口、阈值、数据源、run
 5. Wave 2：经 Owner 单独批准后再接远端 CI、只读生产 monitor 或观测系统；每类外部副作用单独授权。
 
 完成 D0 只表示这些合同已冻结并完成分流，不表示任何 deferred implementation 已交付。
+
+## 9. Wave 1A 本地实现回执（2026-08-10）
+
+### 9.1 已交付
+
+-   `scripts/sha256-stream.sh`：发布器 SHA-256 stdin digest 在 Linux 优先使用 `sha256sum`，在 macOS
+    严格回退 `shasum -a 256`；工具不存在、执行失败或输出畸形均 fail-closed。
+-   `scripts/contracts/release-staleness.*.schema.json`：冻结 staleness 输入/低敏回执 exact schema，
+    并以纯内存评估器约束 immutable receipt、SHA 身份、UTC age、rollback 与 no-data。
+-   `scripts/contracts/observability.*.schema.json`：冻结 observability 输入/低敏回执 exact schema，
+    并约束真实 histogram series、受保护或私有 scrape、revision、低基数/privacy、SLO/no-data。
+-   9 份 checked-in 正负 fixture 与 14 条本地合同测试；所有 fixture 均是合成数据，不是生产观测。
+
+### 9.2 验证证据
+
+-   local commits：`12be39b8`（SHA-256 portability）、`8ea347fc`（monitor contracts）。
+-   Node 24 纯本地 release + monitor contracts：`95/95`，其中原 release contracts `81/81`、
+    新 monitor contracts `14/14`。
+-   Bash syntax、Prettier、ESLint、diff/index 与强秘密模式扫描通过；CodeGraph 已同步代码变更。
+
+### 9.3 仍未交付
+
+本回执不代表生产 monitor、Prometheus/OTLP collector、scrape 凭据、告警规则部署、远端 CI、
+Docker/registry、真实 candidate、生产部署/回滚或 restore 验证已经执行。上述每类外部动作仍需
+独立门禁与 Owner 授权；下一本地推荐门禁仍为 Wave 1B CSP analyzer receipt/coverage fixtures。

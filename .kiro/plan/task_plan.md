@@ -439,3 +439,20 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   下一推荐门禁：Wave 1A local-only——先为 release staleness/observability schema 和 macOS `sha256sum` portability 建 RED fixtures 与最小修复；继续不接生产 monitor、不触碰 Docker。
 
 停止规则：发现需要外部 secret、Provider、Docker、生产、restore、push/merge/PR，或变更会扩大到 durable outbox/public API 等 Wave 1/2 范围时立即分流，不以 D0 授权替代后续门禁。
+
+## Wave 1A 本地合同与可移植性（2026-08-10，Owner 已批准）
+
+目标：在 D0 exact HEAD `52f9328af18fd9c434de65b70dda342813d01c1a` 上，修复 publisher SHA-256 工具的 macOS/Linux 可移植性，并为 release staleness 与 observability 冻结可执行 schema、正负 fixtures 和非 vacuous RED tests；只形成 local commits。
+
+授权边界：允许本地脚本、schema、fixtures、Node tests、文档、CodeGraph 和原子 commit；禁止 Docker/Compose、远端 CI、生产 monitor、GitHub/Docker Hub 写入、Provider/SMTP、restore、push/merge/PR。
+
+-   [x] W1A-A：复核 publisher 当前 hash 调用、现有 contract/test 结构及 monitoring schema 约定，冻结文件边界和 RED 失败语义。
+-   [x] W1A-B：先建立 deterministic SHA tool selection 负例，再实现 Linux `sha256sum` / macOS `shasum -a 256` fail-closed helper；publisher 不接触 registry/Docker 实例。
+-   [x] W1A-C：建立 release staleness input/receipt schema 与正负 fixtures，约束 current/candidate/deployed SHA、immutable receipt digest、UTC age、rollback/no-data 状态。
+-   [x] W1A-D：建立 observability input/receipt schema 与正负 fixtures，约束真实 metric series、scrape auth mode、runtime revision、低基数/privacy 和 no-data fail-closed。
+-   [x] W1A-E：按 portability、monitor contracts、plan receipt 三个 concern explicit stage/commit；运行 focused tests、Node release contracts、format/diff/secret-safe gate。
+-   [x] W1A-F：CodeGraph sync、目标 worktree clean、原 dirty worktree preservation 与剩余外部门禁收口。
+
+Wave 1A 交付结论：local-only 门禁完成；未接生产 monitor/Prometheus/OTLP、未触碰 Docker/registry、未 push/merge/PR。下一推荐门禁为 Wave 1B 的 CSP analyzer receipt/receiver/coverage fixtures，仍须 Owner 单独批准。
+
+停止规则：schema/fixture 不接入 production workflow；任何实现若需要 Docker、registry、真实 collector、生产 receipt 路径、secret 或外部账号，立即保留为后续授权门禁。

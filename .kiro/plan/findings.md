@@ -343,3 +343,13 @@ last_updated: 2026-08-03
 -   Prometheus 当前导出的 histogram 基名是 `http_request_duration_ms`，PromQL series 因而是 `http_request_duration_ms_bucket`；旧 observability 文档使用的无 `_ms` 名称错误。`/api/v1/metrics` 注册在通用鉴权 middleware 之后，后续应先冻结 private listener 与 protected scrape 二选一 ADR，不能简单加入 public whitelist。
 -   `scripts/publish-verified-image.sh` 直接调用 GNU `sha256sum`，macOS 基线只有 `/usr/bin/shasum`，导致 publisher 合同 4 项在测试 fixture 的成功路径失败；临时兼容 wrapper 可使 77/77 全绿，证明根因是工具可移植性而非 manifest/publisher 逻辑，但正式修复仍需单独原子 concern。
 -   `verify-security.sh` 将纯静态检查和 Docker Compose render 合并为同一终态；在明确 Docker no-touch 的门禁中只能报告 340 个静态 PASS 与 1 个未执行的 Compose blocker，不能用跳过或伪造 binary 把它包装成 341/341。
+
+# 2026-08-10 Wave 1A 发现
+
+-   Publisher 只有 `raw_manifest_digest()` 直接依赖 `sha256sum`；脚本已在更早位置解析 canonical `script_dir`，因此最小修复可以调用 repo-owned hash helper，不需要改 registry 状态机或 Docker 命令路径。
+-   现有 `publish-verified-image.test.mjs` 的 `docker` 是临时 fake binary，成功/幂等/错误分类都不接触真实 daemon 或 registry；macOS 上 4 个成功路径因系统缺 GNU `sha256sum` 稳定 RED，适合作为回归基线。
+-   SHA-256 helper 必须把“首选工具存在但执行失败/输出畸形”视为完整性故障，不能静默尝试第二实现；否则 PATH 劫持或损坏工具会被兼容回退掩盖。19/19 GREEN 已覆盖 GNU 首选、macOS 回退、工具全缺失和畸形首选输出四条路径。
+-   Release staleness 需要把 schema 合法性与状态语义分层：未知 key/缺 digest 属于 `SCHEMA_INVALID`；SHA 关系断裂、receipt operation/state 矛盾、未来时间和 no-data 分别 fail-closed；只有结构与身份均成立后才能生成 `fresh/stale/rolled_back` 低敏 receipt。
+-   Observability 不能只冻结 metric 字符串；合同还必须同时绑定 `rate(http_request_duration_ms_bucket...)`、protected/private scrape 模式、public whitelist=false、OCI/runtime/build-info revision 相等、精确低基数 label 集及六类 SLO 的非 healthy no-data 语义。
+-   CodeGraph 的实际仓库索引由 `codegraph` CLI 和 gitignored `.codegraph/` 维护；GitNexus project-local runner 在该 worktree 不存在。使用现有 `codegraph sync .` 可增量刷新，不需要清理或重建 62.55 MB 索引。
+-   当前 `scripts/` 没有通用 JSON Schema/Ajv 约定，root 也未声明可直接依赖的 schema validator。Monitoring 合同应避免新增依赖：提交 Draft 2020-12 schema、checked-in 正负 fixtures，并用 repo-owned Node exact-shape test 验证关键 required/enum/pattern/additionalProperties 语义；本门禁不实现或接入生产 monitor。

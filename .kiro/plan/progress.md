@@ -302,3 +302,16 @@ last_updated: 2026-08-03
 -   `verify-security.sh` 得到 `340 passed / 1 failed`；唯一未过项是需要 Docker Compose 的 rendered Compose contract。依据 Owner 的 Docker no-touch 边界，本轮没有补跑该项，也不把 340/341 写成 full GREEN。
 -   CodeGraph 先发现父项目 index 会把多个 worktree 合并统计且对 3 份无代码节点 Markdown 持续报 pending；随后按原始 `/codegraph init` 要求在当前 worktree 建立独立 index，再执行 `/codegraph sync`。终态为 2,205 files、30,459 nodes、67,156 edges，status=`Index is up to date`。
 -   原 dirty worktree preservation 复核：HEAD 仍为 `4d56ffd3...`、index empty，原 `.github`/计划/OpenCode untracked path 集合保持；未 stash/reset/clean/stage。D0-E/F 收口完成。
+
+# 2026-08-10 Wave 1A 本地合同与可移植性
+
+-   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`52f9328...`、target status/index clean；范围固定为 SHA-256 portability、release staleness schema/fixtures、observability schema/fixtures 和 local commits。
+-   边界继续为 `docker=false`、`remote_ci=false`、`production_monitor=false`、`registry_write=false`、`provider_call=false`、`smtp_send=false`、`restore=false`、`push=false`、`merge=false`、`pr=false`。
+-   W1A-B RED 基线成立：publisher contract 共 19 tests，`11 pass / 8 fail`。4 个新 helper tests 因 helper 缺失失败，4 个既有 publisher 成功路径因 macOS 无 GNU `sha256sum` 失败；fake Docker/registry 证明本轮没有真实外部副作用。
+-   W1A-B GREEN：repo-owned helper 优先使用 GNU `sha256sum`，仅在其不可用时回退 macOS `shasum -a 256`，并校验严格的小写 64-hex stdin digest。focused publisher=`19/19`，Bash syntax、Prettier、ESLint、diff-check 与强秘密模式扫描均通过；真实 Docker daemon/registry 未接触。
+-   W1A-B 已形成独立 local commit `12be39b8`（`fix(release): support portable SHA-256 hashing`）；pre-commit hooks 通过，计划文档未混入。
+-   W1A-C/D RED：先提交 4 个 schema、9 个正负 fixture 和测试，首次执行因纯合同评估器缺失得到 `ERR_MODULE_NOT_FOUND`，证明不是无输入/跳过式假绿。
+-   W1A-C/D GREEN：release staleness/observability 纯内存合同评估共 `14/14`；覆盖 immutable receipt digest、SHA 关系、UTC/future time、stale age、rollback 终态、no-data、真实 histogram series、受保护 scrape、低基数/privacy、runtime revision、完整 SLO 和 rate-based PromQL。Prettier、ESLint、diff-check 通过；未读取生产路径、未连接监控系统、未写 receipt。
+-   Monitor contracts 已形成独立 local commit `8ea347fc`（`test(ops): freeze local monitoring contracts`）；15 个路径、1323 insertions，pre-commit pretty-quick/lint-staged/ESLint 全绿，计划文档未混入。
+-   Node 24 完整纯本地回归 GREEN：release manifest/baseline/publisher/deployment bundle + monitor contracts=`95/95`（既有 release `81/81` + 新合同 `14/14`）；Bash syntax、Prettier、ESLint、diff-check 与 empty index 同时通过。未运行含 Docker integration 的 `pnpm test:release`。
+-   本地 CodeGraph 首轮 sync GREEN：识别 4 个 changed code files，added 3 / modified 1，新增 43 nodes；这只证明本地索引刷新，不构成发布或生产证据。
