@@ -374,3 +374,19 @@ last_updated: 2026-08-03
 -   Fresh isolated SQLite 的 auth resolve POST 预期是 `/organization-setup`；已初始化生产实例通常是 `/signin`。因此该断言证明本地 bootstrap 语义与隔离 DB 新鲜度，不替代生产 auth resolve 验收。
 -   最终 public spec 未调用 `loginAsLocalOwner`，未点击登录/重置提交按钮；4 个用例只执行 public DOM/redirect/read-like API contract。外部 HTTP(S)/WebSocket 由 runner 全局 exact-origin guard 阻断，spec 另加浏览器级 origin guard 与 console/overflow 断言。
 -   成功 run 的 artifacts=`0` 是 exact 结果：Cypress failure screenshot 未触发且 video=false；runner 仍以相同 run ID 给出 cleanup complete 并删除 owned temp SQLite/artifact 目录。
+
+# 2026-08-10 Wave 1D 初始发现
+
+-   RED-I18N 的决策对象是“新静态 UI 文案债务能否被 path+line-independent baseline 拦截”，不是自动翻译或证明全产品国际化。当前门禁必须与 built component metadata localization validator 分域，避免重复或改写其 canonical source hash/catalog/coverage 合同。
+-   OpenCode `verify-i18n-coverage.py` 只能作为反例输入：既有 D0 审计已确认固定 `400` 条 regex ceiling 可被等量替换绕过；Wave 1D 必须先验证真实 AST 入口、空/缺 baseline、mutation 与 machine-sensitive context 后再选择实现形态。
+-   当前 UI 已有比 OpenCode 草案强得多的 `g1ChineseCopyGate.test.js`：使用 `@typescript-eslint` AST、scope manager、rendered shared-component closure、display property/call sink、template/binary/static binding 解析与精确技术词 allowlist，对 10 个核心模块和共享壳层执行零未白名单英文门禁。Wave 1D 不应复制或削弱它，而应为其未覆盖的其余 UI 静态文案建立全树 debt baseline ratchet。
+-   现有 G1 extractor 的 finding identity 含行号且仅存在 Jest 文件内部，适合零债务模块的即时诊断，不适合作为全树 checked-in baseline key。Wave 1D 需要独立 canonical record（module/path + sink kind + normalized content digest + occurrence count，不含 line）并以 receipt 报告新增/删除/分类漂移。
+-   当前 `packages/ui/src` 有 440 个 JS/JSX/TS/TSX 文件，其中 259 个文件含中文源码、粗粒度行命中 3,389；这些只是 inventory 规模，不是用户可见文案条数，也不能作为 threshold。
+-   既有 built metadata validator 位于 `scripts/metadata-i18n`，以 TypeScript AST、source fingerprint、catalog exact coverage 和动态 metadata 检查为 canonical；UI baseline 必须排除 `packages/components` 和 metadata catalog，不修改其 3,019 source translation 等固定合同。
+-   `@typescript-eslint/parser` 与 `typescript-estree` 均能在当前 frozen install 中解析，现有 G1 test 正在使用 parser/scope manager；Wave 1D 可复用相同 AST 能力而不新增依赖或修改 lockfile。为降低耦合，新合同应独立在 `scripts/contracts`，现有 849 行 G1 test 保持零债务模块 canonical，不做大规模抽取重构。
+-   全树 production source 精确为 390 个非 test/spec JS/JSX/TS/TSX 文件。Baseline source contract 应固定这四类扩展、递归扫描和 test/spec 排除；文件数为 receipt 观测值而非硬编码 ceiling，空树/解析失败必须非零。
+-   当前全树静态扫描得到 3,550 个显示槽、518 个唯一英文债务记录和 590 次出现；机器敏感字段中文命中为 0。该数值只描述当前 AST 可静态解析的 display sinks，不是“所有运行时文案”或翻译质量统计。
+-   债务主要集中在 `views/evaluations`（205 occurrences）、`views/evaluators`（87）、`views/auth`（57）和 `views/workspace`（55）；sink 主要为 `children`（245）、`label`（95）、`message`（64）与 `description`（57）。这是后续人工翻译优先级输入，不授权 Wave 1D 批量改写这些模块。
+-   仅让 deletion 返回成功而不更新 baseline 会保留旧额度并允许再引入。最终合同把 library receipt 保留为 `ratchet_tightened`，但 normal `check` fail closed 为 `BASELINE_TIGHTENING_REQUIRED`；必须显式 `debt-reduction` update，并禁止该 reason 同时接受任何新增/增加债务。
+-   Baseline 每条记录只有 `id/module/path/kind/sink/literalDigest/occurrences/reason`，没有原文、secret 或用户数据；identity 不含行号，所以纯行移动不漂移，但 path move、sink 变化或英文内容变化会被视为新债务并要求复核。
+-   Metadata validator 的首次 stale failure 证明它不会接受旧 compiled receipt；canonical rebuild 后 311 nodes／91 dynamic methods／unknown 0。UI-copy ratchet 与 component metadata 仍是两个互补且互不改写的合同域。

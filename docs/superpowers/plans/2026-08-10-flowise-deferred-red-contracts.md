@@ -2,7 +2,7 @@
 
 日期：2026-08-10
 
-状态：`wave_1c_local_public_browser_implemented_external_release_validation_deferred`
+状态：`wave_1d_local_ui_copy_ratchet_implemented_external_release_validation_deferred`
 
 证据等级：L1/L2 设计合同；不构成发布或生产证据
 
@@ -209,3 +209,35 @@ public browser gap analysis：先对照现有 authenticated Cypress 能力，只
 本轮没有提交登录/重置表单、创建账号、发送 SMTP、调用 Provider、触碰 Docker/生产或执行 push/merge/PR。
 下一推荐门禁为 Wave 1D UI 文案 baseline ratchet；必须保持 built metadata validator 为 canonical 合同，
 并由 Owner 单独批准。
+
+## 12. Wave 1D UI 文案 Baseline Ratchet 回执（2026-08-10）
+
+### 12.1 已交付
+
+-   `scripts/contracts/ui-copy-baseline.mjs`：递归扫描 `packages/ui/src` 的生产 JS/JSX/TS/TSX，使用现有
+    `@typescript-eslint/parser` 解析 display sinks、静态 binding、template/binary 文案与机器敏感字段。
+-   strict Draft 2020-12 baseline/receipt schema、10 例 mutation fixture、9 条 fail-closed tests 和 checked-in
+    baseline；baseline 只保存 path/sink/digest/count/reason，不保存原始文案。
+-   `pnpm ui:copy:check`：新增/增加、等量替换、未知分类、机器字段误译、缺失/空/漂移 baseline 均失败；
+    debt reduction 必须显式 update 后回到 exact，不能保留旧额度。
+-   `docs/ops/flowise-ui-copy-baseline.md`：冻结 normal check、例外 update、debt-reduction 和证据边界。
+
+### 12.2 验证证据
+
+-   实现 commit：`7919554511f853728f19da1fa5164c852dd559f6`。
+-   当前 inventory：390 files、3,550 display sinks、518 unique records／590 occurrences、machine violations 0；
+    baseline digest=`17af3360fe171c98fd28ddae343bf487af060336d67bc624273a9b9aaf237dcb`，check=`exact`。
+-   UI G1 + production contracts=`2 suites / 124 tests`；release/monitor/CSP/UI-copy 纯 Node=`120/120`；
+    metadata canonical rebuild/validator=311 nodes、91 dynamic methods、unknown 0。
+-   Prettier、ESLint、JSON/schema/fixture lint、diff、lockfile no-diff、固定 ceiling/`|| true` guard、
+    强秘密模式与 pre-commit hooks 通过；CodeGraph 增量同步 3 个文件、86 nodes，index up to date。
+
+### 12.3 证据边界与下一门禁
+
+该回执只证明当前源码的 L2 静态 baseline 与 mutation contract，不证明运行时所有文案已覆盖、翻译质量、
+完整国际化或生产部署。未自动/批量翻译产品文案，未修改 component metadata validator，未调用外部翻译服务、
+Provider/SMTP、Docker/Compose、远端 CI、生产、push/merge/PR。
+
+Wave 1 本地 deferred 合同已全部交付。下一推荐门禁为 **Wave 2A exact-head 远端 CI 候选门禁**：只允许
+推送当前本地候选并触发/读取远端 CI，先冻结 head SHA、workflow、required checks 与失败停止条件；明确禁止
+merge、registry publish、Docker/Compose、Provider/SMTP 和生产变更。该外部写入仍需 Owner 单独批准。

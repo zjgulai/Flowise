@@ -342,3 +342,16 @@ last_updated: 2026-08-10
 -   回归 GREEN：runner unit=`30/30`、production UI route contract=`39/39`、纯 Node release/monitor/CSP=`111/111`；target Prettier、ESLint、diff-check 与 pre-commit hooks 通过。实现 commits=`7ea9bbf6`、`3833edff`。
 -   CodeGraph 增量 sync 识别 5 个 changed code files，added 2 / modified 3，新增/更新 89 nodes；只证明本地代码索引刷新。全程 `remote_url=false`、`account_create=false`、`form_submit=false`、`provider_call=false`、`smtp_send=false`、`docker=false`、`production=false`、`push=false`、`merge=false`、`pr=false`。
 -   原 dirty worktree preservation 复核：`/Users/pray/project/FlowAgentic/flowise` HEAD 仍为 `4d56ffd3f9cd1e7aa9eebf63045758069b04c608`、index empty，既有 `.github`/计划/OpenCode untracked 集合未被 stash/reset/clean/stage。目标 worktree 除本回执 4 份文档外无源码或 index 漂移。
+
+# 2026-08-10 Wave 1D UI 文案 Baseline Ratchet
+
+-   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`b97479e8...`、target status/index clean；范围固定为 UI 静态文案 AST inventory/baseline/receipt/tests 与本地提交，不授权翻译服务、批量产品文案改写或任何外部副作用。
+-   证据门禁最高为 `L2-fixture-or-local-static`：允许声明“当前源码 baseline 与 ratchet 合同通过”，禁止声明全产品已国际化、运行时所有文案已覆盖、翻译质量已验收或生产已部署。
+-   W1D-A current canonical cross-check：现有 G1 AST 文案门禁=`1 suite / 85 tests` GREEN，覆盖 10 个核心模块、4 个共享/feature-gated surface 和 390 个非测试 UI 源文件中的选定闭包；它是零未白名单英文门禁，但没有全树 checked-in debt baseline/receipt。
+-   W1D-B 取得预期 RED：mutation/schema test 在实现文件缺失时以 `ERR_MODULE_NOT_FOUND` 非零退出；补实现后合同 tests=`9/9`，覆盖新增、等量替换、拆分/template、display sinks、机器字段、缺失/空/漂移 baseline、未知分类、显式 update reason 与 debt reduction 收紧。
+-   W1D-C 全树 AST inventory：production source=`390` files、display sinks=`3550`、baseline unique records=`518`、occurrences=`590`、machine field violations=`0`；baseline digest=`17af3360fe171c98fd28ddae343bf487af060336d67bc624273a9b9aaf237dcb`，只存 path/sink/digest/count/reason，不存原始文案。
+-   `pnpm ui:copy:check` 生成 `status=exact`、source digest=`9b5ab90f7fa58154d431c021deb17baa60e722757ccf18c99e23f45af73bcfbd`、providerCall/productionChanged=`false`。债务减少会先产生 `ratchet_tightened`，普通 check 随后 fail closed，必须显式 `debt-reduction` update 后恢复 exact；该 reason 若同时新增/增加债务会被拒绝。
+-   W1D-D 回归：G1 + production UI contracts=`2 suites / 124 tests`；纯 Node release/monitor/CSP/UI-copy=`120/120`；target Prettier/ESLint、JSON/schema/fixture lint、diff-check、固定 ceiling/`|| true` guard、强秘密模式和 lockfile no-diff 均 GREEN。
+-   built metadata validator 首次正确拒绝 stale local dist；执行 canonical components rebuild 后 fingerprint=`2/2`、311 nodes、91 dynamic methods、unknown=`0`，没有修改 metadata validator 或 catalog。
+-   实现 7-path atomic commit=`7919554511f853728f19da1fa5164c852dd559f6`，pre-commit pretty-quick/lint-staged/ESLint 通过；post-commit UI-copy tests=`9/9` 与 baseline receipt=`exact`。运维说明和四份状态文档仍作为独立 docs concern 待提交。
+-   CodeGraph sync GREEN：识别 3 个 changed code files，added 3／86 nodes；终态 index=`2212 files / 30602 nodes / 67564 edges`、up to date。该索引仅为本地结构证据，不代表远端 CI 或发布。

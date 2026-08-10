@@ -488,3 +488,17 @@ Wave 1B 交付结论：CSP observation local contract 完成，证据等级严�
 Wave 1C 交付结论：现有 isolated Cypress runner 已补齐 public UI/API 互补门禁，并在 exact local commit `3833edff813c2a845b1d6be5a2914487e4353e2f` 上以 Chrome `151.0.7922.77` 完成 `4/4`、failures=`0`、cleanup=`complete`。该证据只支持 local isolated runtime，不代表远端 CI、不可变镜像或生产验收。下一推荐门禁为 Wave 1D UI 文案 baseline ratchet，仍须 Owner 单独批准。
 
 停止规则：runner 若不能证明 exact loopback AUT、环境隔离、外部网络阻断和 cleanup complete，则只记录 blocker，不以手工已启动服务或旧 Playwright 草案补证。
+
+## Wave 1D UI 文案 Baseline Ratchet（2026-08-10，Owner 已批准）
+
+目标：在 Wave 1C docs HEAD `b97479e8ab7514b6348947899ad2e293bbabbb85` 上，为 `packages/ui/src` 的静态用户可见文案建立 path+line-independent、可审查、不可空输入假绿的本地 baseline/receipt ratchet；保持既有 built component metadata validator 为 canonical contract，不复制 OpenCode 固定总量 regex 草案。
+
+证据等级固定为 `L2-fixture-or-local-static`。允许本地 inventory、AST scanner、checked-in baseline/schema/fixtures/tests、UI focused regression、文档、CodeGraph 和 local commits；禁止自动翻译/批量改写产品文案、修改 metadata canonical validator、访问外部翻译服务、Docker/Compose、远端 CI、生产、Provider/SMTP、push/merge/PR。
+
+-   [x] W1D-A：盘点 UI 文案入口、现有 i18n/metadata validator 与 OpenCode 草案，冻结 source root、扩展名、排除目录、语义 key、分类与证据边界。
+-   [x] W1D-B：先提交 mutation fixtures/tests，覆盖新增债务、等量替换、拆字符串/template、aria/placeholder/toast/dialog、危险机器字段、baseline digest 漂移、缺失/空 baseline 与未知分类 fail-closed；取得实现缺失 RED。
+-   [x] W1D-C：实现 dependency-stable AST scanner、canonical baseline/receipt 与 explicit update/check 模式；删除债务必须显式收紧，新增/变更必须带 allowlisted reason，禁止自动创建与固定 ceiling 假绿。
+-   [x] W1D-D：生成并人工抽查 current baseline，运行合同 tests、现有 built metadata fingerprint/validator、UI focused tests、Prettier/ESLint/diff/secret-safe 与纯 Node 回归；未批量修改 UI 产品文案。
+-   [~] W1D-E：scanner/baseline/receipt 原子提交=`7919554511f853728f19da1fa5164c852dd559f6`；正在完成 docs commit、CodeGraph sync、target clean、原 dirty worktree preservation 与下一门禁收口。
+
+停止规则：若 AST 入口无法区分用户文案与机器字段、baseline 需要保存 secret/用户数据、或变更会自动重写 UI/metadata/生产资源，则停止并记录 blocker，不以 regex 条数或 `|| true` 降级门禁。
