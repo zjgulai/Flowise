@@ -4,6 +4,8 @@ import { defineConfig } from 'cypress'
 
 const isolationMarker = process.env.FLOWISE_E2E_ISOLATED
 const baseUrl = process.env.FLOWISE_E2E_BASE_URL
+const candidateRevision = process.env.FLOWISE_E2E_CANDIDATE_REVISION
+const nodeVersion = process.env.FLOWISE_E2E_NODE_VERSION
 const runId = process.env.FLOWISE_E2E_RUN_ID
 const artifactsPath = process.env.FLOWISE_E2E_ARTIFACTS_PATH
 
@@ -105,8 +107,40 @@ export const mergeChromiumIsolationArguments = (args: string[], isolatedBaseUrl 
     return preservedArguments
 }
 
-if (isolationMarker !== '1' || !isLoopbackHttpOrigin(baseUrl) || !runId || !/^[a-zA-Z0-9-]{1,80}$/.test(runId) || !artifactsPath) {
+if (
+    isolationMarker !== '1' ||
+    !isLoopbackHttpOrigin(baseUrl) ||
+    !candidateRevision ||
+    !/^[0-9a-f]{40,64}$/.test(candidateRevision) ||
+    !nodeVersion ||
+    !/^24\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(nodeVersion) ||
+    !runId ||
+    !/^[a-zA-Z0-9-]{1,80}$/.test(runId) ||
+    !artifactsPath
+) {
     throw new Error('Authenticated Cypress specs require the isolated local E2E runner')
+}
+
+const safeMetric = (value: unknown) => (Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0)
+const safeToken = (value: unknown) => {
+    const token = typeof value === 'string' ? value.trim() : ''
+    return /^[a-zA-Z0-9._-]{1,80}$/.test(token) ? token : 'unavailable'
+}
+
+export const formatBrowserResultReceipt = (rawResults: unknown) => {
+    const results = rawResults && typeof rawResults === 'object' ? (rawResults as Record<string, unknown>) : {}
+    const browser = results.browser && typeof results.browser === 'object' ? (results.browser as Record<string, unknown>) : {}
+    const runs = Array.isArray(results.runs) ? (results.runs as Array<Record<string, unknown>>) : []
+    const artifacts = runs.reduce((count, run) => {
+        const screenshots = Array.isArray(run.screenshots) ? run.screenshots.length : 0
+        const video = typeof run.video === 'string' && run.video ? 1 : 0
+        return count + screenshots + video
+    }, 0)
+    return `[flowise-e2e] phase=browser-result run=${runId} revision=${candidateRevision} node=${nodeVersion} browser=${safeToken(
+        browser.name
+    )}@${safeToken(browser.version)} specs=${runs.length} tests=${safeMetric(results.totalTests)} failures=${safeMetric(
+        results.totalFailed
+    )} artifacts=${artifacts}\n`
 }
 
 const localOwner = {
@@ -130,12 +164,17 @@ export default defineConfig({
                 }
                 return launchOptions
             })
+            on('after:run', (results) => {
+                process.stdout.write(formatBrowserResultReceipt(results))
+            })
             on('task', {
                 getLocalOwner() {
                     return localOwner
                 }
             })
             config.env.isolated = true
+            config.env.candidateRevision = candidateRevision
+            config.env.nodeVersion = nodeVersion
             config.env.runId = runId
             return config
         }

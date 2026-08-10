@@ -9,6 +9,7 @@ import { runInNewContext } from 'node:vm'
 
 import {
     APPROVED_SPECS,
+    assertSupportedNodeVersion,
     assertCleanupProcessSucceeded,
     assertIsolatedChildEnvironment,
     assertLoopbackHttpUrl,
@@ -21,8 +22,10 @@ import {
     enforceAutRequestPolicy,
     formatCleanupEvent,
     formatFailureEvent,
+    formatStartEvent,
     isOwnedTempPath,
     isAllowedAutRequestUrl,
+    normalizeCandidateRevision,
     parseRunnerArgs,
     resolveFinalExitCode,
     toExitCode,
@@ -30,6 +33,7 @@ import {
 } from './local-authenticated-e2e.mjs'
 
 const approvedSpecs = APPROVED_SPECS
+const publicRoutesSpec = 'cypress/e2e/0-public/public-routes.cy.js'
 const chatflowContinuitySpec = 'cypress/e2e/3-chatflows/chatflow-continuity.cy.js'
 const pcCoreContinuitySpec = 'cypress/e2e/4-pc-core/pc-core-continuity.cy.js'
 const tenModuleShellSpec = 'cypress/e2e/5-ten-module-shell/ten-module-shell.cy.js'
@@ -62,6 +66,8 @@ describe('isolated child environment', () => {
     it('enables local owner provisioning only inside the isolated loopback harness', () => {
         const expected = {
             baseUrl: 'http://127.0.0.1:3010',
+            candidateRevision: '0123456789abcdef0123456789abcdef01234567',
+            nodeVersion: '24.18.0',
             runId: 'test-run',
             tempDirectory: '/safe/tmp/flowise-e2e-test-run'
         }
@@ -81,6 +87,8 @@ describe('isolated child environment', () => {
     it('fails closed if a critical final value is polluted before spawn', () => {
         const expected = {
             baseUrl: 'http://127.0.0.1:3010',
+            candidateRevision: '0123456789abcdef0123456789abcdef01234567',
+            nodeVersion: '24.18.0',
             runId: 'test-run',
             tempDirectory: '/safe/tmp/flowise-e2e-test-run'
         }
@@ -105,6 +113,30 @@ describe('isolated child environment', () => {
         assert.throws(
             () => assertIsolatedChildEnvironment(environment, expected),
             (error) => error.message === 'child-environment-isolation-failed' && !error.message.includes('must-not-leak')
+        )
+    })
+})
+
+describe('candidate provenance contract', () => {
+    it('accepts exact Git revisions and Node 24 while rejecting ambiguous provenance', () => {
+        const revision = '0123456789ABCDEF0123456789ABCDEF01234567\n'
+        assert.equal(normalizeCandidateRevision(revision), revision.trim().toLowerCase())
+        assert.equal(assertSupportedNodeVersion('v24.18.0'), '24.18.0')
+        assert.throws(() => normalizeCandidateRevision('main'), /candidate-revision-unavailable/)
+        assert.throws(() => assertSupportedNodeVersion('22.22.0'), /unsupported-node-version/)
+    })
+
+    it('binds the start event to run, loopback URL, candidate, runtime, browser, and spec count', () => {
+        assert.equal(
+            formatStartEvent({
+                runId: 'run-1',
+                baseUrl: 'http://127.0.0.1:3010',
+                candidateRevision: '0123456789abcdef0123456789abcdef01234567',
+                nodeVersion: '24.18.0',
+                browser: 'chrome',
+                specCount: 1
+            }),
+            '[flowise-e2e] phase=start run=run-1 url=http://127.0.0.1:3010 revision=0123456789abcdef0123456789abcdef01234567 node=24.18.0 browser=chrome specs=1\n'
         )
     })
 })
@@ -261,6 +293,14 @@ describe('isOwnedTempPath', () => {
 })
 
 describe('parseRunnerArgs', () => {
+    it('approves the isolated public-route specification', () => {
+        assert.ok(APPROVED_SPECS.includes(publicRoutesSpec))
+        assert.deepEqual(parseRunnerArgs(['--spec', publicRoutesSpec], APPROVED_SPECS), {
+            browser: undefined,
+            specs: [publicRoutesSpec]
+        })
+    })
+
     it('approves the isolated Chatflow continuity specification', () => {
         assert.ok(APPROVED_SPECS.includes(chatflowContinuitySpec))
         assert.deepEqual(parseRunnerArgs(['--spec', chatflowContinuitySpec], APPROVED_SPECS), {
@@ -283,6 +323,30 @@ describe('parseRunnerArgs', () => {
     it('rejects unknown flags and specs outside the approved set', () => {
         assert.throws(() => parseRunnerArgs(['--headed'], approvedSpecs), /Unsupported argument/)
         assert.throws(() => parseRunnerArgs(['--spec', '../other.cy.js'], approvedSpecs), /approved authenticated spec/)
+    })
+})
+
+describe('public route specification contract', () => {
+    it('covers public UI and auth bootstrap APIs without accounts, providers, or form submission', async () => {
+        const source = await readFile(new URL('../e2e/0-public/public-routes.cy.js', import.meta.url), 'utf8')
+
+        for (const route of ['/signin', '/register', '/forgot-password', '/api/v1/ping', '/api/v1/auth/resolve']) {
+            assert.match(source, new RegExp(route.replaceAll('/', '\\/')))
+        }
+        for (const label of ['管理员登录', '进入工作台', '忘记密码？', '发送重置密码说明']) {
+            assert.match(source, new RegExp(label))
+        }
+        assert.match(source, /cy\.viewport\(375, 812\)/)
+        assert.match(source, /assertNoHorizontalOverflow/)
+        assert.match(source, /application console errors/)
+        assert.match(source, /application console warnings/)
+        assert.match(source, /Cypress\.env\('candidateRevision'\)/)
+        assert.match(source, /Cypress\.env\('runId'\)/)
+        assert.match(source, /requestUrl\.origin !== baseUrl\.origin/)
+        assert.match(source, /statusCode: 405/)
+        assert.match(source, /redirectUrl: '\/organization-setup'/)
+        assert.doesNotMatch(source, /loginAsLocalOwner|\.submit\(|cy\.click\([^\n]*进入工作台|cy\.click\([^\n]*发送重置密码说明/i)
+        assert.doesNotMatch(source, /smtp|provider|https?:\/\/(?!127\.0\.0\.1|localhost)/i)
     })
 })
 
@@ -386,7 +450,9 @@ describe('isolated Chrome launch contract', () => {
         const isolatedEnvironment = {
             FLOWISE_E2E_ARTIFACTS_PATH: '/safe/tmp/flowise-e2e-chrome-contract',
             FLOWISE_E2E_BASE_URL: 'http://127.0.0.1:3010',
+            FLOWISE_E2E_CANDIDATE_REVISION: '0123456789abcdef0123456789abcdef01234567',
             FLOWISE_E2E_ISOLATED: '1',
+            FLOWISE_E2E_NODE_VERSION: '24.18.0',
             FLOWISE_E2E_RUN_ID: 'chrome-contract'
         }
         const previousEnvironment = Object.fromEntries(Object.keys(isolatedEnvironment).map((key) => [key, process.env[key]]))
@@ -509,6 +575,17 @@ describe('isolated Chrome launch contract', () => {
             )
         }
         assert.equal(configuredLaunch.args.includes('--'), false)
+        assert.equal(runtimeConfig.env.candidateRevision, isolatedEnvironment.FLOWISE_E2E_CANDIDATE_REVISION)
+        assert.equal(runtimeConfig.env.nodeVersion, isolatedEnvironment.FLOWISE_E2E_NODE_VERSION)
+        assert.equal(
+            cypressConfigModule.formatBrowserResultReceipt({
+                browser: { name: 'chrome', version: '150.0.0.0' },
+                totalTests: 4,
+                totalFailed: 0,
+                runs: [{ screenshots: [{ path: '/sensitive/path.png' }], video: null }]
+            }),
+            '[flowise-e2e] phase=browser-result run=chrome-contract revision=0123456789abcdef0123456789abcdef01234567 node=24.18.0 browser=chrome@150.0.0.0 specs=1 tests=4 failures=0 artifacts=1\n'
+        )
 
         const [configSource, pcCoreSource, tenModuleSource] = await Promise.all([
             readFile(configUrl, 'utf8'),
