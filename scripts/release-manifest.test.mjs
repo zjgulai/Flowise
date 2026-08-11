@@ -1787,6 +1787,16 @@ test('dirty manifest is rejected by require-clean verification', () => {
 test('main CI retains full coverage while bounding workspace and Jest concurrency for hosted-runner memory safety', () => {
     const workflow = readFileSync(MAIN_WORKFLOW_PATH, 'utf8')
 
+    assert.match(workflow, /^ {12}FLOWISE_CI_CANDIDATE_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}\s*$/m)
+    assert.match(workflow, /^ {12}FLOWISE_CI_EVENT_SHA: \$\{\{ github\.sha \}\}\s*$/m)
+    const checkoutStep = workflow.match(/^ {12}- uses: actions\/checkout@v6\n(?:^ {14,}.*(?:\n|$))+/m)?.[0]
+    assert.ok(checkoutStep, 'main CI must retain the checkout step')
+    assert.match(checkoutStep, /^ {18}ref: \$\{\{ env\.FLOWISE_CI_CANDIDATE_SHA \}\}\s*$/m)
+    const identityStep = workflow.match(/^ {12}- name: Verify CI source identity\n(?:^ {14,}.*(?:\n|$))+/m)?.[0]
+    assert.ok(identityStep, 'main CI must verify source identity')
+    assert.match(identityStep, /test "\$actual" = "\$FLOWISE_CI_CANDIDATE_SHA"/)
+    assert.match(identityStep, /phase=source-identity event=%s candidate=%s checkout=%s/)
+    assert.equal(workflow.match(/^\s+run:\s*pnpm ui:copy:check\s*$/gm)?.length, 1)
     assert.match(workflow, /^\s*run:\s*pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand\s*$/m)
     assert.doesNotMatch(workflow, /^\s*run:\s*pnpm test:coverage\s*$/m)
     const cypressStep = workflow.match(/^ {12}- name: Cypress test\n(?:^ {14,}.*(?:\n|$))+/m)?.[0]
@@ -1797,6 +1807,7 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
     assert.equal(workflow.match(/^\s+uses:\s*cypress-io\/github-action@/gm)?.length ?? 0, 0)
     assert.equal(workflow.match(/^\s+run:\s*pnpm metadata:i18n:validate:built\s*$/gm)?.length, 1)
     assert.ok(workflow.indexOf('run: pnpm build') < workflow.indexOf('run: pnpm metadata:i18n:validate:built'))
+    assert.ok(workflow.indexOf('run: pnpm ui:copy:check') < workflow.indexOf('name: Cypress test'))
 
     for (const workspace of ['agentflow', 'observe', 'components', 'server']) {
         const packageJsonPath = fileURLToPath(new URL(`../packages/${workspace}/package.json`, import.meta.url))

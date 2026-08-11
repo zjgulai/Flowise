@@ -17,9 +17,21 @@ jobs:
                 node-version: [24.18.0]
         runs-on: ${{ matrix.platform }}
         env:
+            FLOWISE_CI_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+            FLOWISE_CI_EVENT_SHA: ${{ github.sha }}
             PUPPETEER_SKIP_DOWNLOAD: true
         steps:
             - uses: actions/checkout@v6
+              with:
+                  ref: ${{ env.FLOWISE_CI_CANDIDATE_SHA }}
+            - name: Verify CI source identity
+              run: |
+                  actual="$(git rev-parse HEAD)"
+                  [[ "$FLOWISE_CI_CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+                  [[ "$FLOWISE_CI_EVENT_SHA" =~ ^[0-9a-f]{40}$ ]]
+                  test "$actual" = "$FLOWISE_CI_CANDIDATE_SHA"
+                  printf '[flowise-ci] phase=source-identity event=%s candidate=%s checkout=%s\n' \
+                      "$FLOWISE_CI_EVENT_SHA" "$FLOWISE_CI_CANDIDATE_SHA" "$actual"
             - uses: pnpm/action-setup@v4
               with:
                   version: 10.26.0
@@ -40,6 +52,8 @@ jobs:
                   pnpm test:release
                   bash scripts/verify-release-source.sh
                   bash scripts/verify-security.sh
+            - name: Enforce the full-tree UI copy ratchet
+              run: pnpm ui:copy:check
             - run: pnpm lint
             - run: pnpm build
               env:
