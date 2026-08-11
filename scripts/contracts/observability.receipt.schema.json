@@ -68,40 +68,107 @@
                     "minItems": 6,
                     "maxItems": 6,
                     "uniqueItems": true,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": ["name", "observedAt", "ageSeconds"],
-                        "properties": {
-                            "name": { "$ref": "#/$defs/alertName" },
-                            "observedAt": { "$ref": "#/$defs/utcTimestamp" },
-                            "ageSeconds": { "type": "integer", "minimum": 0 }
+                    "prefixItems": [
+                        {
+                            "allOf": [
+                                { "$ref": "#/$defs/alertObservation" },
+                                { "type": "object", "properties": { "name": { "const": "http_5xx_ratio" } } }
+                            ]
+                        },
+                        {
+                            "allOf": [
+                                { "$ref": "#/$defs/alertObservation" },
+                                { "type": "object", "properties": { "name": { "const": "http_p95_latency" } } }
+                            ]
+                        },
+                        {
+                            "allOf": [
+                                { "$ref": "#/$defs/alertObservation" },
+                                { "type": "object", "properties": { "name": { "const": "process_restart" } } }
+                            ]
+                        },
+                        {
+                            "allOf": [
+                                { "$ref": "#/$defs/alertObservation" },
+                                { "type": "object", "properties": { "name": { "const": "disk_free" } } }
+                            ]
+                        },
+                        {
+                            "allOf": [
+                                { "$ref": "#/$defs/alertObservation" },
+                                { "type": "object", "properties": { "name": { "const": "csp_receiver_health" } } }
+                            ]
+                        },
+                        {
+                            "allOf": [
+                                { "$ref": "#/$defs/alertObservation" },
+                                { "type": "object", "properties": { "name": { "const": "release_staleness" } } }
+                            ]
                         }
-                    }
+                    ],
+                    "items": false
                 }
             }
         },
         "alertConfiguration": {
-            "type": "array",
-            "minItems": 6,
-            "maxItems": 6,
-            "uniqueItems": true,
-            "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["name", "query", "window", "threshold", "dataSource", "runbook", "noData"],
-                "properties": {
-                    "name": { "$ref": "#/$defs/alertName" },
-                    "query": { "type": "string", "minLength": 1 },
-                    "window": { "type": "string", "pattern": "^[1-9][0-9]*[smhd]$" },
-                    "threshold": { "type": "number" },
-                    "dataSource": { "enum": ["prometheus", "release_receipt", "csp_receipt"] },
-                    "runbook": { "type": "string", "pattern": "^docs/runbooks/[^\\u0000]+$" },
-                    "noData": { "enum": ["alert", "fail_closed"] }
+            "const": [
+                {
+                    "name": "http_5xx_ratio",
+                    "query": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m]))",
+                    "window": "5m",
+                    "threshold": 0.05,
+                    "dataSource": "prometheus",
+                    "runbook": "docs/runbooks/http-5xx.md",
+                    "noData": "alert"
+                },
+                {
+                    "name": "http_p95_latency",
+                    "query": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_ms_bucket[5m])))",
+                    "window": "5m",
+                    "threshold": 1000,
+                    "dataSource": "prometheus",
+                    "runbook": "docs/runbooks/http-latency.md",
+                    "noData": "alert"
+                },
+                {
+                    "name": "process_restart",
+                    "query": "changes(process_start_time_seconds[5m])",
+                    "window": "5m",
+                    "threshold": 0,
+                    "dataSource": "prometheus",
+                    "runbook": "docs/runbooks/process-restart.md",
+                    "noData": "alert"
+                },
+                {
+                    "name": "disk_free",
+                    "query": "node_filesystem_avail_bytes",
+                    "window": "5m",
+                    "threshold": 10737418240,
+                    "dataSource": "prometheus",
+                    "runbook": "docs/runbooks/disk-free.md",
+                    "noData": "alert"
+                },
+                {
+                    "name": "csp_receiver_health",
+                    "query": "csp_receiver_healthy",
+                    "window": "5m",
+                    "threshold": 1,
+                    "dataSource": "csp_receipt",
+                    "runbook": "docs/runbooks/csp-receiver.md",
+                    "noData": "fail_closed"
+                },
+                {
+                    "name": "release_staleness",
+                    "query": "flowise_release_age_seconds",
+                    "window": "5m",
+                    "threshold": 86400,
+                    "dataSource": "release_receipt",
+                    "runbook": "docs/runbooks/release-staleness.md",
+                    "noData": "fail_closed"
                 }
-            }
+            ]
         },
-        "alertConfigurationDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "alertConfigurationDigest": { "const": "3ac1b63b5265f9e5b821d7d2daff8a3019bbdeb24e5c37bc04a1c4bf22e24ed5" },
         "evidenceGrade": { "$ref": "#/$defs/evidenceGrade" },
         "providerCall": { "const": false }
     },
@@ -118,7 +185,17 @@
             "required": ["observedAt", "ageSeconds"],
             "properties": {
                 "observedAt": { "$ref": "#/$defs/utcTimestamp" },
-                "ageSeconds": { "type": "integer", "minimum": 0 }
+                "ageSeconds": { "type": "integer", "minimum": 0, "maximum": 300 }
+            }
+        },
+        "alertObservation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "observedAt", "ageSeconds"],
+            "properties": {
+                "name": { "$ref": "#/$defs/alertName" },
+                "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "ageSeconds": { "type": "integer", "minimum": 0, "maximum": 300 }
             }
         }
     }

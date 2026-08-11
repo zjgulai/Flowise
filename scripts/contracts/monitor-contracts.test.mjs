@@ -135,7 +135,7 @@ test('observability positive fixture produces a low-cardinality ready receipt', 
     const input = fixture('observability/ready.json')
     assert.deepEqual(validateSchema(schemas.observabilityInput, input), [])
 
-    const receipt = evaluateObservability(input)
+    const receipt = evaluateObservability(input, { now: '2026-08-10T12:05:00.000Z' })
     assert.deepEqual(validateSchema(schemas.observabilityReceipt, receipt), [])
     assert.equal(receipt.status, 'ready')
     assert.deepEqual(receipt.labels, ['method', 'route', 'status'])
@@ -148,6 +148,40 @@ test('observability positive fixture produces a low-cardinality ready receipt', 
     assert.match(receipt.alertConfigurationDigest, /^[0-9a-f]{64}$/)
     assert.equal(receipt.alertConfigurationDigest, createHash('sha256').update(JSON.stringify(receipt.alertConfiguration)).digest('hex'))
     assert.equal(receipt.providerCall, false)
+})
+
+test('observability rejects an otherwise self-consistent historical evidence replay against the trusted clock', () => {
+    const replay = fixture('observability/ready.json')
+    replay.evaluatedAt = '2020-01-01T00:05:00.000Z'
+    replay.observedAt = '2020-01-01T00:05:00.000Z'
+    replay.runtime.observedAt = '2020-01-01T00:04:00.000Z'
+    replay.scrape.observedAt = '2020-01-01T00:04:30.000Z'
+    replay.alerts.forEach((alert) => (alert.observedAt = '2020-01-01T00:04:45.000Z'))
+
+    assert.deepEqual(validateSchema(schemas.observabilityInput, replay), [])
+    assertContractError(() => evaluateObservability(replay, { now: '2026-08-11T00:00:00.000Z' }), 'EVIDENCE_STALE')
+})
+
+test('observability receipt schema binds the declared age ceiling and every canonical alert identity', () => {
+    const input = fixture('observability/ready.json')
+    const receipt = evaluateObservability(input, { now: '2026-08-10T12:05:00.000Z' })
+
+    for (const mutate of [
+        (candidate) => (candidate.observations.runtime.ageSeconds = 301),
+        (candidate) => (candidate.observations.alerts[0].ageSeconds = 301)
+    ]) {
+        const stale = clone(receipt)
+        mutate(stale)
+        assert.notDeepEqual(validateSchema(schemas.observabilityReceipt, stale), [])
+    }
+
+    const repeatedObservation = clone(receipt)
+    repeatedObservation.observations.alerts.forEach((alert) => (alert.name = 'http_5xx_ratio'))
+    assert.notDeepEqual(validateSchema(schemas.observabilityReceipt, repeatedObservation), [])
+
+    const repeatedConfiguration = clone(receipt)
+    repeatedConfiguration.alertConfiguration.forEach((alert) => (alert.name = 'http_5xx_ratio'))
+    assert.notDeepEqual(validateSchema(schemas.observabilityReceipt, repeatedConfiguration), [])
 })
 
 test('observability rejects future and stale evidence relative to an explicit evaluation anchor', () => {

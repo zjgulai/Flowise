@@ -37,6 +37,13 @@ export const validateSchema = (schema, value) => {
     const errors = []
 
     const visit = (current, candidate, path, rootSchema) => {
+        if (current === true) return
+        if (current === false) {
+            errors.push(`${path}: is not allowed by the contract`)
+            return
+        }
+        for (const branch of current.allOf ?? []) visit(branch, candidate, path, rootSchema)
+
         if (current.$ref) {
             const referenced = resolveLocalRef(rootSchema, current.$ref)
             if (!referenced) {
@@ -87,7 +94,11 @@ export const validateSchema = (schema, value) => {
             if (current.uniqueItems && new Set(candidate.map((item) => JSON.stringify(item))).size !== candidate.length) {
                 errors.push(`${path}: items must be unique`)
             }
-            if (current.items) candidate.forEach((item, index) => visit(current.items, item, `${path}[${index}]`, rootSchema))
+            const prefixItems = current.prefixItems ?? []
+            candidate.forEach((item, index) => {
+                if (index < prefixItems.length) visit(prefixItems[index], item, `${path}[${index}]`, rootSchema)
+                else if (current.items !== undefined) visit(current.items, item, `${path}[${index}]`, rootSchema)
+            })
             return
         }
 
@@ -123,6 +134,9 @@ export const validateSchema = (schema, value) => {
 
         if (current.minimum !== undefined && candidate < current.minimum) {
             errors.push(`${path}: must be at least ${current.minimum}`)
+        }
+        if (current.maximum !== undefined && candidate > current.maximum) {
+            errors.push(`${path}: must be at most ${current.maximum}`)
         }
     }
 
@@ -299,7 +313,8 @@ export const evaluateObservability = (input, { now = new Date().toISOString() } 
 
     if (!isStrictUtcTimestamp(now)) throw new ContractError('CLOCK_INVALID')
     const evaluatedAt = Date.parse(input.evaluatedAt)
-    if (evaluatedAt > Date.parse(now)) throw new ContractError('CLOCK_INVALID')
+    const trustedNow = Date.parse(now)
+    if (evaluatedAt > trustedNow) throw new ContractError('CLOCK_INVALID')
 
     const identities = [input.candidateRevision, input.ociRevision, input.runtime.revision, input.runtime.buildInfoRevision]
     if (new Set(identities).size !== 1) throw new ContractError('IDENTITY_MISMATCH')
@@ -329,6 +344,7 @@ export const evaluateObservability = (input, { now = new Date().toISOString() } 
         ...requiredAlerts.map((name) => alertsByName.get(name).observedAt)
     ]
     if (evidenceTimes.some((timestamp) => Date.parse(timestamp) > evaluatedAt)) throw new ContractError('CLOCK_INVALID')
+    if (trustedNow - evaluatedAt > input.maxAgeSeconds * 1000) throw new ContractError('EVIDENCE_STALE')
     if (evidenceTimes.some((timestamp) => evaluatedAt - Date.parse(timestamp) > input.maxAgeSeconds * 1000)) {
         throw new ContractError('EVIDENCE_STALE')
     }
