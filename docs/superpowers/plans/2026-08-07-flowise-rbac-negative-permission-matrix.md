@@ -187,7 +187,8 @@ loginActivity: view   (仅 Enterprise)
 reaper_1:
   - 按 1 → 2 → 3 顺序调用 Owner API；每个首次存在的对象期望 HTTP 200
   - 核验 workspace/organization 删除路径已使 member session 失效
-  - 记录每个 API 的 status 与固定 message，不保存 session token
+  - 仅记录每个 API 的 HTTP status 与本地映射的固定结果码（workspace_membership_deleted、
+    organization_membership_deleted、member_role_deleted）；不得序列化响应 body、对象 ID、时间戳或 session token
 
 reaper_2（幂等验证）:
   - 以相同 ID 重复 1 → 2 → 3
