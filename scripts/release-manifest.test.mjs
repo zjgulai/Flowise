@@ -1816,6 +1816,28 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
     }
 })
 
+test('production dependency remediation pins the reviewed YAML and ID generator releases across source and static contracts', () => {
+    const rootPackageJson = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'))
+    const componentsPackageJson = JSON.parse(
+        readFileSync(fileURLToPath(new URL('../packages/components/package.json', import.meta.url)), 'utf8')
+    )
+    const serverPackageJson = JSON.parse(readFileSync(fileURLToPath(new URL('../packages/server/package.json', import.meta.url)), 'utf8'))
+    const securityScript = readFileSync(SECURITY_SCRIPT_PATH, 'utf8')
+    const lockfile = readFileSync(fileURLToPath(new URL('../pnpm-lock.yaml', import.meta.url)), 'utf8')
+
+    assert.equal(rootPackageJson.devDependencies?.['js-yaml'], '4.3.1')
+    assert.equal(rootPackageJson.pnpm?.overrides?.['js-yaml'], '4.3.1')
+    assert.equal(rootPackageJson.pnpm?.overrides?.['nanoid@>=3.0.0 <3.3.17'], '3.3.17')
+    assert.equal(rootPackageJson.pnpm?.overrides?.['nanoid@>=5.0.0 <5.1.16'], '5.1.16')
+    assert.equal(componentsPackageJson.dependencies?.['js-yaml'], '4.3.1')
+    assert.equal(serverPackageJson.dependencies?.nanoid, '3.3.17')
+    assert.match(securityScript, /'"js-yaml": "4\.3\.1"' 1 "Components declares the OpenAPI Toolkit runtime YAML dependency"/)
+    assert.doesNotMatch(lockfile, /(?:js-yaml(?:@|:\s)4\.3\.0|nanoid(?:@|:\s)(?:3\.3\.(?:6|7|16)|5\.0\.7))/)
+    assert.match(lockfile, /^  js-yaml@4\.3\.1:$/m)
+    assert.match(lockfile, /^  nanoid@3\.3\.17:$/m)
+    assert.match(lockfile, /^  nanoid@5\.1\.16:$/m)
+})
+
 test('root Dockerfile removes dynamic Turbo output and supplies a validated epoch to fontconfig', () => {
     const dockerfile = readFileSync(ROOT_DOCKERFILE_PATH, 'utf8')
     const buildLock = readFileSync(APK_BUILD_LOCK_PATH, 'utf8').trim().split('\n')
