@@ -21,6 +21,8 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const pnpmExecutable = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const SAFE_FAILURE_REASONS = new Set([
     'candidate-revision-unavailable',
+    'candidate-source-changed',
+    'candidate-source-dirty',
     'child-environment-isolation-failed',
     'local-environment-file-check-failed',
     'local-environment-file-present',
@@ -48,11 +50,21 @@ export const normalizeCandidateRevision = (value) => {
     return revision
 }
 
-export const resolveCandidateRevision = (cwd = packageRoot, runGit = execFileSync) => {
+export const resolveCandidateRevision = (cwd = packageRoot, runGit = execFileSync, expectedRevision) => {
     try {
-        return normalizeCandidateRevision(
+        const revision = normalizeCandidateRevision(
             runGit('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
         )
+        const sourceStatus = runGit('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+            cwd,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore']
+        })
+        if (sourceStatus.trim()) throw new RunnerFailure('candidate-source-dirty')
+        if (expectedRevision !== undefined && revision !== normalizeCandidateRevision(expectedRevision)) {
+            throw new RunnerFailure('candidate-source-changed')
+        }
+        return revision
     } catch (error) {
         if (error instanceof RunnerFailure) throw error
         throw new RunnerFailure('candidate-revision-unavailable')
@@ -566,7 +578,10 @@ export const runAuthenticatedE2E = async (args = process.argv.slice(2)) => {
                 throw new RunnerFailure('server-exited-during-browser', outcome.result)
             }
             if (outcome.kind === 'server-spawn-error') throw new RunnerFailure('server-spawn-failed')
-            if (outcome.kind === 'cypress-exit') runExitCode = toExitCode(outcome.result.code, outcome.result.signal)
+            if (outcome.kind === 'cypress-exit') {
+                resolveCandidateRevision(packageRoot, execFileSync, candidateRevision)
+                runExitCode = toExitCode(outcome.result.code, outcome.result.signal)
+            }
         }
     } catch (error) {
         const reason = error instanceof RunnerFailure ? error.reason : 'unexpected-runner-error'

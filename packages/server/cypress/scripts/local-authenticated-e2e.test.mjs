@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -27,6 +27,7 @@ import {
     isAllowedAutRequestUrl,
     normalizeCandidateRevision,
     parseRunnerArgs,
+    resolveCandidateRevision,
     resolveFinalExitCode,
     toExitCode,
     waitForPing
@@ -138,6 +139,32 @@ describe('candidate provenance contract', () => {
             }),
             '[flowise-e2e] phase=start run=run-1 url=http://127.0.0.1:3010 revision=0123456789abcdef0123456789abcdef01234567 node=24.18.0 browser=chrome specs=1\n'
         )
+    })
+
+    it('binds candidate revision only when the source tree is clean', async () => {
+        const directory = await mkdtemp(path.join(os.tmpdir(), 'flowise-e2e-source-test-'))
+        const trackedFile = path.join(directory, 'source.js')
+
+        try {
+            execFileSync('git', ['init', '--quiet'], { cwd: directory })
+            execFileSync('git', ['config', 'user.email', 'flowise-e2e@example.invalid'], { cwd: directory })
+            execFileSync('git', ['config', 'user.name', 'Flowise E2E'], { cwd: directory })
+            await writeFile(trackedFile, 'export const value = 1\n', 'utf8')
+            execFileSync('git', ['add', 'source.js'], { cwd: directory })
+            execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: directory })
+
+            const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: directory, encoding: 'utf8' }).trim()
+            assert.equal(resolveCandidateRevision(directory), revision)
+
+            await writeFile(trackedFile, 'export const value = 2\n', 'utf8')
+            assert.throws(() => resolveCandidateRevision(directory), /candidate-source-dirty/)
+
+            execFileSync('git', ['add', 'source.js'], { cwd: directory })
+            execFileSync('git', ['commit', '--quiet', '-m', 'changed fixture'], { cwd: directory })
+            assert.throws(() => resolveCandidateRevision(directory, execFileSync, revision), /candidate-source-changed/)
+        } finally {
+            await rm(directory, { recursive: true, force: true })
+        }
     })
 })
 
