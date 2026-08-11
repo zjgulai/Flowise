@@ -1786,20 +1786,37 @@ test('dirty manifest is rejected by require-clean verification', () => {
 
 test('main CI retains full coverage while bounding workspace and Jest concurrency for hosted-runner memory safety', () => {
     const workflow = readFileSync(MAIN_WORKFLOW_PATH, 'utf8')
+    const workflowDocument = parseWorkflowDocument(workflow, 'main CI')
     const buildJobStart = workflow.indexOf('    build:\n')
     const exactHeadJobStart = workflow.indexOf('    exact-head:\n')
     assert.ok(buildJobStart >= 0 && exactHeadJobStart > buildJobStart, 'main CI must keep separate merge-result and exact-head jobs')
     const buildJob = workflow.slice(buildJobStart, exactHeadJobStart)
-    const exactHeadJob = workflow.slice(exactHeadJobStart)
+    const exactHeadJob = workflowDocument.jobs?.['exact-head']
+    assert.ok(exactHeadJob && typeof exactHeadJob === 'object' && !Array.isArray(exactHeadJob), 'main CI exact-head job is missing')
+    const exactHeadSteps = exactHeadJob.steps
+    assert.ok(Array.isArray(exactHeadSteps), 'main CI exact-head steps are missing')
 
     assert.match(workflow, /^ {12}FLOWISE_CI_CANDIDATE_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}\s*$/m)
     assert.match(workflow, /^ {12}FLOWISE_CI_EVENT_SHA: \$\{\{ github\.sha \}\}\s*$/m)
     assert.match(buildJob, /^ {12}- uses: actions\/checkout@v6\s*$/m)
     assert.doesNotMatch(buildJob, /^ {18}ref: \$\{\{ env\.FLOWISE_CI_CANDIDATE_SHA \}\}\s*$/m)
     assert.match(buildJob, /test "\$actual" = "\$FLOWISE_CI_EVENT_SHA"/)
-    assert.match(exactHeadJob, /^ {8}if: github\.event_name == 'pull_request'\s*$/m)
-    assert.match(exactHeadJob, /^ {18}ref: \$\{\{ env\.FLOWISE_CI_CANDIDATE_SHA \}\}\s*$/m)
-    assert.match(exactHeadJob, /test "\$actual" = "\$FLOWISE_CI_CANDIDATE_SHA"/)
+    assert.equal(exactHeadJob.if, "github.event_name == 'pull_request'")
+    const exactHeadCheckout = exactHeadSteps.filter((step) => step?.uses === 'actions/checkout@v6')
+    assert.equal(exactHeadCheckout.length, 1)
+    assert.equal(exactHeadCheckout[0].with?.ref, '${{ env.FLOWISE_CI_CANDIDATE_SHA }}')
+    assert.match(
+        requireNamedWorkflowStep(workflowDocument, 'exact-head', 'Verify CI source identity', 'main CI source identity').run,
+        /test "\$actual" = "\$FLOWISE_CI_CANDIDATE_SHA"/
+    )
+    const exactHeadCypress = requireNamedWorkflowStep(workflowDocument, 'exact-head', 'Cypress test', 'main CI exact-head Cypress')
+    assert.equal(exactHeadCypress['working-directory'], 'packages/server')
+    assert.equal(exactHeadCypress.run, 'pnpm cypress:ci')
+    for (const jobId of ['build', 'exact-head']) {
+        const checkoutSteps = workflowDocument.jobs[jobId].steps.filter((step) => step?.uses === 'actions/checkout@v6')
+        assert.equal(checkoutSteps.length, 1, `${jobId} must contain exactly one checkout step`)
+        assert.equal(checkoutSteps[0].with?.['persist-credentials'], false, `${jobId} checkout must not persist credentials`)
+    }
     assert.equal(workflow.match(/phase=source-identity event=%s candidate=%s checkout=%s/g)?.length, 2)
     assert.equal(
         workflow.match(
@@ -1815,8 +1832,11 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
     assert.equal(workflow.match(/^ {14}run: pnpm cypress:ci\s*$/gm)?.length, 2)
     assert.equal(workflow.match(/^\s+uses:\s*cypress-io\/github-action@/gm)?.length ?? 0, 0)
     assert.equal(workflow.match(/^\s+run:\s*pnpm metadata:i18n:validate:built\s*$/gm)?.length, 2)
-    for (const job of [buildJob, exactHeadJob]) {
-        assert.ok(job.indexOf('run: pnpm build') < job.indexOf('run: pnpm metadata:i18n:validate:built'))
+    for (const jobId of ['build', 'exact-head']) {
+        const steps = workflowDocument.jobs[jobId].steps
+        const buildIndex = steps.findIndex((step) => step?.run === 'pnpm build')
+        const metadataIndex = steps.findIndex((step) => step?.run === 'pnpm metadata:i18n:validate:built')
+        assert.ok(buildIndex >= 0 && metadataIndex > buildIndex, `${jobId} must validate metadata after the build`)
     }
     assert.ok(workflow.indexOf('run: pnpm ui:copy:check') < workflow.indexOf('name: Cypress test'))
 
@@ -1843,7 +1863,31 @@ test('production dependency remediation pins the reviewed YAML and ID generator 
     assert.equal(componentsPackageJson.dependencies?.['js-yaml'], '4.3.1')
     assert.equal(serverPackageJson.dependencies?.nanoid, '3.3.17')
     assert.match(securityScript, /'"js-yaml": "4\.3\.1"' 1 "Components declares the OpenAPI Toolkit runtime YAML dependency"/)
-    assert.doesNotMatch(lockfile, /(?:js-yaml(?:@|:\s)4\.3\.0|nanoid(?:@|:\s)(?:3\.3\.(?:6|7|16)|5\.0\.7))/)
+    assert.doesNotMatch(lockfile, /js-yaml(?:@|:\s)4\.3\.0/)
+    const isVulnerableNanoidVersion = (version) => {
+        const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+        if (!match) return false
+        const [, majorText, minorText, patchText] = match
+        const [major, minor, patch] = [majorText, minorText, patchText].map(Number)
+        return (major === 3 && (minor < 3 || (minor === 3 && patch < 17))) || (major === 5 && (minor < 1 || (minor === 1 && patch < 16)))
+    }
+    for (const vulnerable of ['3.0.0', '3.2.0', '3.3.6', '3.3.8', '3.3.16', '5.0.0', '5.0.7', '5.1.15']) {
+        assert.equal(isVulnerableNanoidVersion(vulnerable), true, `${vulnerable} must remain excluded`)
+    }
+    for (const patched of ['3.3.17', '3.4.0', '5.1.16', '5.2.0']) {
+        assert.equal(isVulnerableNanoidVersion(patched), false, `${patched} must remain allowed`)
+    }
+    const lockDocument = loadYaml(lockfile)
+    const lockedNanoidVersions = [...Object.keys(lockDocument.packages ?? {}), ...Object.keys(lockDocument.snapshots ?? {})].flatMap(
+        (key) => {
+            const match = /^nanoid@(\d+\.\d+\.\d+)(?:\(|$)/.exec(key)
+            return match ? [match[1]] : []
+        }
+    )
+    assert.ok(lockedNanoidVersions.length > 0, 'lockfile must contain Nanoid package entries')
+    for (const version of lockedNanoidVersions) {
+        assert.equal(isVulnerableNanoidVersion(version), false, `lockfile contains vulnerable Nanoid ${version}`)
+    }
     assert.match(lockfile, /^ {2}js-yaml@4\.3\.1:$/m)
     assert.match(lockfile, /^ {2}nanoid@3\.3\.17:$/m)
     assert.match(lockfile, /^ {2}nanoid@5\.1\.16:$/m)
