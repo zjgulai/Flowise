@@ -162,9 +162,13 @@ export const evaluateReleaseStaleness = (input) => {
 
     const candidateIdentities = [input.mainRevision, candidateManifest.revision, candidateManifest.ociRevision]
     const deployedIdentities = [deployment.revision, runtime.revision]
-    const identities = deployment.operation === 'rollback' ? candidateIdentities : [...candidateIdentities, ...deployedIdentities]
+    const rolledBack = deployment.operation === 'rollback'
+    const identities = rolledBack ? candidateIdentities : [...candidateIdentities, ...deployedIdentities]
     if (new Set(identities).size !== 1 || new Set(deployedIdentities).size !== 1) {
         throw new ContractError('IDENTITY_MISMATCH')
+    }
+    if (rolledBack && deployment.revision === candidateManifest.revision) {
+        throw new ContractError('ROLLBACK_NOT_EFFECTIVE')
     }
 
     const observedAt = Date.parse(input.observedAt)
@@ -187,7 +191,6 @@ export const evaluateReleaseStaleness = (input) => {
     if (backupAgeSeconds > input.maxAgeSeconds) reasons.push('backup_age_exceeded')
     if (diskAgeSeconds > input.maxAgeSeconds) reasons.push('disk_age_exceeded')
 
-    const rolledBack = deployment.operation === 'rollback'
     return {
         schemaVersion: 1,
         status: rolledBack ? 'rolled_back' : reasons.length > 0 ? 'stale' : 'fresh',

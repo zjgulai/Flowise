@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 
 import { ContractError, validateSchema } from './monitor-contracts.mjs'
 
@@ -34,6 +35,7 @@ const directiveOrder = [
     'other'
 ]
 const dispositionOrder = ['report', 'enforce', 'unknown']
+const evidenceRoot = '/var/lib/flowise/evidence/csp/'
 
 const requireSchema = (input) => {
     const issues = validateSchema(cspSchemas.input, input)
@@ -45,6 +47,10 @@ const secondsBetween = (later, earlier) => Math.floor((Date.parse(later) - Date.
 export const evaluateCspObservation = (input) => {
     requireSchema(input)
 
+    const normalizedSourcePath = path.posix.normalize(input.source.path)
+    if (normalizedSourcePath !== input.source.path || !normalizedSourcePath.startsWith(evidenceRoot)) {
+        throw new ContractError('SOURCE_PATH_INVALID')
+    }
     if (input.candidateRevision !== input.ociRevision) throw new ContractError('IDENTITY_MISMATCH')
     if (modeRank[input.modes.reportOnly] <= modeRank[input.modes.enforcement]) {
         throw new ContractError('MODE_NOT_STRICTER')
@@ -54,7 +60,8 @@ export const evaluateCspObservation = (input) => {
     const endedAt = Date.parse(input.window.endedAt)
     const exportedAt = Date.parse(input.source.exportedAt)
     const evaluatedAt = Date.parse(input.evaluatedAt)
-    if (!(startedAt < endedAt && endedAt <= exportedAt && exportedAt <= evaluatedAt)) {
+    const durationSeconds = secondsBetween(input.window.endedAt, input.window.startedAt)
+    if (!(startedAt < endedAt && durationSeconds >= 1 && endedAt <= exportedAt && exportedAt <= evaluatedAt)) {
         throw new ContractError('CLOCK_INVALID')
     }
     if (input.receiver.windowStartedAt !== input.window.startedAt || input.receiver.windowEndedAt !== input.window.endedAt) {
@@ -108,7 +115,7 @@ export const evaluateCspObservation = (input) => {
         window: {
             startedAt: input.window.startedAt,
             endedAt: input.window.endedAt,
-            durationSeconds: secondsBetween(input.window.endedAt, input.window.startedAt)
+            durationSeconds
         },
         modes: {
             enforcement: input.modes.enforcement,

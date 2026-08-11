@@ -55,6 +55,13 @@ test('semantic record identity is independent of source line movement', () => {
     assert.deepEqual(compact.debts, shifted.debts)
 })
 
+test('TypeScript angle-bracket assertions are parsed using the source file extension', () => {
+    const result = scan('const typedValue = <DisplayValue>inputValue', 'utils/display-value.ts')
+
+    assert.deepEqual(result.debts, [])
+    assert.deepEqual(result.machineViolations, [])
+})
+
 test('baseline and receipt schemas are strict Draft 2020-12 contracts', () => {
     for (const schema of Object.values(schemas)) {
         assert.equal(schema.$schema, 'https://json-schema.org/draft/2020-12/schema')

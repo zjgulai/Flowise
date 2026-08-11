@@ -17,6 +17,52 @@
         "expectedCode": "SCHEMA_INVALID"
     },
     {
+        "name": "evidence source traversal aliases are rejected",
+        "base": "clean.json",
+        "operations": [
+            {
+                "op": "replace",
+                "path": "/source/path",
+                "value": "/var/lib/flowise/evidence/csp/revision/../../../../../tmp/events.jsonl"
+            }
+        ],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
+        "name": "evidence source dot segment aliases are rejected",
+        "base": "clean.json",
+        "operations": [
+            {
+                "op": "replace",
+                "path": "/source/path",
+                "value": "/var/lib/flowise/evidence/csp/./revision/events.jsonl"
+            }
+        ],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
+        "name": "evidence source repeated slash aliases are rejected",
+        "base": "clean.json",
+        "operations": [
+            {
+                "op": "replace",
+                "path": "/source/path",
+                "value": "/var/lib/flowise/evidence/csp//revision/events.jsonl"
+            }
+        ],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
+        "name": "evidence source outside the controlled root is rejected",
+        "base": "clean.json",
+        "operations": [{ "op": "replace", "path": "/source/path", "value": "/var/log/flowise/csp-events.jsonl" }],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
         "name": "an unreachable receiver fails closed",
         "base": "clean.json",
         "operations": [{ "op": "replace", "path": "/receiver/reachable", "value": false }],

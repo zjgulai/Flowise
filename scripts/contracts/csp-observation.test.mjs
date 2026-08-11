@@ -78,6 +78,16 @@ test('CSP schemas reject non-RFC3339 and impossible UTC timestamps', () => {
     }
 })
 
+test('CSP observation rejects windows shorter than one whole second', () => {
+    const input = fixture('clean.json')
+    input.window.endedAt = '2026-08-10T10:00:00.999Z'
+    input.receiver.windowEndedAt = input.window.endedAt
+    input.source.exportedAt = input.window.endedAt
+
+    assert.deepEqual(validateSchema(cspSchemas.input, input), [])
+    assertContractError(() => evaluateCspObservation(input), 'CLOCK_INVALID')
+})
+
 for (const scenario of fixture('negative-cases.json')) {
     test(`CSP observation fails closed: ${scenario.name}`, () => {
         const input = applyOperations(fixture(scenario.base), scenario.operations)

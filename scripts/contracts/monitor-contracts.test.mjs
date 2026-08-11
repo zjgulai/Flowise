@@ -92,11 +92,22 @@ test('release staleness treats a consistent rollback receipt as an explicit term
     input.deployment.operation = 'rollback'
     input.deployment.state = 'manual_rollback_complete'
     input.deployment.receiptPath = input.deployment.receiptPath.replace('cutover-receipt', 'rollback-receipt')
+    input.deployment.revision = '2222222222222222222222222222222222222222'
+    input.runtime.revision = input.deployment.revision
 
     const receipt = evaluateReleaseStaleness(input)
     assert.equal(receipt.status, 'rolled_back')
     assert.equal(receipt.phase, 'rolled_back')
     assert.deepEqual(validateSchema(schemas.releaseReceipt, receipt), [])
+})
+
+test('release staleness rejects rollback receipts while the candidate is still deployed', () => {
+    const input = fixture('release-staleness/fresh.json')
+    input.deployment.operation = 'rollback'
+    input.deployment.state = 'manual_rollback_complete'
+    input.deployment.receiptPath = input.deployment.receiptPath.replace('cutover-receipt', 'rollback-receipt')
+
+    assertContractError(() => evaluateReleaseStaleness(input), 'ROLLBACK_NOT_EFFECTIVE')
 })
 
 test('observability positive fixture produces a low-cardinality ready receipt', () => {

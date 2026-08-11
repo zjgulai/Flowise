@@ -410,8 +410,9 @@ export const scanSourceText = (source, relativePath = 'views/fixture/index.jsx')
     let scopeManager
     try {
         ;({ ast, scopeManager } = parseForESLint(source, {
-            ecmaFeatures: { jsx: true },
+            ecmaFeatures: { jsx: path.extname(relativePath) !== '.ts' },
             ecmaVersion: 'latest',
+            filePath: relativePath,
             range: true,
             sourceType: 'module'
         }))
