@@ -174,6 +174,29 @@ test('observability does not stack evaluation-anchor and observation age allowan
     assertContractError(() => evaluateObservability(replay, { now: '2026-08-10T12:10:00.000Z' }), 'EVIDENCE_STALE')
 })
 
+test('observability receipt records the trusted timestamp used for every reported age', () => {
+    const input = fixture('observability/ready.json')
+    input.evaluatedAt = '2026-08-10T12:02:00.000Z'
+    const trustedNow = '2026-08-10T12:04:00.000Z'
+
+    const receipt = evaluateObservability(input, { now: trustedNow })
+    assert.equal(receipt.evaluatedAt, trustedNow)
+    assert.equal(receipt.observations.snapshot.ageSeconds, 240)
+    assert.equal(receipt.observations.runtime.ageSeconds, 300)
+    assert.deepEqual(validateSchema(schemas.observabilityReceipt, receipt), [])
+})
+
+test('schema equality follows JSON number and object semantics', () => {
+    assert.deepEqual(validateSchema({ const: 0 }, -0), [])
+    assert.notDeepEqual(validateSchema({ type: 'array', uniqueItems: true }, [0, -0]), [])
+
+    const valuesWithReorderedKeys = [
+        { name: 'same', nested: { left: 1, right: 2 } },
+        { nested: { right: 2, left: 1 }, name: 'same' }
+    ]
+    assert.notDeepEqual(validateSchema({ type: 'array', uniqueItems: true }, valuesWithReorderedKeys), [])
+})
+
 test('observability receipt schema binds the declared age ceiling and every canonical alert identity', () => {
     const input = fixture('observability/ready.json')
     const receipt = evaluateObservability(input, { now: input.evaluatedAt })

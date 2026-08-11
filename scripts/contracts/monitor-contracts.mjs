@@ -11,25 +11,19 @@ export const schemas = Object.freeze({
 })
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
-const sameJsonValue = (left, right) => {
-    if (Object.is(left, right)) return true
-    if (Array.isArray(left) || Array.isArray(right)) {
-        return (
-            Array.isArray(left) &&
-            Array.isArray(right) &&
-            left.length === right.length &&
-            left.every((value, index) => sameJsonValue(value, right[index]))
-        )
+const canonicalJsonToken = (value) => {
+    if (Array.isArray(value)) return `[${value.map(canonicalJsonToken).join(',')}]`
+    if (isObject(value)) {
+        return `{${Object.keys(value)
+            .sort()
+            .map((key) => `${JSON.stringify(key)}:${canonicalJsonToken(value[key])}`)
+            .join(',')}}`
     }
-    if (!isObject(left) || !isObject(right)) return false
-
-    const leftKeys = Object.keys(left).sort()
-    const rightKeys = Object.keys(right).sort()
-    return (
-        leftKeys.length === rightKeys.length &&
-        leftKeys.every((key, index) => key === rightKeys[index] && sameJsonValue(left[key], right[key]))
-    )
+    if (typeof value === 'number' && !Number.isFinite(value)) return `non-json-number:${String(value)}`
+    if (value === undefined) return 'non-json:undefined'
+    return JSON.stringify(value)
 }
+const sameJsonValue = (left, right) => canonicalJsonToken(left) === canonicalJsonToken(right)
 const utcTimestampPattern = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$/
 
 const isStrictUtcTimestamp = (value) => {
@@ -109,10 +103,7 @@ export const validateSchema = (schema, value) => {
             if (current.maxItems !== undefined && candidate.length > current.maxItems) {
                 errors.push(`${path}: must contain at most ${current.maxItems} items`)
             }
-            if (
-                current.uniqueItems &&
-                candidate.some((item, index) => candidate.slice(0, index).some((previous) => sameJsonValue(item, previous)))
-            ) {
+            if (current.uniqueItems && new Set(candidate.map(canonicalJsonToken)).size !== candidate.length) {
                 errors.push(`${path}: items must be unique`)
             }
             const prefixItems = current.prefixItems ?? []
@@ -373,7 +364,7 @@ export const evaluateObservability = (input, { now = new Date().toISOString() } 
     return {
         schemaVersion: 1,
         status: 'ready',
-        evaluatedAt: input.evaluatedAt,
+        evaluatedAt: now,
         maxAgeSeconds: input.maxAgeSeconds,
         observedAt: input.observedAt,
         candidateRevision: input.candidateRevision,
