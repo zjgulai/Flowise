@@ -11,7 +11,25 @@ export const schemas = Object.freeze({
 })
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
-const sameJsonValue = (left, right) => JSON.stringify(left) === JSON.stringify(right)
+const sameJsonValue = (left, right) => {
+    if (Object.is(left, right)) return true
+    if (Array.isArray(left) || Array.isArray(right)) {
+        return (
+            Array.isArray(left) &&
+            Array.isArray(right) &&
+            left.length === right.length &&
+            left.every((value, index) => sameJsonValue(value, right[index]))
+        )
+    }
+    if (!isObject(left) || !isObject(right)) return false
+
+    const leftKeys = Object.keys(left).sort()
+    const rightKeys = Object.keys(right).sort()
+    return (
+        leftKeys.length === rightKeys.length &&
+        leftKeys.every((key, index) => key === rightKeys[index] && sameJsonValue(left[key], right[key]))
+    )
+}
 const utcTimestampPattern = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$/
 
 const isStrictUtcTimestamp = (value) => {
@@ -91,7 +109,10 @@ export const validateSchema = (schema, value) => {
             if (current.maxItems !== undefined && candidate.length > current.maxItems) {
                 errors.push(`${path}: must contain at most ${current.maxItems} items`)
             }
-            if (current.uniqueItems && new Set(candidate.map((item) => JSON.stringify(item))).size !== candidate.length) {
+            if (
+                current.uniqueItems &&
+                candidate.some((item, index) => candidate.slice(0, index).some((previous) => sameJsonValue(item, previous)))
+            ) {
                 errors.push(`${path}: items must be unique`)
             }
             const prefixItems = current.prefixItems ?? []
@@ -306,7 +327,7 @@ const normalizeAlertConfiguration = ({ name, query, window, threshold, dataSourc
     runbook,
     noData
 })
-const observation = (evaluatedAt, observedAt) => ({ observedAt, ageSeconds: secondsBetween(evaluatedAt, observedAt) })
+const observation = (trustedNow, observedAt) => ({ observedAt, ageSeconds: secondsBetween(trustedNow, observedAt) })
 
 export const evaluateObservability = (input, { now = new Date().toISOString() } = {}) => {
     requireSchema(schemas.observabilityInput, input)
@@ -345,7 +366,7 @@ export const evaluateObservability = (input, { now = new Date().toISOString() } 
     ]
     if (evidenceTimes.some((timestamp) => Date.parse(timestamp) > evaluatedAt)) throw new ContractError('CLOCK_INVALID')
     if (trustedNow - evaluatedAt > input.maxAgeSeconds * 1000) throw new ContractError('EVIDENCE_STALE')
-    if (evidenceTimes.some((timestamp) => evaluatedAt - Date.parse(timestamp) > input.maxAgeSeconds * 1000)) {
+    if (evidenceTimes.some((timestamp) => trustedNow - Date.parse(timestamp) > input.maxAgeSeconds * 1000)) {
         throw new ContractError('EVIDENCE_STALE')
     }
 
@@ -369,10 +390,10 @@ export const evaluateObservability = (input, { now = new Date().toISOString() } 
         },
         labels: [...input.privacy.labels],
         observations: {
-            snapshot: observation(input.evaluatedAt, input.observedAt),
-            runtime: observation(input.evaluatedAt, input.runtime.observedAt),
-            scrape: observation(input.evaluatedAt, input.scrape.observedAt),
-            alerts: requiredAlerts.map((name) => ({ name, ...observation(input.evaluatedAt, alertsByName.get(name).observedAt) }))
+            snapshot: observation(now, input.observedAt),
+            runtime: observation(now, input.runtime.observedAt),
+            scrape: observation(now, input.scrape.observedAt),
+            alerts: requiredAlerts.map((name) => ({ name, ...observation(now, alertsByName.get(name).observedAt) }))
         },
         alertConfiguration: canonicalAlertConfiguration.map((configuration) => ({ ...configuration })),
         alertConfigurationDigest,

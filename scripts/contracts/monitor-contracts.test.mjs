@@ -135,7 +135,7 @@ test('observability positive fixture produces a low-cardinality ready receipt', 
     const input = fixture('observability/ready.json')
     assert.deepEqual(validateSchema(schemas.observabilityInput, input), [])
 
-    const receipt = evaluateObservability(input, { now: '2026-08-10T12:05:00.000Z' })
+    const receipt = evaluateObservability(input, { now: input.evaluatedAt })
     assert.deepEqual(validateSchema(schemas.observabilityReceipt, receipt), [])
     assert.equal(receipt.status, 'ready')
     assert.deepEqual(receipt.labels, ['method', 'route', 'status'])
@@ -162,9 +162,21 @@ test('observability rejects an otherwise self-consistent historical evidence rep
     assertContractError(() => evaluateObservability(replay, { now: '2026-08-11T00:00:00.000Z' }), 'EVIDENCE_STALE')
 })
 
+test('observability does not stack evaluation-anchor and observation age allowances', () => {
+    const replay = fixture('observability/ready.json')
+    replay.evaluatedAt = '2026-08-10T12:05:00.000Z'
+    replay.observedAt = '2026-08-10T12:00:00.000Z'
+    replay.runtime.observedAt = replay.observedAt
+    replay.scrape.observedAt = replay.observedAt
+    replay.alerts.forEach((alert) => (alert.observedAt = replay.observedAt))
+
+    assert.deepEqual(validateSchema(schemas.observabilityInput, replay), [])
+    assertContractError(() => evaluateObservability(replay, { now: '2026-08-10T12:10:00.000Z' }), 'EVIDENCE_STALE')
+})
+
 test('observability receipt schema binds the declared age ceiling and every canonical alert identity', () => {
     const input = fixture('observability/ready.json')
-    const receipt = evaluateObservability(input, { now: '2026-08-10T12:05:00.000Z' })
+    const receipt = evaluateObservability(input, { now: input.evaluatedAt })
 
     for (const mutate of [
         (candidate) => (candidate.observations.runtime.ageSeconds = 301),
@@ -182,12 +194,18 @@ test('observability receipt schema binds the declared age ceiling and every cano
     const repeatedConfiguration = clone(receipt)
     repeatedConfiguration.alertConfiguration.forEach((alert) => (alert.name = 'http_5xx_ratio'))
     assert.notDeepEqual(validateSchema(schemas.observabilityReceipt, repeatedConfiguration), [])
+
+    const reorderedConfigurationKeys = clone(receipt)
+    reorderedConfigurationKeys.alertConfiguration = reorderedConfigurationKeys.alertConfiguration.map((alert) =>
+        Object.fromEntries(Object.entries(alert).reverse())
+    )
+    assert.deepEqual(validateSchema(schemas.observabilityReceipt, reorderedConfigurationKeys), [])
 })
 
 test('observability rejects future and stale evidence relative to an explicit evaluation anchor', () => {
     const futureSnapshot = fixture('observability/ready.json')
     futureSnapshot.observedAt = '2999-01-01T00:00:00.000Z'
-    assertContractError(() => evaluateObservability(futureSnapshot), 'CLOCK_INVALID')
+    assertContractError(() => evaluateObservability(futureSnapshot, { now: '2026-08-10T12:00:00.000Z' }), 'CLOCK_INVALID')
 
     const futureAnchor = fixture('observability/ready.json')
     futureAnchor.evaluatedAt = '2999-01-01T00:00:00.000Z'
@@ -195,7 +213,7 @@ test('observability rejects future and stale evidence relative to an explicit ev
     futureAnchor.runtime.observedAt = futureAnchor.evaluatedAt
     futureAnchor.scrape.observedAt = futureAnchor.evaluatedAt
     futureAnchor.alerts.forEach((alert) => (alert.observedAt = futureAnchor.evaluatedAt))
-    assertContractError(() => evaluateObservability(futureAnchor), 'CLOCK_INVALID')
+    assertContractError(() => evaluateObservability(futureAnchor, { now: '2026-08-10T12:00:00.000Z' }), 'CLOCK_INVALID')
 
     for (const mutate of [
         (input) => (input.runtime.observedAt = '2026-08-10T12:00:01.000Z'),
@@ -204,7 +222,7 @@ test('observability rejects future and stale evidence relative to an explicit ev
     ]) {
         const future = fixture('observability/ready.json')
         mutate(future)
-        assertContractError(() => evaluateObservability(future), 'CLOCK_INVALID')
+        assertContractError(() => evaluateObservability(future, { now: '2026-08-10T12:00:00.000Z' }), 'CLOCK_INVALID')
     }
 
     for (const mutate of [
@@ -215,12 +233,12 @@ test('observability rejects future and stale evidence relative to an explicit ev
     ]) {
         const stale = fixture('observability/ready.json')
         mutate(stale)
-        assertContractError(() => evaluateObservability(stale), 'EVIDENCE_STALE')
+        assertContractError(() => evaluateObservability(stale, { now: '2026-08-10T12:00:00.000Z' }), 'EVIDENCE_STALE')
     }
 
     const subsecondStale = fixture('observability/ready.json')
     subsecondStale.scrape.observedAt = '2026-08-10T11:54:59.999Z'
-    assertContractError(() => evaluateObservability(subsecondStale), 'EVIDENCE_STALE')
+    assertContractError(() => evaluateObservability(subsecondStale, { now: '2026-08-10T12:00:00.000Z' }), 'EVIDENCE_STALE')
 
     const widenedWindow = fixture('observability/ready.json')
     widenedWindow.maxAgeSeconds = 301
