@@ -69,6 +69,15 @@ test('a valid window with violations preserves only fixed low-cardinality summar
     assert.equal(receipt.promotionDecision, 'not_authorized')
 })
 
+test('CSP schemas reject non-RFC3339 and impossible UTC timestamps', () => {
+    for (const invalidTimestamp of ['2026-08-10 12:00:00Z', '2026-02-30T00:00:00.000Z']) {
+        const input = fixture('clean.json')
+        input.evaluatedAt = invalidTimestamp
+        assert.notDeepEqual(validateSchema(cspSchemas.input, input), [])
+        assertContractError(() => evaluateCspObservation(input), 'SCHEMA_INVALID')
+    }
+})
+
 for (const scenario of fixture('negative-cases.json')) {
     test(`CSP observation fails closed: ${scenario.name}`, () => {
         const input = applyOperations(fixture(scenario.base), scenario.operations)

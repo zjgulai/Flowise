@@ -11,6 +11,18 @@ export const schemas = Object.freeze({
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 const sameJsonValue = (left, right) => JSON.stringify(left) === JSON.stringify(right)
+const utcTimestampPattern = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$/
+
+const isStrictUtcTimestamp = (value) => {
+    const match = utcTimestampPattern.exec(value)
+    if (!match) return false
+    const year = Number(match[1])
+    const month = Number(match[2])
+    const day = Number(match[3])
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+    const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    return day <= daysInMonth[month - 1]
+}
 
 const resolveLocalRef = (rootSchema, reference) => {
     if (!reference.startsWith('#/')) return undefined
@@ -68,6 +80,9 @@ export const validateSchema = (schema, value) => {
             if (current.minItems !== undefined && candidate.length < current.minItems) {
                 errors.push(`${path}: must contain at least ${current.minItems} items`)
             }
+            if (current.maxItems !== undefined && candidate.length > current.maxItems) {
+                errors.push(`${path}: must contain at most ${current.maxItems} items`)
+            }
             if (current.uniqueItems && new Set(candidate.map((item) => JSON.stringify(item))).size !== candidate.length) {
                 errors.push(`${path}: items must be unique`)
             }
@@ -86,7 +101,7 @@ export const validateSchema = (schema, value) => {
             if (current.pattern && !new RegExp(current.pattern, 'u').test(candidate)) {
                 errors.push(`${path}: must match the contract pattern`)
             }
-            if (current.format === 'date-time' && (Number.isNaN(Date.parse(candidate)) || !candidate.endsWith('Z'))) {
+            if (current.format === 'date-time' && !isStrictUtcTimestamp(candidate)) {
                 errors.push(`${path}: must be a valid UTC date-time`)
             }
             return
@@ -201,6 +216,11 @@ export const evaluateReleaseStaleness = (input) => {
 }
 
 const requiredAlerts = ['http_5xx_ratio', 'http_p95_latency', 'process_restart', 'disk_free', 'csp_receiver_health', 'release_staleness']
+const canonicalPromql = Object.freeze({
+    http_5xx_ratio: 'sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))',
+    http_p95_latency: 'histogram_quantile(0.95, sum by (le) (rate(http_request_duration_ms_bucket[5m])))'
+})
+const normalizePromql = (query) => query.replace(/\s+/g, ' ').trim()
 
 export const evaluateObservability = (input) => {
     requireSchema(schemas.observabilityInput, input)
@@ -217,10 +237,14 @@ export const evaluateObservability = (input) => {
     }
     const p95 = input.alerts.find(({ name }) => name === 'http_p95_latency')
     const errorRatio = input.alerts.find(({ name }) => name === 'http_5xx_ratio')
-    if (!p95.query.includes('http_request_duration_ms_bucket') || !p95.query.includes('rate(')) {
-        throw new ContractError('PROMQL_INVALID')
-    }
-    if (!errorRatio.query.includes('http_requests_total') || !errorRatio.query.includes('rate(')) {
+    if (
+        normalizePromql(p95.query) !== canonicalPromql.http_p95_latency ||
+        normalizePromql(errorRatio.query) !== canonicalPromql.http_5xx_ratio ||
+        p95.window !== '5m' ||
+        errorRatio.window !== '5m' ||
+        p95.dataSource !== 'prometheus' ||
+        errorRatio.dataSource !== 'prometheus'
+    ) {
         throw new ContractError('PROMQL_INVALID')
     }
 

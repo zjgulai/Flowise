@@ -65,6 +65,7 @@
         "alerts": {
             "type": "array",
             "minItems": 6,
+            "maxItems": 6,
             "uniqueItems": true,
             "items": {
                 "type": "object",

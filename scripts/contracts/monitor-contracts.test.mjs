@@ -62,6 +62,20 @@ test('release staleness fails closed on future timestamps and no-data dimensions
     assertContractError(() => evaluateReleaseStaleness(noData), 'EVIDENCE_MISSING')
 })
 
+test('release and observability schemas reject non-RFC3339 and impossible UTC timestamps', () => {
+    for (const invalidTimestamp of ['2026-08-10 12:00:00Z', '2026-02-30T00:00:00.000Z']) {
+        const release = fixture('release-staleness/fresh.json')
+        release.observedAt = invalidTimestamp
+        assert.notDeepEqual(validateSchema(schemas.releaseInput, release), [])
+        assertContractError(() => evaluateReleaseStaleness(release), 'SCHEMA_INVALID')
+
+        const observability = fixture('observability/ready.json')
+        observability.observedAt = invalidTimestamp
+        assert.notDeepEqual(validateSchema(schemas.observabilityInput, observability), [])
+        assertContractError(() => evaluateObservability(observability), 'SCHEMA_INVALID')
+    }
+})
+
 test('release staleness treats a consistent rollback receipt as an explicit terminal state', () => {
     const input = fixture('release-staleness/fresh.json')
     input.deployment.operation = 'rollback'
@@ -120,11 +134,29 @@ test('observability rejects revision drift and an incomplete SLO alert set', () 
     assertContractError(() => evaluateObservability(incomplete), 'SCHEMA_INVALID')
 })
 
+test('observability rejects a contradictory duplicate alert definition', () => {
+    const input = fixture('observability/ready.json')
+    input.alerts.push({ ...input.alerts[0], query: 'rate(unrelated_counter[5m])', threshold: 999 })
+
+    assert.notDeepEqual(validateSchema(schemas.observabilityInput, input), [])
+    assertContractError(() => evaluateObservability(input), 'SCHEMA_INVALID')
+})
+
 test('observability rejects PromQL that bypasses rate-based histogram aggregation', () => {
     const input = fixture('observability/ready.json')
     input.alerts.find(({ name }) => name === 'http_p95_latency').query = 'histogram_quantile(0.95, http_request_duration_ms_bucket)'
     assert.deepEqual(validateSchema(schemas.observabilityInput, input), [])
     assertContractError(() => evaluateObservability(input), 'PROMQL_INVALID')
+
+    for (const [name, query] of [
+        ['http_p95_latency', 'rate(unrelated_counter[5m]) + 0 * http_request_duration_ms_bucket'],
+        ['http_5xx_ratio', 'rate(unrelated_counter[5m]) + 0 * http_requests_total']
+    ]) {
+        const tokenBypass = fixture('observability/ready.json')
+        tokenBypass.alerts.find((alert) => alert.name === name).query = query
+        assert.deepEqual(validateSchema(schemas.observabilityInput, tokenBypass), [])
+        assertContractError(() => evaluateObservability(tokenBypass), 'PROMQL_INVALID')
+    }
 })
 
 test('both input schemas reject unknown keys instead of silently widening evidence', () => {
