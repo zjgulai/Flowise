@@ -188,7 +188,7 @@ reaper_1:
   - 按 1 → 2 → 3 顺序调用 Owner API；每个首次存在的对象期望 HTTP 200
   - 核验 workspace/organization 删除路径已使 member session 失效
   - 每次 API 调用记录 exact fields：phase、operation、http_status、target_digest、outcome；phase 必须是 reaper_1 或 reaper_2
-  - operation 使用中性固定值；target_digest = sha256(UTF-8(["rbac-reaper:v1", run_id, operation, ...ordered_ids].join(NUL)))
+  - operation 使用中性固定值；target_digest = sha256(UTF-8(["rbac-reaper:v1", run_id, operation, ...ordered_ids].join(NUL))).digest("hex")，且必须是无前缀的 64 位小写十六进制
     - delete_workspace_membership 的 ordered_ids = [workspace_id, member_user_id]
     - delete_organization_membership 的 ordered_ids = [organization_id, member_user_id]
     - delete_member_role 的 ordered_ids = [organization_id, member_role_id]
