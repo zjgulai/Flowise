@@ -65,7 +65,7 @@
         },
         "reasons": {
             "type": "array",
-            "items": { "enum": ["deployment_age_exceeded", "backup_age_exceeded"] },
+            "items": { "enum": ["deployment_age_exceeded", "runtime_age_exceeded", "backup_age_exceeded", "disk_age_exceeded"] },
             "uniqueItems": true
         },
         "providerCall": { "const": false }

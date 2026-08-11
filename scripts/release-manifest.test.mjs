@@ -1796,6 +1796,12 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
     assert.ok(identityStep, 'main CI must verify source identity')
     assert.match(identityStep, /test "\$actual" = "\$FLOWISE_CI_CANDIDATE_SHA"/)
     assert.match(identityStep, /phase=source-identity event=%s candidate=%s checkout=%s/)
+    assert.equal(
+        workflow.match(
+            /^\s+run:\s*node --test scripts\/contracts\/monitor-contracts\.test\.mjs scripts\/contracts\/csp-observation\.test\.mjs\s*$/gm
+        )?.length,
+        1
+    )
     assert.equal(workflow.match(/^\s+run:\s*pnpm ui:copy:check\s*$/gm)?.length, 1)
     assert.match(workflow, /^\s*run:\s*pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand\s*$/m)
     assert.doesNotMatch(workflow, /^\s*run:\s*pnpm test:coverage\s*$/m)
@@ -1833,9 +1839,9 @@ test('production dependency remediation pins the reviewed YAML and ID generator 
     assert.equal(serverPackageJson.dependencies?.nanoid, '3.3.17')
     assert.match(securityScript, /'"js-yaml": "4\.3\.1"' 1 "Components declares the OpenAPI Toolkit runtime YAML dependency"/)
     assert.doesNotMatch(lockfile, /(?:js-yaml(?:@|:\s)4\.3\.0|nanoid(?:@|:\s)(?:3\.3\.(?:6|7|16)|5\.0\.7))/)
-    assert.match(lockfile, /^  js-yaml@4\.3\.1:$/m)
-    assert.match(lockfile, /^  nanoid@3\.3\.17:$/m)
-    assert.match(lockfile, /^  nanoid@5\.1\.16:$/m)
+    assert.match(lockfile, /^ {2}js-yaml@4\.3\.1:$/m)
+    assert.match(lockfile, /^ {2}nanoid@3\.3\.17:$/m)
+    assert.match(lockfile, /^ {2}nanoid@5\.1\.16:$/m)
 })
 
 test('root Dockerfile removes dynamic Turbo output and supplies a validated epoch to fontconfig', () => {

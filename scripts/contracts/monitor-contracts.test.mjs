@@ -34,6 +34,17 @@ test('release staleness marks old verified evidence stale instead of fresh', () 
     assert.deepEqual(validateSchema(schemas.releaseReceipt, receipt), [])
 })
 
+test('release staleness marks old runtime and disk observations stale', () => {
+    const input = fixture('release-staleness/fresh.json')
+    input.runtime.observedAt = '2026-08-10T11:44:59.000Z'
+    input.disk.observedAt = '2026-08-10T11:44:59.000Z'
+
+    const receipt = evaluateReleaseStaleness(input)
+    assert.equal(receipt.status, 'stale')
+    assert.deepEqual(receipt.reasons, ['runtime_age_exceeded', 'disk_age_exceeded'])
+    assert.deepEqual(validateSchema(schemas.releaseReceipt, receipt), [])
+})
+
 test('release staleness rejects a missing immutable receipt digest at schema boundary', () => {
     const input = fixture('release-staleness/missing-receipt-digest.json')
     assert.notDeepEqual(validateSchema(schemas.releaseInput, input), [])

@@ -52,6 +52,8 @@ jobs:
                   pnpm test:release
                   bash scripts/verify-release-source.sh
                   bash scripts/verify-security.sh
+            - name: Verify readiness evidence contracts
+              run: node --test scripts/contracts/monitor-contracts.test.mjs scripts/contracts/csp-observation.test.mjs
             - name: Enforce the full-tree UI copy ratchet
               run: pnpm ui:copy:check
             - run: pnpm lint

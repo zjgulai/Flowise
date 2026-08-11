@@ -178,10 +178,14 @@ export const evaluateReleaseStaleness = (input) => {
     if (backup.checksumStatus !== 'verified') throw new ContractError('BACKUP_CHECKSUM_INVALID')
 
     const ageSeconds = secondsBetween(input.observedAt, deployment.createdAt)
+    const runtimeAgeSeconds = secondsBetween(input.observedAt, runtime.observedAt)
     const backupAgeSeconds = secondsBetween(input.observedAt, backup.observedAt)
+    const diskAgeSeconds = secondsBetween(input.observedAt, disk.observedAt)
     const reasons = []
     if (ageSeconds > input.maxAgeSeconds) reasons.push('deployment_age_exceeded')
+    if (runtimeAgeSeconds > input.maxAgeSeconds) reasons.push('runtime_age_exceeded')
     if (backupAgeSeconds > input.maxAgeSeconds) reasons.push('backup_age_exceeded')
+    if (diskAgeSeconds > input.maxAgeSeconds) reasons.push('disk_age_exceeded')
 
     const rolledBack = deployment.operation === 'rollback'
     return {
