@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改与生产验收执行计划
 date: 2026-07-10
-last_updated: 2026-08-03
+last_updated: 2026-08-10
 status: in_progress
 evidence_model: L0-L4
 ---
@@ -417,3 +417,90 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 -   [~] 生成新的精确 temp-index 候选、路径清单与二进制 patch 哈希，执行秘密／生成物／symlink 检查和冻结后双审；旧 G1-J 全量结果和 `48573043` 远端证据不能替代。
 -   [ ] 仅在新候选代码／安全双审 GO、路径与二进制 patch 哈希复算一致、真实索引仍为空后，才允许精确原子提交和 non-force push；不授权 merge、镜像发布或部署。
 -   [!] `workspace:import` 明确是可引入流程、模板和 Custom Tool 代码的高信任能力，只授予受控管理员；production promotion 继续受 durable outbox、公开 BOLA／multipart、API Key、TLS、历史 Provider 凭据、main readiness、备份恢复、密钥连续性和部署验收阻断。
+
+## Wave 0 / D0 主线收敛（2026-08-10，Owner 已批准）
+
+目标：以已合并 PR #14 的 exact `origin/main=96f6ae464f7f4757883a5ba6bec26ca951b4da4d` 为唯一代码基线，对旧发布基础分支的 8 个独有提交和 OpenCode dirty assets 做逐项收敛；仅形成 local main convergence commits，不继承旧 SHA 的 release/production 结论。
+
+授权边界：允许本地文档、源码、测试、格式/构建前置检查和原子 commit；禁止 push/merge/PR、Docker、生产、Provider/SMTP、restore、GitHub/Docker Hub 写入；`production_write=false`、`provider_call=false`、`secrets_read=false`。
+
+-   [x] D0-A/B：冻结原 dirty worktree，创建本 worktree/branch；HEAD exact、初始 status clean，原工作树未 stash/reset/clean/stage。
+-   [x] D0-C：完成 active-only commits 与 dirty/untracked assets 的 forward-port ledger，纠正已合并但计划未同步的 G1 状态。
+-   [x] D0-D1：低风险 compatibility cleanup——在 main 版本上重实现 AboutDialog 无外联、CSV Agent 归档、Python cache ignore，并运行 focused tests。
+-   [x] D0-D2：RBAC L1 测试——适配主线并明确证据只覆盖 PermissionCheck；不冒充真实 route/member L4。
+-   [x] D0-D3：CSP/monitor/Playwright/observability/i18n——只先冻结 RED 合同和分流决定，不复制已知 fail-open/无输入/重复门禁实现。
+-   [x] D0-E：按 concern explicit stage、focused verification、secret-safe/diff/format gate，形成原子 local commits。
+-   [x] D0-F：CodeGraph/status/commit graph 与原 dirty preservation 收口；列出未前移项和下一门禁。
+
+### D0 终态与下一门禁
+
+-   D0 终态：5 个 concern-scoped local commits，目标 worktree/index clean，未 push/merge/PR/deploy。
+-   未前移：CSP/staleness/observability/public browser/UI i18n 只有 RED 合同；RBAC 只有 L1 middleware 合同；真实 route/member L4、release candidate、生产与 restore 均未执行。
+-   下一推荐门禁：Wave 1A local-only——先为 release staleness/observability schema 和 macOS `sha256sum` portability 建 RED fixtures 与最小修复；继续不接生产 monitor、不触碰 Docker。
+
+停止规则：发现需要外部 secret、Provider、Docker、生产、restore、push/merge/PR，或变更会扩大到 durable outbox/public API 等 Wave 1/2 范围时立即分流，不以 D0 授权替代后续门禁。
+
+## Wave 1A 本地合同与可移植性（2026-08-10，Owner 已批准）
+
+目标：在 D0 exact HEAD `52f9328af18fd9c434de65b70dda342813d01c1a` 上，修复 publisher SHA-256 工具的 macOS/Linux 可移植性，并为 release staleness 与 observability 冻结可执行 schema、正负 fixtures 和非 vacuous RED tests；只形成 local commits。
+
+授权边界：允许本地脚本、schema、fixtures、Node tests、文档、CodeGraph 和原子 commit；禁止 Docker/Compose、远端 CI、生产 monitor、GitHub/Docker Hub 写入、Provider/SMTP、restore、push/merge/PR；`production_write=false`、`provider_call=false`、`secrets_read=false`。
+
+-   [x] W1A-A：复核 publisher 当前 hash 调用、现有 contract/test 结构及 monitoring schema 约定，冻结文件边界和 RED 失败语义。
+-   [x] W1A-B：先建立 deterministic SHA tool selection 负例，再实现 Linux `sha256sum` / macOS `shasum -a 256` fail-closed helper；publisher 不接触 registry/Docker 实例。
+-   [x] W1A-C：建立 release staleness input/receipt schema 与正负 fixtures，约束 current/candidate/deployed SHA、immutable receipt digest、UTC age、rollback/no-data 状态。
+-   [x] W1A-D：建立 observability input/receipt schema 与正负 fixtures，约束真实 metric series、scrape auth mode、runtime revision、低基数/privacy 和 no-data fail-closed。
+-   [x] W1A-E：按 portability、monitor contracts、plan receipt 三个 concern explicit stage/commit；运行 focused tests、Node release contracts、format/diff/secret-safe gate。
+-   [x] W1A-F：CodeGraph sync、目标 worktree clean、原 dirty worktree preservation 与剩余外部门禁收口。
+
+Wave 1A 交付结论：local-only 门禁完成；未接生产 monitor/Prometheus/OTLP、未触碰 Docker/registry、未 push/merge/PR。下一推荐门禁为 Wave 1B 的 CSP analyzer receipt/receiver/coverage fixtures，仍须 Owner 单独批准。
+
+停止规则：schema/fixture 不接入 production workflow；任何实现若需要 Docker、registry、真实 collector、生产 receipt 路径、secret 或外部账号，立即保留为后续授权门禁。
+
+## Wave 1B CSP 观察合同（2026-08-10，Owner 已批准）
+
+目标：在 Wave 1A exact HEAD `cddd47357ff75acef76efc7fad8f16b985c6dc7d` 上，为 CSP report-only 观察冻结纯本地 input/receipt schema、receiver health/coverage 正负 fixtures、低基数 analyzer 与非 vacuous RED/GREEN tests；保持 enforcement 不变。
+
+授权边界：允许本地 schema、fixtures、纯内存 Node analyzer/tests、现有 CSP focused tests、文档、CodeGraph 和原子 commit；禁止启动 AUT/浏览器、读取真实日志、修改 CSP middleware/mode/env、Docker/Compose、远端 CI、生产、Provider/SMTP、restore、push/merge/PR；`production_write=false`、`provider_call=false`、`secrets_read=false`。
+
+-   [x] W1B-A：复核 current CSP mode/receiver 合同，冻结持久 source、UTC window、receiver health、coverage、低基数 summary 与 evidence-grade 字段边界。
+-   [x] W1B-B：先提交 input/receipt schema、clean/violation 正例和空 source、receiver、coverage、mode、identity、clock/count 负例，取得实现缺失 RED。
+-   [x] W1B-C：实现纯内存 CSP observation evaluator；exact schema、SHA/window/mode/count/coverage fail-closed，receipt 固定 `L2`、`promotionDecision=not_authorized`、`enforcementChanged=false`。
+-   [x] W1B-D：运行 CSP contract、现有 server CSP focused tests、format/lint/diff/secret-safe 与纯 Node release/monitor 回归；不运行浏览器、Docker 或外部 collector。
+-   [x] W1B-E：按 CSP contract 与 plan receipt explicit stage/commit，CodeGraph sync，目标 clean、原 dirty worktree preservation 与下一门禁收口。
+
+Wave 1B 交付结论：CSP observation local contract 完成，证据等级严格保持 L2；未启用 report-only/enforcement、未读取真实日志、未启动 AUT/浏览器、未写生产或 candidate evidence。下一推荐门禁为 Wave 1C public browser gap analysis，仍须 Owner 单独批准。
+
+停止规则：任何输入若要求读取生产 event/log、真实 endpoint、secret，或任何动作会启用 report-only/enforcement、写 candidate evidence/生产配置，立即停止并保留为后续独立授权。
+
+## Wave 1C Public Browser Gap Analysis（2026-08-10，Owner 已批准）
+
+目标：在 Wave 1B exact HEAD `10c8d7aa4bc8bf44ce61fb014f0fd00f8b49ecd7` 上，对照 RED-BROWSER 合同盘点现有 isolated Cypress runner；若确认公开路由缺口，优先扩展同一 runner，覆盖公开页面/API 的强断言、移动端 overflow、console/error、网络隔离和 cleanup receipt。
+
+授权边界：允许修改本地 Cypress spec/runner/tests、启动 runner 自有的 loopback AUT 与隔离临时 SQLite、使用已安装本地浏览器、生成并清理 run-scoped artifacts、文档、CodeGraph 和 local commits；禁止远程 URL/账号、Provider/SMTP、Docker/Compose、生产、持久 DB、远端 CI、push/merge/PR；`production_write=false`、`provider_call=false`、`secrets_read=false`。任何 `.env` 存在或外部网络请求均 fail-closed。
+
+-   [x] W1C-A：建立 gap matrix，核对 `/signin`、`/register`、`/forgot-password`、`/api/v1/ping`、auth resolve GET/POST、移动端、console/network、candidate/browser/Node/artifact/cleanup receipt。
+-   [x] W1C-B：以 runner unit RED 固定 public spec allowlist、exact candidate SHA/Node/base URL/run ID 与 cleanup/receipt 绑定；不新建 Playwright 配置。
+-   [x] W1C-C：新增 Cypress public-route spec，使用既有 self-start/loopback/network guard/owned temp cleanup；每条 route/API 至少一个会在真实漂移时失败的断言，不提交表单或触发 SMTP。
+-   [x] W1C-D：运行 runner unit、production UI route contracts、focused public Cypress isolated run、format/lint/diff/secret-safe 与纯 Node release/monitor/CSP 回归；证据仅标记 local runtime，不冒充生产。
+-   [x] W1C-E：按 public browser contract 与 plan receipt explicit stage/commit，CodeGraph sync、target clean、原 dirty preservation 与下一门禁收口。
+
+Wave 1C 交付结论：现有 isolated Cypress runner 已补齐 public UI/API 互补门禁，并在 exact local commit `3833edff813c2a845b1d6be5a2914487e4353e2f` 上以 Chrome `151.0.7922.77` 完成 `4/4`、failures=`0`、cleanup=`complete`。该证据只支持 local isolated runtime，不代表远端 CI、不可变镜像或生产验收。下一推荐门禁为 Wave 1D UI 文案 baseline ratchet，仍须 Owner 单独批准。
+
+停止规则：runner 若不能证明 exact loopback AUT、环境隔离、外部网络阻断和 cleanup complete，则只记录 blocker，不以手工已启动服务或旧 Playwright 草案补证。
+
+## Wave 1D UI 文案 Baseline Ratchet（2026-08-10，Owner 已批准）
+
+目标：在 Wave 1C docs HEAD `b97479e8ab7514b6348947899ad2e293bbabbb85` 上，为 `packages/ui/src` 的静态用户可见文案建立 path-dependent、line-independent、可审查、不可空输入假绿的本地 baseline/receipt ratchet；保持既有 built component metadata validator 为 canonical contract，不复制 OpenCode 固定总量 regex 草案。
+
+证据等级固定为 `L2-fixture-or-local-static`。允许本地 inventory、AST scanner、checked-in baseline/schema/fixtures/tests、UI focused regression、文档、CodeGraph 和 local commits；禁止自动翻译/批量改写产品文案、修改 metadata canonical validator、访问外部翻译服务、Docker/Compose、远端 CI、生产、Provider/SMTP、push/merge/PR；`production_write=false`、`provider_call=false`、`secrets_read=false`。
+
+-   [x] W1D-A：盘点 UI 文案入口、现有 i18n/metadata validator 与 OpenCode 草案，冻结 source root、扩展名、排除目录、语义 key、分类与证据边界。
+-   [x] W1D-B：先提交 mutation fixtures/tests，覆盖新增债务、等量替换、拆字符串/template、aria/placeholder/toast/dialog、危险机器字段、baseline digest 漂移、缺失/空 baseline 与未知分类 fail-closed；取得实现缺失 RED。
+-   [x] W1D-C：实现 dependency-stable AST scanner、canonical baseline/receipt 与 explicit update/check 模式；删除债务必须显式收紧，新增/变更必须带 allowlisted reason，禁止自动创建与固定 ceiling 假绿。
+-   [x] W1D-D：生成并人工抽查 current baseline，运行合同 tests、现有 built metadata fingerprint/validator、UI focused tests、Prettier/ESLint/diff/secret-safe 与纯 Node 回归；未批量修改 UI 产品文案。
+-   [x] W1D-E：scanner/baseline/receipt commit=`7919554511f853728f19da1fa5164c852dd559f6`、docs commit=`313621ed0f564cdd59a5936a57180b117fb8e9ff`；CodeGraph up to date，目标 clean checkpoint 与原 dirty worktree preservation 已验证。
+
+Wave 1D 交付结论：全树 UI 静态文案 debt baseline/ratchet 已完成，current receipt=`exact`；本批只形成 L2 静态/fixture 证据，未翻译产品文案、未修改 metadata canonical validator、未触发任何外部或生产副作用。Wave 1 本地 deferred contracts 至此全部闭环。下一推荐门禁为 Wave 2A exact-head 远端 CI 候选门禁，必须由 Owner 单独批准，且授权只覆盖 push/CI，不包含 merge、registry、Docker 或生产。
+
+停止规则：若 AST 入口无法区分用户文案与机器字段、baseline 需要保存 secret/用户数据、或变更会自动重写 UI/metadata/生产资源，则停止并记录 blocker，不以 regex 条数或 `|| true` 降级门禁。

@@ -1,0 +1,99 @@
+{
+    "schemaVersion": 1,
+    "evaluatedAt": "2026-08-10T12:00:00.000Z",
+    "maxAgeSeconds": 300,
+    "observedAt": "2026-08-10T12:00:00.000Z",
+    "candidateRevision": "1111111111111111111111111111111111111111",
+    "ociRevision": "1111111111111111111111111111111111111111",
+    "runtime": {
+        "revision": "1111111111111111111111111111111111111111",
+        "buildInfoRevision": "1111111111111111111111111111111111111111",
+        "observedAt": "2026-08-10T11:59:00.000Z",
+        "evidenceGrade": "L2"
+    },
+    "scrape": {
+        "mode": "protected_endpoint",
+        "endpoint": "/api/v1/metrics",
+        "authenticated": true,
+        "publicWhitelist": false,
+        "observedAt": "2026-08-10T11:59:30.000Z"
+    },
+    "metrics": {
+        "requestCounter": "http_requests_total",
+        "durationHistogram": "http_request_duration_ms",
+        "durationBucket": "http_request_duration_bucket",
+        "buildInfo": "flowise_build_info",
+        "providerParity": true
+    },
+    "privacy": {
+        "labels": ["method", "route", "status"],
+        "routeTemplated": true,
+        "recordsRawPath": false,
+        "recordsQuery": false,
+        "recordsEmail": false,
+        "recordsToken": false,
+        "recordsPrompt": false
+    },
+    "alerts": [
+        {
+            "name": "http_5xx_ratio",
+            "query": "rate(http_requests_total[5m])",
+            "window": "5m",
+            "threshold": 0.05,
+            "dataSource": "prometheus",
+            "runbook": "docs/runbooks/http-5xx.md",
+            "noData": "alert",
+            "observedAt": "2026-08-10T11:59:45.000Z"
+        },
+        {
+            "name": "http_p95_latency",
+            "query": "rate(http_request_duration_bucket[5m])",
+            "window": "5m",
+            "threshold": 1000,
+            "dataSource": "prometheus",
+            "runbook": "docs/runbooks/http-latency.md",
+            "noData": "alert",
+            "observedAt": "2026-08-10T11:59:45.000Z"
+        },
+        {
+            "name": "process_restart",
+            "query": "changes(process_start_time_seconds[5m])",
+            "window": "5m",
+            "threshold": 0,
+            "dataSource": "prometheus",
+            "runbook": "docs/runbooks/process-restart.md",
+            "noData": "alert",
+            "observedAt": "2026-08-10T11:59:45.000Z"
+        },
+        {
+            "name": "disk_free",
+            "query": "node_filesystem_avail_bytes",
+            "window": "5m",
+            "threshold": 10737418240,
+            "dataSource": "prometheus",
+            "runbook": "docs/runbooks/disk-free.md",
+            "noData": "alert",
+            "observedAt": "2026-08-10T11:59:45.000Z"
+        },
+        {
+            "name": "csp_receiver_health",
+            "query": "csp_receiver_healthy",
+            "window": "5m",
+            "threshold": 1,
+            "dataSource": "csp_receipt",
+            "runbook": "docs/runbooks/csp-receiver.md",
+            "noData": "fail_closed",
+            "observedAt": "2026-08-10T11:59:45.000Z"
+        },
+        {
+            "name": "release_staleness",
+            "query": "flowise_release_age_seconds",
+            "window": "5m",
+            "threshold": 86400,
+            "dataSource": "release_receipt",
+            "runbook": "docs/runbooks/release-staleness.md",
+            "noData": "fail_closed",
+            "observedAt": "2026-08-10T11:59:45.000Z"
+        }
+    ]
+}

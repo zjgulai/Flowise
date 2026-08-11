@@ -17,9 +17,21 @@ jobs:
                 node-version: [24.18.0]
         runs-on: ${{ matrix.platform }}
         env:
+            FLOWISE_CI_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+            FLOWISE_CI_EVENT_SHA: ${{ github.sha }}
             PUPPETEER_SKIP_DOWNLOAD: true
         steps:
             - uses: actions/checkout@v6
+              with:
+                  persist-credentials: false
+            - name: Verify CI source identity
+              run: |
+                  actual="$(git rev-parse HEAD)"
+                  [[ "$FLOWISE_CI_CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+                  [[ "$FLOWISE_CI_EVENT_SHA" =~ ^[0-9a-f]{40}$ ]]
+                  test "$actual" = "$FLOWISE_CI_EVENT_SHA"
+                  printf '[flowise-ci] phase=source-identity event=%s candidate=%s checkout=%s\n' \
+                      "$FLOWISE_CI_EVENT_SHA" "$FLOWISE_CI_CANDIDATE_SHA" "$actual"
             - uses: pnpm/action-setup@v4
               with:
                   version: 10.26.0
@@ -40,6 +52,10 @@ jobs:
                   pnpm test:release
                   bash scripts/verify-release-source.sh
                   bash scripts/verify-security.sh
+            - name: Verify readiness evidence contracts
+              run: node --test scripts/contracts/monitor-contracts.test.mjs scripts/contracts/csp-observation.test.mjs
+            - name: Enforce the full-tree UI copy ratchet
+              run: pnpm ui:copy:check
             - run: pnpm lint
             - run: pnpm build
               env:
@@ -54,32 +70,81 @@ jobs:
               run: pnpm --filter flowise-ui test:g1-copy
             - name: Cypress install
               run: pnpm cypress install
-            - name: Install dependencies (Cypress Action)
-              uses: cypress-io/github-action@v7.1.5
-              with:
-                  working-directory: ./
-                  runTests: false
             - name: Cypress test
-              uses: cypress-io/github-action@v7.1.5
-              env:
-                  ADMIN_ONLY_MODE: 'false'
-                  APP_URL: http://127.0.0.1:3000
-                  CORS_ORIGINS: http://127.0.0.1:3000
-                  DATABASE_PATH: ${{ runner.temp }}/flowise-e2e
-                  DATABASE_TYPE: sqlite
-                  DISABLE_FLOWISE_TELEMETRY: 'true'
-                  FLOWISE_E2E_ARTIFACTS_PATH: ${{ runner.temp }}/flowise-cypress-artifacts
-                  FLOWISE_E2E_BASE_URL: http://127.0.0.1:3000
-                  FLOWISE_E2E_ISOLATED: '1'
-                  FLOWISE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
-                  MODE: main
-                  OFFLINE: 'true'
-                  POSTHOG_PUBLIC_API_KEY: ''
-                  SECRETKEY_PATH: ${{ runner.temp }}/flowise-e2e
+              working-directory: packages/server
+              run: pnpm cypress:ci
+    exact-head:
+        if: github.event_name == 'pull_request'
+        runs-on: ubuntu-latest
+        env:
+            FLOWISE_CI_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+            FLOWISE_CI_EVENT_SHA: ${{ github.sha }}
+            PUPPETEER_SKIP_DOWNLOAD: true
+        steps:
+            - uses: actions/checkout@v6
               with:
-                  install: false
-                  working-directory: packages/server
-                  start: pnpm start
-                  wait-on: 'http://localhost:3000'
-                  wait-on-timeout: 120
-                  browser: chrome
+                  ref: ${{ env.FLOWISE_CI_CANDIDATE_SHA }}
+                  persist-credentials: false
+            - name: Verify CI source identity
+              run: |
+                  actual="$(git rev-parse HEAD)"
+                  [[ "$FLOWISE_CI_CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+                  [[ "$FLOWISE_CI_EVENT_SHA" =~ ^[0-9a-f]{40}$ ]]
+                  test "$actual" = "$FLOWISE_CI_CANDIDATE_SHA"
+                  printf '[flowise-ci] phase=source-identity event=%s candidate=%s checkout=%s\n' \
+                      "$FLOWISE_CI_EVENT_SHA" "$FLOWISE_CI_CANDIDATE_SHA" "$actual"
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 10.26.0
+            - name: Use Node.js 24.18.0
+              uses: actions/setup-node@v6
+              with:
+                  node-version: 24.18.0
+                  cache: 'pnpm'
+                  cache-dependency-path: 'pnpm-lock.yaml'
+            - name: Frozen install without lockfile drift
+              run: |
+                  before="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+                  pnpm install --frozen-lockfile
+                  after="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+                  test "$before" = "$after"
+            - name: Verify release contracts
+              run: |
+                  pnpm test:release
+                  bash scripts/verify-release-source.sh
+                  bash scripts/verify-security.sh
+            - name: Verify readiness evidence contracts
+              run: node --test scripts/contracts/monitor-contracts.test.mjs scripts/contracts/csp-observation.test.mjs
+            - name: Enforce the full-tree UI copy ratchet
+              run: pnpm ui:copy:check
+            - run: pnpm lint
+            - run: pnpm build
+              env:
+                  NODE_OPTIONS: '--max_old_space_size=4096'
+            - name: Validate complete localized component metadata against the fresh build
+              run: pnpm metadata:i18n:validate:built
+            - name: Run coverage serially within hosted-runner memory limits
+              run: pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand
+              env:
+                  NODE_OPTIONS: '--max_old_space_size=6144'
+            - name: Enforce the G1 Chinese copy gate
+              run: pnpm --filter flowise-ui test:g1-copy
+            - name: Cypress install
+              run: pnpm cypress install
+            - name: Cypress test
+              working-directory: packages/server
+              run: pnpm cypress:ci
+    node-ci:
+        name: Node CI
+        if: always() && github.event_name == 'pull_request'
+        needs: [build, exact-head]
+        runs-on: ubuntu-latest
+        steps:
+            - name: Require both Node CI identities
+              env:
+                  MERGE_RESULT: ${{ needs.build.result }}
+                  EXACT_HEAD_RESULT: ${{ needs.exact-head.result }}
+              run: |
+                  test "$MERGE_RESULT" = "success"
+                  test "$EXACT_HEAD_RESULT" = "success"
+                  printf '[flowise-ci] phase=required-context merge=%s exact_head=%s\n' "$MERGE_RESULT" "$EXACT_HEAD_RESULT"

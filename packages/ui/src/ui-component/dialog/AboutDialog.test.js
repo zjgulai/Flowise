@@ -53,14 +53,8 @@ jest.mock('@mui/material', () => {
     }
 })
 
-const latestRelease = {
-    name: 'v9.9.9',
-    html_url: 'https://github.com/FlowiseAI/Flowise/releases/tag/v9.9.9',
-    published_at: '2026-08-01T00:00:00.000Z'
-}
-
-const mockSuccessfulRequests = (releaseData = latestRelease, currentData = { version: '3.1.3' }) => {
-    axios.get.mockResolvedValueOnce({ data: releaseData }).mockResolvedValueOnce({ data: currentData })
+const mockSuccessfulRequest = (currentData = { version: '3.1.3' }) => {
+    axios.get.mockResolvedValueOnce({ data: currentData })
 }
 
 describe('AboutDialog version states', () => {
@@ -75,7 +69,7 @@ describe('AboutDialog version states', () => {
         document.getElementById('portal')?.remove()
     })
 
-    it('shows a loading state before either version request settles', () => {
+    it('shows a loading state before the current-version request settles', () => {
         axios.get.mockImplementation(() => new Promise(() => {}))
 
         render(<AboutDialog show onCancel={jest.fn()} />)
@@ -106,19 +100,24 @@ describe('AboutDialog version states', () => {
         }
     })
 
-    it('renders the version table only for complete valid data', async () => {
-        mockSuccessfulRequests()
+    it('loads only the same-origin current version and renders it', async () => {
+        mockSuccessfulRequest()
 
         render(<AboutDialog show onCancel={jest.fn()} />)
 
         const table = await screen.findByRole('table', { name: 'Flowise 版本信息表' })
         expect(table).toHaveTextContent('3.1.3')
-        expect(table).toHaveTextContent('v9.9.9')
-        expect(screen.getByRole('link', { name: 'v9.9.9' })).toHaveAttribute('href', latestRelease.html_url)
+        expect(table).not.toHaveTextContent('最新版本')
+        expect(axios.get).toHaveBeenCalledTimes(1)
+        expect(axios.get).toHaveBeenCalledWith('http://localhost/api/v1/version', {
+            withCredentials: true,
+            headers: { 'Content-type': 'application/json', 'x-request-from': 'internal' }
+        })
+        expect(axios.get.mock.calls.flat().join(' ')).not.toContain('api.github.com')
     })
 
     it('shows a distinct no-data state when successful responses are incomplete', async () => {
-        mockSuccessfulRequests({ name: '', html_url: '', published_at: '' }, { version: '' })
+        mockSuccessfulRequest({ version: '' })
 
         render(<AboutDialog show onCancel={jest.fn()} />)
 
@@ -128,18 +127,16 @@ describe('AboutDialog version states', () => {
     })
 
     it('clears prior data and shows only fixed safe feedback after a later failure', async () => {
-        mockSuccessfulRequests()
+        mockSuccessfulRequest()
         const { rerender } = render(<AboutDialog show onCancel={jest.fn()} />)
         expect(await screen.findByRole('table', { name: 'Flowise 版本信息表' })).toBeInTheDocument()
 
         rerender(<AboutDialog show={false} onCancel={jest.fn()} />)
-        axios.get
-            .mockRejectedValueOnce(new Error('RAW_GITHUB_FAILURE_MUST_NOT_ESCAPE'))
-            .mockResolvedValueOnce({ data: { version: '3.1.3' } })
+        axios.get.mockRejectedValueOnce(new Error('RAW_VERSION_FAILURE_MUST_NOT_ESCAPE'))
         rerender(<AboutDialog show onCancel={jest.fn()} />)
 
         expect(await screen.findByRole('alert')).toHaveTextContent('版本信息加载失败，请稍后重试。')
         expect(screen.queryByRole('table')).not.toBeInTheDocument()
-        expect(document.body).not.toHaveTextContent('RAW_GITHUB_FAILURE_MUST_NOT_ESCAPE')
+        expect(document.body).not.toHaveTextContent('RAW_VERSION_FAILURE_MUST_NOT_ESCAPE')
     })
 })

@@ -1,0 +1,37 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://flowise.local/contracts/ui-copy-receipt.schema.json",
+    "title": "Flowise UI copy debt ratchet receipt",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schemaVersion",
+        "status",
+        "evidenceGrade",
+        "sourceRoot",
+        "sourceDigest",
+        "baselineDigest",
+        "fileCount",
+        "sinkCount",
+        "baselineDebtCount",
+        "currentDebtCount",
+        "resolvedDebtCount",
+        "providerCall",
+        "productionChanged"
+    ],
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "status": { "enum": ["exact", "ratchet_tightened"] },
+        "evidenceGrade": { "const": "L2" },
+        "sourceRoot": { "const": "packages/ui/src" },
+        "sourceDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "baselineDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "fileCount": { "type": "integer", "minimum": 1 },
+        "sinkCount": { "type": "integer", "minimum": 1 },
+        "baselineDebtCount": { "type": "integer", "minimum": 0 },
+        "currentDebtCount": { "type": "integer", "minimum": 0 },
+        "resolvedDebtCount": { "type": "integer", "minimum": 0 },
+        "providerCall": { "const": false },
+        "productionChanged": { "const": false }
+    }
+}

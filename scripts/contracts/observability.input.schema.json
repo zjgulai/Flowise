@@ -1,0 +1,117 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://flowise.dev/contracts/observability.input.schema.json",
+    "title": "Flowise observability readiness input",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schemaVersion",
+        "evaluatedAt",
+        "maxAgeSeconds",
+        "observedAt",
+        "candidateRevision",
+        "ociRevision",
+        "runtime",
+        "scrape",
+        "metrics",
+        "privacy",
+        "alerts"
+    ],
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "evaluatedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "maxAgeSeconds": { "const": 300 },
+        "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "candidateRevision": { "$ref": "#/$defs/revision" },
+        "ociRevision": { "$ref": "#/$defs/revision" },
+        "runtime": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["revision", "buildInfoRevision", "observedAt", "evidenceGrade"],
+            "properties": {
+                "revision": { "$ref": "#/$defs/revision" },
+                "buildInfoRevision": { "$ref": "#/$defs/revision" },
+                "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "evidenceGrade": { "$ref": "#/$defs/evidenceGrade" }
+            }
+        },
+        "scrape": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mode", "endpoint", "authenticated", "publicWhitelist", "observedAt"],
+            "properties": {
+                "mode": { "enum": ["protected_endpoint", "private_listener_sidecar"] },
+                "endpoint": { "const": "/api/v1/metrics" },
+                "authenticated": { "type": "boolean" },
+                "publicWhitelist": { "const": false },
+                "observedAt": { "$ref": "#/$defs/utcTimestamp" }
+            }
+        },
+        "metrics": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requestCounter", "durationHistogram", "durationBucket", "buildInfo", "providerParity"],
+            "properties": {
+                "requestCounter": { "const": "http_requests_total" },
+                "durationHistogram": { "const": "http_request_duration_ms" },
+                "durationBucket": { "const": "http_request_duration_ms_bucket" },
+                "buildInfo": { "const": "flowise_build_info" },
+                "providerParity": { "const": true }
+            }
+        },
+        "privacy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["labels", "routeTemplated", "recordsRawPath", "recordsQuery", "recordsEmail", "recordsToken", "recordsPrompt"],
+            "properties": {
+                "labels": {
+                    "type": "array",
+                    "items": { "enum": ["method", "route", "status"] },
+                    "minItems": 3,
+                    "uniqueItems": true
+                },
+                "routeTemplated": { "const": true },
+                "recordsRawPath": { "const": false },
+                "recordsQuery": { "const": false },
+                "recordsEmail": { "const": false },
+                "recordsToken": { "const": false },
+                "recordsPrompt": { "const": false }
+            }
+        },
+        "alerts": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "uniqueItems": true,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "query", "window", "threshold", "dataSource", "runbook", "noData", "observedAt"],
+                "properties": {
+                    "name": {
+                        "enum": [
+                            "http_5xx_ratio",
+                            "http_p95_latency",
+                            "process_restart",
+                            "disk_free",
+                            "csp_receiver_health",
+                            "release_staleness"
+                        ]
+                    },
+                    "query": { "type": "string", "minLength": 1 },
+                    "window": { "type": "string", "pattern": "^[1-9][0-9]*[smhd]$" },
+                    "threshold": { "type": "number" },
+                    "dataSource": { "enum": ["prometheus", "release_receipt", "csp_receipt"] },
+                    "runbook": { "type": "string", "pattern": "^docs/[^\\u0000]+$" },
+                    "noData": { "enum": ["alert", "fail_closed"] },
+                    "observedAt": { "$ref": "#/$defs/utcTimestamp" }
+                }
+            }
+        }
+    },
+    "$defs": {
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "utcTimestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "evidenceGrade": { "enum": ["L1", "L2", "L3", "L4"] }
+    }
+}

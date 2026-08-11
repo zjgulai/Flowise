@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useState, useEffect, useId } from 'react'
+import { useEffect, useId, useState } from 'react'
 import PropTypes from 'prop-types'
 import {
     Dialog,
@@ -14,7 +14,6 @@ import {
     Paper,
     Typography
 } from '@mui/material'
-import moment from 'moment'
 import axios from 'axios'
 import { baseURL } from '@/store/constant'
 
@@ -26,36 +25,13 @@ const ABOUT_STATUS = {
     READY: 'ready'
 }
 
-const normalizeVersionData = (latestRelease, currentVersionResponse) => {
+const normalizeVersionData = (currentVersionResponse) => {
     const currentVersion = currentVersionResponse?.version
-    const latestVersion = latestRelease?.name || latestRelease?.tag_name
-    const publishedAt = latestRelease?.published_at
-    let releaseUrl
 
-    try {
-        releaseUrl = new URL(latestRelease?.html_url)
-    } catch {
-        return null
-    }
-
-    if (
-        typeof currentVersion !== 'string' ||
-        !currentVersion.trim() ||
-        typeof latestVersion !== 'string' ||
-        !latestVersion.trim() ||
-        typeof publishedAt !== 'string' ||
-        Number.isNaN(Date.parse(publishedAt)) ||
-        releaseUrl.protocol !== 'https:' ||
-        releaseUrl.hostname !== 'github.com'
-    ) {
-        return null
-    }
+    if (typeof currentVersion !== 'string' || !currentVersion.trim()) return null
 
     return {
-        currentVersion: currentVersion.trim(),
-        name: latestVersion.trim(),
-        published_at: publishedAt,
-        html_url: releaseUrl.toString()
+        currentVersion: currentVersion.trim()
     }
 }
 
@@ -82,16 +58,15 @@ const AboutDialog = ({ show, onCancel }) => {
         setData(null)
         setStatus(ABOUT_STATUS.LOADING)
 
-        const latestReleaseReq = axios.get('https://api.github.com/repos/FlowiseAI/Flowise/releases/latest')
         const currentVersionReq = axios.get(`${baseURL}/api/v1/version`, {
             withCredentials: true,
             headers: { 'Content-type': 'application/json', 'x-request-from': 'internal' }
         })
 
-        Promise.all([latestReleaseReq, currentVersionReq])
-            .then(([latestReleaseData, currentVersionData]) => {
+        currentVersionReq
+            .then((currentVersionData) => {
                 if (!active) return
-                const nextData = normalizeVersionData(latestReleaseData.data, currentVersionData.data)
+                const nextData = normalizeVersionData(currentVersionData.data)
                 setData(nextData)
                 setStatus(nextData ? ABOUT_STATUS.READY : ABOUT_STATUS.EMPTY)
             })
@@ -125,8 +100,6 @@ const AboutDialog = ({ show, onCancel }) => {
                             <TableHead>
                                 <TableRow>
                                     <TableCell>当前版本</TableCell>
-                                    <TableCell>最新版本</TableCell>
-                                    <TableCell>发布时间</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -134,12 +107,6 @@ const AboutDialog = ({ show, onCancel }) => {
                                     <TableCell component='th' scope='row'>
                                         {data.currentVersion}
                                     </TableCell>
-                                    <TableCell component='th' scope='row'>
-                                        <a target='_blank' rel='noreferrer' href={data.html_url}>
-                                            {data.name}
-                                        </a>
-                                    </TableCell>
-                                    <TableCell>{moment(data.published_at).fromNow()}</TableCell>
                                 </TableRow>
                             </TableBody>
                         </Table>

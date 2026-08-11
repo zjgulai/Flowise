@@ -1,0 +1,165 @@
+[
+    {
+        "name": "empty source cannot become a clean observation",
+        "base": "clean.json",
+        "operations": [
+            { "op": "replace", "path": "/source/byteLength", "value": 0 },
+            { "op": "replace", "path": "/source/eventCount", "value": 0 }
+        ],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
+        "name": "ephemeral source paths are not persistent evidence",
+        "base": "clean.json",
+        "operations": [{ "op": "replace", "path": "/source/path", "value": "/tmp/csp-events.jsonl" }],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
+        "name": "evidence source traversal aliases are rejected",
+        "base": "clean.json",
+        "operations": [
+            {
+                "op": "replace",
+                "path": "/source/path",
+                "value": "/var/lib/flowise/evidence/csp/revision/../../../../../tmp/events.jsonl"
+            }
+        ],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
+        "name": "evidence source dot segment aliases are rejected",
+        "base": "clean.json",
+        "operations": [
+            {
+                "op": "replace",
+                "path": "/source/path",
+                "value": "/var/lib/flowise/evidence/csp/./revision/events.jsonl"
+            }
+        ],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
+        "name": "evidence source repeated slash aliases are rejected",
+        "base": "clean.json",
+        "operations": [
+            {
+                "op": "replace",
+                "path": "/source/path",
+                "value": "/var/lib/flowise/evidence/csp//revision/events.jsonl"
+            }
+        ],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
+        "name": "evidence source outside the controlled root is rejected",
+        "base": "clean.json",
+        "operations": [{ "op": "replace", "path": "/source/path", "value": "/var/log/flowise/csp-events.jsonl" }],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    },
+    {
+        "name": "an unreachable receiver fails closed",
+        "base": "clean.json",
+        "operations": [{ "op": "replace", "path": "/receiver/reachable", "value": false }],
+        "schemaValid": true,
+        "expectedCode": "RECEIVER_UNHEALTHY"
+    },
+    {
+        "name": "a missing lazy workflow blocks coverage",
+        "base": "clean.json",
+        "operations": [{ "op": "remove", "path": "/coverage/lazyExecuted/2" }],
+        "schemaValid": true,
+        "expectedCode": "COVERAGE_INCOMPLETE"
+    },
+    {
+        "name": "report-only must be stricter than enforcement",
+        "base": "clean.json",
+        "operations": [{ "op": "replace", "path": "/modes/reportOnly", "value": "compat" }],
+        "schemaValid": true,
+        "expectedCode": "MODE_NOT_STRICTER"
+    },
+    {
+        "name": "candidate and OCI revisions must match",
+        "base": "clean.json",
+        "operations": [
+            {
+                "op": "replace",
+                "path": "/ociRevision",
+                "value": "2222222222222222222222222222222222222222"
+            }
+        ],
+        "schemaValid": true,
+        "expectedCode": "IDENTITY_MISMATCH"
+    },
+    {
+        "name": "an export created after evaluation is a clock failure",
+        "base": "clean.json",
+        "operations": [{ "op": "replace", "path": "/source/exportedAt", "value": "2026-08-10T11:05:01.000Z" }],
+        "schemaValid": true,
+        "expectedCode": "CLOCK_INVALID"
+    },
+    {
+        "name": "summary totals must match accepted report count",
+        "base": "clean.json",
+        "operations": [{ "op": "replace", "path": "/receiver/acceptedReports", "value": 1 }],
+        "schemaValid": true,
+        "expectedCode": "REPORT_COUNT_MISMATCH"
+    },
+    {
+        "name": "receiver and observation windows must be identical",
+        "base": "clean.json",
+        "operations": [{ "op": "replace", "path": "/receiver/windowEndedAt", "value": "2026-08-10T10:59:59.000Z" }],
+        "schemaValid": true,
+        "expectedCode": "WINDOW_MISMATCH"
+    },
+    {
+        "name": "source event count must bind every receiver evidence event",
+        "base": "clean.json",
+        "operations": [{ "op": "replace", "path": "/source/eventCount", "value": 3 }],
+        "schemaValid": true,
+        "expectedCode": "EVENT_COUNT_MISMATCH"
+    },
+    {
+        "name": "zero violations with dropped or unknown receiver input is not clean evidence",
+        "base": "clean.json",
+        "operations": [
+            { "op": "replace", "path": "/receiver/unknownShapeRequests", "value": 1 },
+            { "op": "replace", "path": "/source/eventCount", "value": 3 }
+        ],
+        "schemaValid": true,
+        "expectedCode": "RECEIVER_EVIDENCE_INCOMPLETE"
+    },
+    {
+        "name": "duplicate low-cardinality summary buckets are rejected",
+        "base": "violations.json",
+        "operations": [
+            {
+                "op": "add",
+                "path": "/summaries/2",
+                "value": { "directive": "script-src", "disposition": "report", "count": 1 }
+            },
+            { "op": "replace", "path": "/receiver/acceptedReports", "value": 4 },
+            { "op": "replace", "path": "/source/eventCount", "value": 8 }
+        ],
+        "schemaValid": true,
+        "expectedCode": "SUMMARY_DUPLICATE"
+    },
+    {
+        "name": "raw URL fields are forbidden even in sanitized summaries",
+        "base": "violations.json",
+        "operations": [
+            {
+                "op": "add",
+                "path": "/summaries/0/documentUrl",
+                "value": "https://example.invalid/private?token=forbidden"
+            }
+        ],
+        "schemaValid": false,
+        "expectedCode": "SCHEMA_INVALID"
+    }
+]

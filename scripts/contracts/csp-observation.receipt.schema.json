@@ -1,0 +1,129 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://flowise.dev/contracts/csp-observation.receipt.schema.json",
+    "title": "Flowise CSP observation receipt",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schemaVersion",
+        "status",
+        "evaluatedAt",
+        "evidenceGrade",
+        "candidateRevision",
+        "window",
+        "modes",
+        "source",
+        "receiver",
+        "coverage",
+        "violationCount",
+        "summaries",
+        "promotionDecision",
+        "providerCall",
+        "enforcementChanged"
+    ],
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "status": { "enum": ["clean", "violations_observed"] },
+        "evaluatedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "evidenceGrade": { "const": "L2" },
+        "candidateRevision": { "$ref": "#/$defs/revision" },
+        "window": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["startedAt", "endedAt", "durationSeconds"],
+            "properties": {
+                "startedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "endedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "durationSeconds": { "type": "integer", "minimum": 1 }
+            }
+        },
+        "modes": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["enforcement", "reportOnly"],
+            "properties": {
+                "enforcement": { "$ref": "#/$defs/cspMode" },
+                "reportOnly": { "$ref": "#/$defs/cspMode" }
+            }
+        },
+        "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["digest", "eventCount"],
+            "properties": {
+                "digest": { "$ref": "#/$defs/sha256" },
+                "eventCount": { "type": "integer", "minimum": 1 }
+            }
+        },
+        "receiver": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "reachable",
+                "healthSamples",
+                "acceptedReports",
+                "invalidRequests",
+                "oversizedRequests",
+                "rateLimitedRequests",
+                "unknownShapeRequests"
+            ],
+            "properties": {
+                "reachable": { "const": true },
+                "healthSamples": { "type": "integer", "minimum": 1 },
+                "acceptedReports": { "type": "integer", "minimum": 0 },
+                "invalidRequests": { "type": "integer", "minimum": 0 },
+                "oversizedRequests": { "type": "integer", "minimum": 0 },
+                "rateLimitedRequests": { "type": "integer", "minimum": 0 },
+                "unknownShapeRequests": { "type": "integer", "minimum": 0 }
+            }
+        },
+        "coverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["profile", "requiredCount", "executedCount", "gaps"],
+            "properties": {
+                "profile": { "const": "wave1b_minimum_v1" },
+                "requiredCount": { "const": 10 },
+                "executedCount": { "const": 10 },
+                "gaps": { "const": [] }
+            }
+        },
+        "violationCount": { "type": "integer", "minimum": 0 },
+        "summaries": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["directive", "disposition", "count"],
+                "properties": {
+                    "directive": { "$ref": "#/$defs/directiveClass" },
+                    "disposition": { "enum": ["report", "enforce", "unknown"] },
+                    "count": { "type": "integer", "minimum": 1 }
+                }
+            }
+        },
+        "promotionDecision": { "const": "not_authorized" },
+        "providerCall": { "const": false },
+        "enforcementChanged": { "const": false }
+    },
+    "$defs": {
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "utcTimestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "cspMode": { "enum": ["compat", "no-eval", "strict-script", "strict"] },
+        "directiveClass": {
+            "enum": [
+                "default-src",
+                "script-src",
+                "style-src",
+                "connect-src",
+                "img-src",
+                "font-src",
+                "frame-src",
+                "frame-ancestors",
+                "other"
+            ]
+        }
+    }
+}

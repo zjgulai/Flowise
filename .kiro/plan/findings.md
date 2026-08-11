@@ -325,3 +325,68 @@ last_updated: 2026-08-03
 -   Provider 分页对象的 `data` 缺失或类型错误不是“空结果”。若把畸形页降级为 `[]`，已成功更新的 Vector Store 会被误报为没有关联文件，Assistant 详情也会掩盖 Provider 合同漂移。列表和详情路径必须统一固定失败，并在任何后续文件 retrieve 前停止。
 -   `workspace:import` 会创建未部署 Flow、Template 和 Custom Tool 可执行代码，因此它是高信任内容引入能力，不应被误解为普通文件上传权限。凭据 scrub 关闭了 credential 使用链，但权限授予仍需管理员治理和代码审查。
 -   本批没有关闭全局 parser、公开 multipart、公开 flow/file/feedback/leads BOLA、API Key 明文／URL、Redis／SMTP／用户节点 TLS、durable outbox 或历史 Provider 凭据事件；这些是独立 production blockers，专项绿测不能替代。
+
+# 2026-08-10 Wave 0 / D0 主线收敛发现
+
+-   本 worktree 从 exact `origin/main=96f6ae46...` 创建且初始 clean；旧 `flowise` worktree 继续保留 HEAD=`4d56ffd3...` 的 8 个 active-only commits 和全部 ambient dirty/untracked 文件，未 stash/reset/clean/stage。
+-   8 个 commits 中只有 AboutDialog、CSV Agent compatibility 与 RBAC H3 设计直接携带下一主线价值；其余主要是旧 SHA 的计划、candidate/production evidence、历史归档和替代 Dockerfile，不能继承为 main release evidence，也不应 wholesale cherry-pick。
+-   main 已有 built metadata localization validator 和 Cypress authenticated E2E；OpenCode regex i18n 与弱 Playwright public-route 草案不能直接作为缺口答案，需先定义互补 RED 合同。
+-   main 仍包含 `CSV Agent.json`，但 runtime `csvAgent` node 已不存在，且已有 marketplace compatibility test 预期缺失 runtime node 的模板不返回。归档/删除方向成立，但现有测试在模板被删后可能成为 vacuous pass，需要增强存在性/归档合同。
+-   main 未包含 OpenCode RBAC/CSP/staleness/i18n/Playwright/observability 资产；旧实现已确认 CSP 空输入 fail-open、staleness 无持久输入、Playwright 配置冲突、observability 指标/鉴权错误，因此这些文件不得直接复制。
+-   AboutDialog main 版本已有 loading/error/empty/ready、唯一 aria IDs、URL 校验与 5 个 focused tests；正确前移是删除 GitHub request/latest-release/date/link 列，只保留同源 current version，并把现有测试改为断言唯一同源请求和完整状态机，不能换回旧分支的空 catch/固定 aria ID。
+-   现有 marketplace 测试用“排除 csvAgent 后 CSV 不返回”验证 missing-node filtering；模板归档后该断言会 vacuous pass。Group 2 将拆成两个合同：一个动态选取仍在 active 目录的模板并删掉一个 mock runtime node，另一个显式证明 CSV 只存在 archived 子目录且包含已退出的 `csvAgent`。
+-   Marketplace focused Jest 首轮没有运行断言，而是在 import service 时暴露 main 源码既有 TS2339：`IReactFlowNode.data` 的类型缺 `category/name`。必须用未修改 main/g1 对照或 direct Jest 正确参数确认基线；若为基线缺陷，只允许在 Group 2 另开最小 type-contract 修复，不能用 transpile-only 绕过。
+-   基线对照后 TS2339 根因收敛为 fresh workspace build order：server 的 `INodeDataFromComponent` 从 workspace package dist 解析，source 已含 name/category，但 frozen install 不构建 dist；已有 G1 worktree 的 built dist 使同 suite 2/2 通过。正确恢复是先 build `flowise-components`，不是修改 runtime service 或禁用 ts-jest diagnostics。
+-   OpenCode RBAC 文件的可继承价值是 `PermissionCheck` / `checkAnyPermission` 的 22 项 L1 负向与正向对照合同；它不经过真实路由、session、workspace membership、数据库副作用或清理器，不能证明受限 member 的 L4 越权防护。
+-   旧 H3 设计把执行依赖写成“等待 X0-E8-7 Docker Hub push”，该条件绑定旧候选且已过时。当前正确阻断是：current main 独立发布/L4 部署、Owner 明确授权 run-scoped member、non-personal acceptance workspace，以及双 reaper 的持久化 pre/post receipt。
+-   OpenCode deferred 草案不能以“新文件”判断是否补齐能力：main 已有 CSP 结构化模式/receiver、immutable release receipts、隔离 Cypress 和 built metadata validator。真正缺口是把观察输入、current SHA、窗口、receiver/coverage、低基数 telemetry、no-data 语义和持久 receipt 绑定成 fail-closed contract。
+-   Prometheus 当前导出的 histogram 基名是 `http_request_duration_ms`，PromQL series 因而是 `http_request_duration_ms_bucket`；旧 observability 文档使用的无 `_ms` 名称错误。`/api/v1/metrics` 注册在通用鉴权 middleware 之后，后续应先冻结 private listener 与 protected scrape 二选一 ADR，不能简单加入 public whitelist。
+-   `scripts/publish-verified-image.sh` 直接调用 GNU `sha256sum`，macOS 基线只有 `/usr/bin/shasum`，导致 publisher 合同 4 项在测试 fixture 的成功路径失败；临时兼容 wrapper 可使 77/77 全绿，证明根因是工具可移植性而非 manifest/publisher 逻辑，但正式修复仍需单独原子 concern。
+-   `verify-security.sh` 将纯静态检查和 Docker Compose render 合并为同一终态；在明确 Docker no-touch 的门禁中只能报告 340 个静态 PASS 与 1 个未执行的 Compose blocker，不能用跳过或伪造 binary 把它包装成 341/341。
+
+# 2026-08-10 Wave 1A 发现
+
+-   Publisher 只有 `raw_manifest_digest()` 直接依赖 `sha256sum`；脚本已在更早位置解析 canonical `script_dir`，因此最小修复可以调用 repo-owned hash helper，不需要改 registry 状态机或 Docker 命令路径。
+-   现有 `publish-verified-image.test.mjs` 的 `docker` 是临时 fake binary，成功/幂等/错误分类都不接触真实 daemon 或 registry；macOS 上 4 个成功路径因系统缺 GNU `sha256sum` 稳定 RED，适合作为回归基线。
+-   SHA-256 helper 必须把“首选工具存在但执行失败/输出畸形”视为完整性故障，不能静默尝试第二实现；否则 PATH 劫持或损坏工具会被兼容回退掩盖。19/19 GREEN 已覆盖 GNU 首选、macOS 回退、工具全缺失和畸形首选输出四条路径。
+-   Release staleness 需要把 schema 合法性与状态语义分层：未知 key/缺 digest 属于 `SCHEMA_INVALID`；SHA 关系断裂、receipt operation/state 矛盾、未来时间和 no-data 分别 fail-closed；只有结构与身份均成立后才能生成 `fresh/stale/rolled_back` 低敏 receipt。
+-   Observability 不能只冻结 metric 字符串；合同还必须同时绑定 `rate(http_request_duration_ms_bucket...)`、protected/private scrape 模式、public whitelist=false、OCI/runtime/build-info revision 相等、精确低基数 label 集及六类 SLO 的非 healthy no-data 语义。
+-   CodeGraph 的实际仓库索引由 `codegraph` CLI 和 gitignored `.codegraph/` 维护；GitNexus project-local runner 在该 worktree 不存在。使用现有 `codegraph sync .` 可增量刷新，不需要清理或重建 62.55 MB 索引。
+-   当前 `scripts/` 没有通用 JSON Schema/Ajv 约定，root 也未声明可直接依赖的 schema validator。Monitoring 合同应避免新增依赖：提交 Draft 2020-12 schema、checked-in 正负 fixtures，并用 repo-owned Node exact-shape test 验证关键 required/enum/pattern/additionalProperties 语义；本门禁不实现或接入生产 monitor。
+
+# 2026-08-10 Wave 1B 发现
+
+-   Wave 1B 的决策对象不是“是否现在收紧 CSP”，而是“给定一份已持久化、不可变且低敏的观察导出，能否生成 L2 receipt”。本地 fixture 无法提供生产 receiver/coverage 或晋级授权，因此 receipt 必须固定 `promotionDecision=not_authorized` 与 `enforcementChanged=false`。
+-   0 violation 不能单独视为 clean：source 必须非空且有 health/event 证据，receiver 必须可达，观察窗口必须相等，公开/认证/lazy 三类 required coverage 必须完整；否则 fail-closed，而不是输出 clean。
+-   Current server 已在 `csp.ts` 以 rank 强制 report-only 严格强于 enforcement，并在 `cspReport.ts` 限制 16 KiB、120 rpm、10 envelopes、单行日志和 origin-only 脱敏；Wave 1B analyzer 应消费二次低基数汇总，不重新解析 raw URL/body/header，也不修改这两个 runtime 模块。
+-   为避免调用方把 required coverage 缩成一条而假绿，本地合同将绑定命名 profile `wave1b_minimum_v1`：公开、认证、lazy 三类均有固定枚举清单；只接收 executed 类别，缺任何一项均 `COVERAGE_INCOMPLETE`。
+-   复用 Wave 1A 的 dependency-free Draft 2020-12 subset validator 即可；CSP evaluator 单独加载自己的 input/receipt schema，避免把 CSP 状态机混入 monitoring evaluator，也不新增 Ajv/lockfile 变更。
+-   Receiver 可达不等于零违规证据完整：当 accepted violation 为 0、但 invalid/oversized/rate-limited/unknown 任一计数非零时，被丢弃的请求可能包含违规；因此该组合必须 `RECEIVER_EVIDENCE_INCOMPLETE`，不能输出 clean。已有明确违规时仍可如实输出 `violations_observed` 和异常计数，但绝不授权晋级。
+-   Wave 1B 没有理由改动 `packages/server/src/utils/csp.ts` 或 `cspReport.ts`：现有 102/102 focused tests 已覆盖 runtime mode、body/rate limits 与脱敏。新增 analyzer 是后置 observation contract，唯一支持的声明是 L2 fixtures 证明其 fail-closed 语义。
+
+# 2026-08-10 Wave 1C 发现
+
+-   现有 Cypress runner 的生命周期与隔离能力足以表达 public routes：它自行选择 loopback port、启动 server、等待 ping、使用 run-scoped SQLite/artifacts、注入 HTTP/WebSocket exact-origin guard 并清理 process group/temp dir。因此缺口是 approved public spec 与候选回执字段，不是需要第二套 Playwright runner。
+-   当前 approved 5 specs 均先 `cy.loginAsLocalOwner()` 或面向认证模块；仓库只有静态 `productionUiContracts.test.js` 覆盖 `/signin`、`/register` 路由形状，没有浏览器级 `/forgot-password`、ping、auth resolve GET/POST、移动端 overflow 与 public console/network 联合合同。
+-   Wave 1C 的最高声明应是 local isolated runtime evidence；即使浏览器全绿，也不能证明生产路由、生产响应头、真实外网依赖或 release candidate 已部署。公开表单只验证展示/导航，不提交 forgot-password/register，避免 SMTP 或账号副作用。
+-   Public browser runner 不是 self-build：fresh worktree 若缺少 `packages/server/dist`，Oclif dev CLI 会在浏览器前以 `command start not found` 退出；先构建当前 UI/server 后 runner 可正常 self-start。该前置条件应写入使用说明或后续单独增加安全 preflight，不能把 exit 2 误判成 public route 回归。
+-   Cypress 13 的 `after:run` 结果把浏览器身份放在顶层 `browserName/browserVersion`，不是 nested `browser.name/version`。功能 4/4 但 browser receipt unavailable 仍不满足 provenance gate；修正并复跑后才形成可接受回执。
+-   Fresh isolated SQLite 的 auth resolve POST 预期是 `/organization-setup`；已初始化生产实例通常是 `/signin`。因此该断言证明本地 bootstrap 语义与隔离 DB 新鲜度，不替代生产 auth resolve 验收。
+-   最终 public spec 未调用 `loginAsLocalOwner`，未点击登录/重置提交按钮；4 个用例只执行 public DOM/redirect/read-like API contract。外部 HTTP(S)/WebSocket 由 runner 全局 exact-origin guard 阻断，spec 另加浏览器级 origin guard 与 console/overflow 断言。
+-   成功 run 的 artifacts=`0` 是 exact 结果：Cypress failure screenshot 未触发且 video=false；runner 仍以相同 run ID 给出 cleanup complete 并删除 owned temp SQLite/artifact 目录。
+
+# 2026-08-10 Wave 1D 初始发现
+
+-   RED-I18N 的决策对象是“新静态 UI 文案债务能否被 path+line-independent baseline 拦截”，不是自动翻译或证明全产品国际化。当前门禁必须与 built component metadata localization validator 分域，避免重复或改写其 canonical source hash/catalog/coverage 合同。
+-   OpenCode `verify-i18n-coverage.py` 只能作为反例输入：既有 D0 审计已确认固定 `400` 条 regex ceiling 可被等量替换绕过；Wave 1D 必须先验证真实 AST 入口、空/缺 baseline、mutation 与 machine-sensitive context 后再选择实现形态。
+-   当前 UI 已有比 OpenCode 草案强得多的 `g1ChineseCopyGate.test.js`：使用 `@typescript-eslint` AST、scope manager、rendered shared-component closure、display property/call sink、template/binary/static binding 解析与精确技术词 allowlist，对 10 个核心模块和共享壳层执行零未白名单英文门禁。Wave 1D 不应复制或削弱它，而应为其未覆盖的其余 UI 静态文案建立全树 debt baseline ratchet。
+-   现有 G1 extractor 的 finding identity 含行号且仅存在 Jest 文件内部，适合零债务模块的即时诊断，不适合作为全树 checked-in baseline key。Wave 1D 需要独立 canonical record（module/path + sink kind + normalized content digest + occurrence count，不含 line）并以 receipt 报告新增/删除/分类漂移。
+-   当前 `packages/ui/src` 有 440 个 JS/JSX/TS/TSX 文件，其中 259 个文件含中文源码、粗粒度行命中 3,389；这些只是 inventory 规模，不是用户可见文案条数，也不能作为 threshold。
+-   既有 built metadata validator 位于 `scripts/metadata-i18n`，以 TypeScript AST、source fingerprint、catalog exact coverage 和动态 metadata 检查为 canonical；UI baseline 必须排除 `packages/components` 和 metadata catalog，不修改其 3,019 source translation 等固定合同。
+-   `@typescript-eslint/parser` 与 `typescript-estree` 均能在当前 frozen install 中解析，现有 G1 test 正在使用 parser/scope manager；Wave 1D 可复用相同 AST 能力而不新增依赖或修改 lockfile。为降低耦合，新合同应独立在 `scripts/contracts`，现有 849 行 G1 test 保持零债务模块 canonical，不做大规模抽取重构。
+-   全树 production source 精确为 390 个非 test/spec JS/JSX/TS/TSX 文件。Baseline source contract 应固定这四类扩展、递归扫描和 test/spec 排除；文件数为 receipt 观测值而非硬编码 ceiling，空树/解析失败必须非零。
+-   当前全树静态扫描得到 3,550 个显示槽、518 个唯一英文债务记录和 590 次出现；机器敏感字段中文命中为 0。该数值只描述当前 AST 可静态解析的 display sinks，不是“所有运行时文案”或翻译质量统计。
+-   债务主要集中在 `views/evaluations`（205 occurrences）、`views/evaluators`（87）、`views/auth`（57）和 `views/workspace`（55）；sink 主要为 `children`（245）、`label`（95）、`message`（64）与 `description`（57）。这是后续人工翻译优先级输入，不授权 Wave 1D 批量改写这些模块。
+-   仅让 deletion 返回成功而不更新 baseline 会保留旧额度并允许再引入。最终合同把 library receipt 保留为 `ratchet_tightened`，但 normal `check` fail closed 为 `BASELINE_TIGHTENING_REQUIRED`；必须显式 `debt-reduction` update，并禁止该 reason 同时接受任何新增/增加债务。
+-   Baseline 每条记录只有 `id/module/path/kind/sink/literalDigest/occurrences/reason`，没有原文、secret 或用户数据；identity 不含行号，所以纯行移动不漂移，但 path move、sink 变化或英文内容变化会被视为新债务并要求复核。
+-   Metadata validator 的首次 stale failure 证明它不会接受旧 compiled receipt；canonical rebuild 后 311 nodes／91 dynamic methods／unknown 0。UI-copy ratchet 与 component metadata 仍是两个互补且互不改写的合同域。

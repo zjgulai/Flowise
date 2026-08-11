@@ -1,7 +1,7 @@
 ---
 title: Flowise 审计整改执行日志
 date: 2026-07-10
-last_updated: 2026-08-03
+last_updated: 2026-08-10
 ---
 
 # 2026-07-10
@@ -278,3 +278,82 @@ last_updated: 2026-08-03
 -   隔离 Chrome 150 run `100b0677-1b71-44d1-aeb4-0f2ceeda475e` 与 Firefox ESR 140.13 run `fd0f645a-a91d-471f-b10d-809fc1580d3b` 均完成 5 specs／7 tests。Firefox 包对照 Mozilla 官方 SHA-512，SHA-256 为 `0a7c51def21ab65d295d839c270405d0a2c2a04d589e8ce92c5e238eeb3f1827`，Apple 签名与 notarization 通过；runner、挂载、浏览器、进程和临时目录清理完成。
 -   Firefox 首次编排在浏览器启动前因 shell 回落 Node 22 被 pnpm engine 门禁拒绝；切换项目锁定的 Node 24.18.0 后完整通过。该失败不计为产品失败，也没有被通过结果掩盖。
 -   新的 temp-index freeze、冻结后代码／安全双审、哈希复算、原子提交与 push 尚未完成，因此未提交、未 push、未 merge、未部署；`provider_call=false`、`production_secrets_read=false`、`production_write=false`、`registry_write=false`。
+
+## 2026-08-10 Wave 0 / D0 主线收敛
+
+-   Owner 已授权本地 D0。创建 worktree=`/Users/pray/project/FlowAgentic/flowise-main-convergence-20260810`、branch=`codex/flowise-main-convergence-20260810`，HEAD=`origin/main=96f6ae46...`，初始 status clean；原 dirty worktree 未改动。
+-   完成首轮 inventory：active-only 8 commits 的路径已展开，OpenCode dirty/untracked 与 main presence、现有 Cypress/metadata/release contracts 已交叉核验。D0-C ledger 正在形成，尚未 stage/commit。
+-   D0-C ledger 已写入 `docs/audits/flowise-main-convergence-ledger-20260810.md`，8 commits 与全部 OpenCode assets 均有唯一处置；D0-D1 mutable 实现已完成：AboutDialog 仅保留同源 version 请求、CSV Agent 移至非递归 archived 目录并增强非 vacuous compatibility tests、`.gitignore` 增加 Python cache。尚未运行 focused tests 或 stage。
+-   D0-D1 test preflight 发现默认 shell Node=`22.22.0`，不满足项目 Node `24.18.0`；在执行 install/test 前停止。已定位项目既有 `/Users/pray/.nvm/versions/node/v24.18.0/bin`，其 Node24/Corepack/pnpm10.26 均可用；后续所有门禁显式绑定该 PATH，不用 Node22 结果。
+-   Node24 frozen install GREEN：all 7 workspaces、4222 packages、4086 reused、0 download，lockfile resolution skipped；sqlite3/faiss cached native install 成功。审阅 Group 2 diff 后 scope 仍精确为 AboutDialog/tests、marketplace fixture/test、`.gitignore`，计划文档和 ledger 分属 Group 1，未出现 lockfile 或其他源码漂移。
+-   Group 2 attempt1：AboutDialog focused Jest=`1 suite / 5 tests` GREEN。Marketplace focused Jest 在测试执行前因未修改的 `services/marketplaces/index.ts` 对 `INodeData.category/name` 的 TS2339 失败，`0 tests`；先做 exact main/g1 baseline 对照，不把它误报为新测试失败。Prettier 对代码/docs 已写入；把无 parser 的 `.gitignore` 混入命令曾输出 error，后续只对支持 parser 的文件 check，不重复该错误调用。
+-   Marketplace baseline 对照：clean G1 worktree 同 suite=`2/2` GREEN；新 main worktree direct Jest 仍在 TS2339 停止。源码 `packages/components/src/Interface.ts` 明确定义 `INodeData extends INodeProperties` 且含 name/category，两 merge parents 的 server Interface 相同；差异来自 fresh worktree 尚未构建本地 `flowise-components` dist，而不是 marketplace service 新回归。下一步先 build components 再 fresh rerun，不修改 service 类型或关闭 diagnostics。
+-   Components build GREEN：TypeScript/gulp/fingerprint pass，591 files/source SHA recorded。随后 direct focused Jest fresh rerun：AboutDialog=`5/5`、marketplace=`3/3` 全绿；新增 marketplace test 同时证明 active missing-node filter 非 vacuous、CSV active path absent、archived fixture 存在且仍引用退出的 `csvAgent`。
+-   UI atomic pre-commit gates：Prettier、target ESLint `--max-warnings 0`、diff check 全绿；首次 external scan 同时扫测试中的负向字面量 `api.github.com` 因而正确返回命中，改为“产品源码禁外联 + source/test secret pattern”分离后两项 PASS。测试保留负向字面量以防回归，不以删除断言骗过扫描。
+-   UI atomic commit GREEN：explicit 2 paths、cached diff/status/check 精确；Node24 pre-commit pretty-quick/lint-staged/ESLint 通过，commit=`c512ec5f`（`fix(ui): keep About dialog version lookup local`）。没有吸收 docs、marketplace、ignore 或 RBAC 变更，index 随后回到 empty。
+-   Marketplace atomic commit GREEN：focused Jest=`3/3`、Prettier、target ESLint、path/secret/diff gates 全绿；cached 仅 `CSV Agent.json` 100% rename 到 archived + compatibility test，commit=`71b3d047`。未修改 marketplace runtime service，也未吸收其他 concern。
+-   Python cache atomic commit GREEN：`.gitignore` 的 `__pycache__/` 与 `*.py[cod]` 分别命中原 OpenCode pycache 和通用 pyc probe；explicit one-file commit=`5553d66f`。D0-D1 完成，D0-D2 开始。
+-   RBAC D0-D2 已把 middleware 负向矩阵与更新后的 H3 设计前移到 main 候选；设计显式区分 L1 `PermissionCheck` 与未来 route/session/member/workspace L4，并删除“等待旧 Docker Hub 部署”的过期前提。
+-   RBAC focused Jest=`1 suite / 22 tests` GREEN，target ESLint、Prettier、diff-check、强秘密模式扫描与 pre-commit hooks 全绿；explicit 2-path atomic commit=`74dea80b6f`。未创建 member、未访问生产、未执行 route E2E 或 reaper。D0-D2 完成，D0-D3 开始。
+-   D0-D3 已冻结 `docs/superpowers/plans/2026-08-10-flowise-deferred-red-contracts.md`：CSP、release staleness、observability、public browser 和 UI i18n 均定义必填输入、无输入 fail-closed、非 vacuous fixture、低敏 receipt 与后续授权边界；没有复制或接入 OpenCode 草案实现。
+-   deferred contract 对照当前 main 纠正了五个关键事实：CSP receiver/模式已存在、release immutable receipts 已存在、产品 E2E canonical runner 是 Cypress、built metadata validator 已存在、Prometheus histogram 实名为 `http_request_duration_ms_bucket` 且 metrics route 位于通用鉴权之后。D0-D3 完成，D0-E 开始。
+-   D0 final focused refresh：AboutDialog `5/5`、marketplace `3/3`、RBAC `22/22` 全绿；built metadata fingerprint `2/2` 且 validator 为 311 nodes、91 dynamic methods、unknown 0；Node release contracts 在临时 macOS `shasum -a 256` compatibility wrapper 下 `77/77`，wrapper 已删除且临时目录已清理。
+-   Node release 首轮 `73/77` 的 4 个失败同源于 `publish-verified-image.sh` 硬依赖 GNU `sha256sum`，不是本批变更回归；这是新的 macOS portability debt，后续应以 helper/fixture 修复，不能把 compatibility wrapper 当交付实现。
+-   `verify-security.sh` 得到 `340 passed / 1 failed`；唯一未过项是需要 Docker Compose 的 rendered Compose contract。依据 Owner 的 Docker no-touch 边界，本轮没有补跑该项，也不把 340/341 写成 full GREEN。
+-   CodeGraph 先发现父项目 index 会把多个 worktree 合并统计且对 3 份无代码节点 Markdown 持续报 pending；随后按原始 `/codegraph init` 要求在当前 worktree 建立独立 index，再执行 `/codegraph sync`。终态为 2,205 files、30,459 nodes、67,156 edges，status=`Index is up to date`。
+-   原 dirty worktree preservation 复核：HEAD 仍为 `4d56ffd3...`、index empty，原 `.github`/计划/OpenCode untracked path 集合保持；未 stash/reset/clean/stage。D0-E/F 收口完成。
+
+# 2026-08-10 Wave 1A 本地合同与可移植性
+
+-   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`52f9328...`、target status/index clean；范围固定为 SHA-256 portability、release staleness schema/fixtures、observability schema/fixtures 和 local commits。
+-   边界继续为 `docker=false`、`remote_ci=false`、`production_monitor=false`、`registry_write=false`、`production_write=false`、`provider_call=false`、`secrets_read=false`、`smtp_send=false`、`restore=false`、`push=false`、`merge=false`、`pr=false`。
+-   W1A-B RED 基线成立：publisher contract 共 19 tests，`11 pass / 8 fail`。4 个新 helper tests 因 helper 缺失失败，4 个既有 publisher 成功路径因 macOS 无 GNU `sha256sum` 失败；fake Docker/registry 证明本轮没有真实外部副作用。
+-   W1A-B GREEN：repo-owned helper 优先使用 GNU `sha256sum`，仅在其不可用时回退 macOS `shasum -a 256`，并校验严格的小写 64-hex stdin digest。focused publisher=`19/19`，Bash syntax、Prettier、ESLint、diff-check 与强秘密模式扫描均通过；真实 Docker daemon/registry 未接触。
+-   W1A-B 已形成独立 local commit `12be39b8`（`fix(release): support portable SHA-256 hashing`）；pre-commit hooks 通过，计划文档未混入。
+-   W1A-C/D RED：先提交 4 个 schema、9 个正负 fixture 和测试，首次执行因纯合同评估器缺失得到 `ERR_MODULE_NOT_FOUND`，证明不是无输入/跳过式假绿。
+-   W1A-C/D GREEN：release staleness/observability 纯内存合同评估共 `14/14`；覆盖 immutable receipt digest、SHA 关系、UTC/future time、stale age、rollback 终态、no-data、真实 histogram series、受保护 scrape、低基数/privacy、runtime revision、完整 SLO 和 rate-based PromQL。Prettier、ESLint、diff-check 通过；未读取生产路径、未连接监控系统、未写 receipt。
+-   Monitor contracts 已形成独立 local commit `8ea347fc`（`test(ops): freeze local monitoring contracts`）；15 个路径、1323 insertions，pre-commit pretty-quick/lint-staged/ESLint 全绿，计划文档未混入。
+-   Node 24 完整纯本地回归 GREEN：release manifest/baseline/publisher/deployment bundle + monitor contracts=`95/95`（既有 release `81/81` + 新合同 `14/14`）；Bash syntax、Prettier、ESLint、diff-check 与 empty index 同时通过。未运行含 Docker integration 的 `pnpm test:release`。
+-   本地 CodeGraph 首轮 sync GREEN：识别 4 个 changed code files，added 3 / modified 1，新增 43 nodes；这只证明本地索引刷新，不构成发布或生产证据。
+
+# 2026-08-10 Wave 1B CSP 观察合同
+
+-   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`cddd4735...`、target status/index clean；范围固定为 CSP analyzer receipt、receiver health/coverage schema/fixtures/tests 与 local commits。
+-   证据门禁固定为最高 `L2-fixture-or-dry-run`：允许声明“本地合同通过”，禁止声明 report-only 已部署、生产 receiver healthy、真实页面 coverage 完成或 enforcement 可晋级。边界为 `aut=false`、`browser=false`、`real_log_read=false`、`csp_mode_change=false`、`docker=false`、`remote_ci=false`、`production_write=false`、`provider_call=false`、`secrets_read=false`、`push=false`、`merge=false`、`pr=false`。
+-   W1B-A inventory 完成：current mode ladder=`compat < no-eval < strict-script < strict`，report-only 必须严格更强；receiver 是 16 KiB/120 rpm、legacy + Reporting API、最多 10 envelopes/单行脱敏日志。Wave 1B 不改这些 runtime 文件，只在 `scripts/contracts/` 增加纯合同层。
+-   W1B-B RED 成立：2 个 Draft 2020-12 schema、clean/violations 正例和 12 个负例先存在，Node 24 执行因 `csp-observation.mjs` 缺失得到 `ERR_MODULE_NOT_FOUND`；没有无输入/SKIPPED 假绿，也没有读取真实日志或启动服务。
+-   W1B-C attempt1=`14/15`：唯一失败来自隐私断言 `/sample/i` 误命中合法回执字段 `healthSamples`，实际 receipt 不含 URL/token/raw field。修复方向是收紧到 URL/token 字面量和被禁止的键名，不删除隐私负例或改弱 schema。
+-   W1B-C GREEN=`16/16`：clean/violations 两个正例与 13 个 fail-closed 场景全部通过；receipt 只含 digest/count/fixed category，不保留 source path 或 URL/body/header/token/sample，并固定 `evidenceGrade=L2`、`promotionDecision=not_authorized`、`providerCall=false`、`enforcementChanged=false`。
+-   W1B-D runtime cross-check GREEN：现有 server XSS/CSP/report receiver/auth policy=`4/4 suites, 102/102 tests`；新增合同没有修改 server runtime 文件。CSP contract ESLint、Prettier、diff-check 全绿。
+-   W1B-D 纯 Node 回归 GREEN：release/baseline/publisher/deployment bundle + Wave 1A monitor + Wave 1B CSP=`111/111`；fixture symlink scan、empty index、package/lockfile no-diff 与强秘密模式扫描通过。未运行浏览器、Docker、真实 collector 或生产读取。
+-   CSP contract 已形成独立 local commit `f6c26ec7`（`test(security): freeze local CSP observation contract`）；7 个路径、721 insertions，pre-commit pretty-quick/lint-staged/ESLint 与 post-commit `16/16` 全绿，计划文档未混入。
+-   本地 CodeGraph 首轮 sync GREEN：识别 3 个 changed code files，added 3，新增 21 nodes；只证明本地索引刷新，不构成浏览器、report-only 或生产证据。
+
+# 2026-08-10 Wave 1C Public Browser Gap Analysis
+
+-   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`10c8d7aa...`、target status/index clean；允许 isolated loopback Cypress/AUT，禁止 remote URL/account、Provider/SMTP、Docker、生产、远端 CI 与 GitHub 写入。
+-   初步 inventory：canonical runner=`packages/server/cypress/scripts/local-authenticated-e2e.mjs`，已具备 self-start loopback AUT、随机 run ID、owned temp SQLite/artifacts、环境 allowlist、外部 HTTP/WebSocket guard、超时和 process-group cleanup；当前 5 个 approved specs 全为 authenticated，公开路由没有 Cypress spec，gap 成立。
+-   W1C-B RED=`26/28`：新增 public spec allowlist 与 source contract 后，失败精确来自 allowlist 缺项和 `public-routes.cy.js` 不存在；其余 runner 隔离/清理合同保持通过，没有以 SKIP 或空输入假绿。
+-   W1C-C GREEN：复用同一 runner，新 spec 覆盖 `/signin`、`/register -> /signin`、`/forgot-password`、ping 200/pong、auth resolve GET 405/Allow POST/fixed body 与 fresh isolated SQLite POST `/organization-setup`；移动视口=`375x812`，断言无横向溢出、console error/warning 为空、外部 HTTP(S) 阻断。登录和忘记密码按钮只展示，不提交表单，不创建账号或发 SMTP。
+-   Runner 现在把 Git exact HEAD、Node 24、loopback URL、run ID、请求 browser/spec 数写入 start event，并通过 Cypress `after:run` 写低敏 browser version/spec/test/failure/artifact receipt；环境 contract 同时绑定 candidate revision 与 Node version。
+-   首个 post-commit run `b5b12641-2323-4c28-968e-d39eaa7a3633` 在浏览器前因当前 worktree 缺少 `packages/server/dist` 以 exit 2 失败，cleanup complete；有界诊断确认 Oclif `command start not found`。随后 exact candidate 的 UI production build（21,214 modules）与 server TypeScript/gulp build 均通过，仅生成 gitignored 本地产物。
+-   Chrome 首次功能 run `36a5a449-37e2-4777-8d19-f0f05ea1b1ce` 为 4/4 且 cleanup complete，但结构化 browser 字段因错误读取 nested object 而为 unavailable，未作为最终回执。按 Cypress 13 本地类型改用 `browserName/browserVersion`，新增单测并形成 follow-up commit `3833edff`。
+-   最终 exact browser receipt：candidate=`3833edff813c2a845b1d6be5a2914487e4353e2f`、run=`f999bc59-4c6c-467c-9222-ce5ba43fb99f`、Node=`24.18.0`、Chrome=`151.0.7922.77`、specs=`1`、tests=`4`、failures=`0`、artifacts=`0`、cleanup=`complete`。0 artifact 表示成功运行未产出失败截图且 video=false，不表示缺少 cleanup。
+-   回归 GREEN：runner unit=`30/30`、production UI route contract=`39/39`、纯 Node release/monitor/CSP=`111/111`；target Prettier、ESLint、diff-check 与 pre-commit hooks 通过。实现 commits=`7ea9bbf6`、`3833edff`。
+-   CodeGraph 增量 sync 识别 5 个 changed code files，added 2 / modified 3，新增/更新 89 nodes；只证明本地代码索引刷新。全程 `remote_url=false`、`account_create=false`、`form_submit=false`、`production_write=false`、`provider_call=false`、`secrets_read=false`、`smtp_send=false`、`docker=false`、`push=false`、`merge=false`、`pr=false`。
+-   原 dirty worktree preservation 复核：`/Users/pray/project/FlowAgentic/flowise` HEAD 仍为 `4d56ffd3f9cd1e7aa9eebf63045758069b04c608`、index empty，既有 `.github`/计划/OpenCode untracked 集合未被 stash/reset/clean/stage。目标 worktree 除本回执 4 份文档外无源码或 index 漂移。
+
+# 2026-08-10 Wave 1D UI 文案 Baseline Ratchet
+
+-   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`b97479e8...`、target status/index clean；范围固定为 UI 静态文案 AST inventory/baseline/receipt/tests 与本地提交，不授权翻译服务、批量产品文案改写或任何外部副作用。
+-   证据门禁最高为 `L2-fixture-or-local-static`：允许声明“当前源码 baseline 与 ratchet 合同通过”，禁止声明全产品已国际化、运行时所有文案已覆盖、翻译质量已验收或生产已部署。
+-   W1D-A current canonical cross-check：现有 G1 AST 文案门禁=`1 suite / 85 tests` GREEN，覆盖 10 个核心模块、4 个共享/feature-gated surface 和 390 个非测试 UI 源文件中的选定闭包；它是零未白名单英文门禁，但没有全树 checked-in debt baseline/receipt。
+-   W1D-B 取得预期 RED：mutation/schema test 在实现文件缺失时以 `ERR_MODULE_NOT_FOUND` 非零退出；补实现后合同 tests=`9/9`，覆盖新增、等量替换、拆分/template、display sinks、机器字段、缺失/空/漂移 baseline、未知分类、显式 update reason 与 debt reduction 收紧。
+-   W1D-C 全树 AST inventory：production source=`390` files、display sinks=`3550`、baseline unique records=`518`、occurrences=`590`、machine field violations=`0`；baseline digest=`17af3360fe171c98fd28ddae343bf487af060336d67bc624273a9b9aaf237dcb`，只存 path/sink/digest/count/reason，不存原始文案。
+-   `pnpm ui:copy:check` 生成 `status=exact`、source digest=`9b5ab90f7fa58154d431c021deb17baa60e722757ccf18c99e23f45af73bcfbd`、providerCall/productionChanged=`false`。债务减少会先产生 `ratchet_tightened`，普通 check 随后 fail closed，必须显式 `debt-reduction` update 后恢复 exact；该 reason 若同时新增/增加债务会被拒绝。
+-   W1D-D 回归：G1 + production UI contracts=`2 suites / 124 tests`；纯 Node release/monitor/CSP/UI-copy=`120/120`；target Prettier/ESLint、JSON/schema/fixture lint、diff-check、固定 ceiling/`|| true` guard、强秘密模式和 lockfile no-diff 均 GREEN。
+-   built metadata validator 首次正确拒绝 stale local dist；执行 canonical components rebuild 后 fingerprint=`2/2`、311 nodes、91 dynamic methods、unknown=`0`，没有修改 metadata validator 或 catalog。
+-   实现 7-path atomic commit=`7919554511f853728f19da1fa5164c852dd559f6`，pre-commit pretty-quick/lint-staged/ESLint 通过；post-commit UI-copy tests=`9/9` 与 baseline receipt=`exact`。运维说明和四份状态文档仍作为独立 docs concern 待提交。
+-   CodeGraph sync GREEN：识别 3 个 changed code files，added 3／86 nodes；终态 index=`2212 files / 30602 nodes / 67564 edges`、up to date。该索引仅为本地结构证据，不代表远端 CI 或发布。
+-   运维说明与四份状态文档 atomic commit=`313621ed0f564cdd59a5936a57180b117fb8e9ff`；提交钩子通过。该提交后目标 branch=`codex/flowise-main-convergence-20260810`、status clean、ahead `origin/main` 15 commits，仍未 push。
+-   原 dirty worktree preservation：`/Users/pray/project/FlowAgentic/flowise` HEAD 保持 `4d56ffd3f9cd1e7aa9eebf63045758069b04c608`、staged=`0`、既有 dirty entries=`15`；未 stash/reset/clean/stage。Wave 1D 本地门禁完成，下一推荐为另行授权的 Wave 2A exact-head push/remote CI only。

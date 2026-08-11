@@ -32,6 +32,12 @@ const RELEASE_CANDIDATE_SCRIPT_PATH = fileURLToPath(new URL('./verify-release-ca
 const CHROMIUM_SANDBOX_SCRIPT_PATH = fileURLToPath(new URL('./verify-chromium-sandbox.sh', import.meta.url))
 const PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH = fileURLToPath(new URL('./publish-verified-image.sh', import.meta.url))
 const MAIN_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/main.yml', import.meta.url))
+const RBAC_NEGATIVE_MATRIX_PATH = fileURLToPath(
+    new URL('../docs/superpowers/plans/2026-08-07-flowise-rbac-negative-permission-matrix.md', import.meta.url)
+)
+const SERVER_ROUTES_PATH = fileURLToPath(new URL('../packages/server/src/routes/index.ts', import.meta.url))
+const ROLE_ENTITY_PATH = fileURLToPath(new URL('../packages/server/src/enterprise/database/entities/role.entity.ts', import.meta.url))
+const ROLE_DIALOG_PATH = fileURLToPath(new URL('../packages/ui/src/views/roles/CreateEditRoleDialog.jsx', import.meta.url))
 const DOCKER_BUILD_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/test_docker_build.yml', import.meta.url))
 const DOCKERHUB_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-dockerhub.yml', import.meta.url))
 const ECR_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-ecr.yml', import.meta.url))
@@ -1786,21 +1792,139 @@ test('dirty manifest is rejected by require-clean verification', () => {
 
 test('main CI retains full coverage while bounding workspace and Jest concurrency for hosted-runner memory safety', () => {
     const workflow = readFileSync(MAIN_WORKFLOW_PATH, 'utf8')
+    const workflowDocument = parseWorkflowDocument(workflow, 'main CI')
+    const buildJobStart = workflow.indexOf('    build:\n')
+    const exactHeadJobStart = workflow.indexOf('    exact-head:\n')
+    assert.ok(buildJobStart >= 0 && exactHeadJobStart > buildJobStart, 'main CI must keep separate merge-result and exact-head jobs')
+    const buildJob = workflow.slice(buildJobStart, exactHeadJobStart)
+    const exactHeadJob = workflowDocument.jobs?.['exact-head']
+    assert.ok(exactHeadJob && typeof exactHeadJob === 'object' && !Array.isArray(exactHeadJob), 'main CI exact-head job is missing')
+    const exactHeadSteps = exactHeadJob.steps
+    assert.ok(Array.isArray(exactHeadSteps), 'main CI exact-head steps are missing')
+    const requiredNodeCheck = workflowDocument.jobs?.['node-ci']
+    assert.ok(requiredNodeCheck && typeof requiredNodeCheck === 'object' && !Array.isArray(requiredNodeCheck))
+    assert.equal(requiredNodeCheck.name, 'Node CI')
+    assert.equal(requiredNodeCheck.if, "always() && github.event_name == 'pull_request'")
+    assert.deepEqual(requiredNodeCheck.needs, ['build', 'exact-head'])
+    assert.equal(requiredNodeCheck['runs-on'], 'ubuntu-latest')
+    assert.equal(requiredNodeCheck.steps.filter((step) => step?.uses).length, 0)
+    const requiredNodeStep = requireNamedWorkflowStep(workflowDocument, 'node-ci', 'Require both Node CI identities', 'required Node CI')
+    assert.equal(requiredNodeStep.env?.MERGE_RESULT, '${{ needs.build.result }}')
+    assert.equal(requiredNodeStep.env?.EXACT_HEAD_RESULT, '${{ needs.exact-head.result }}')
+    assert.match(requiredNodeStep.run, /test "\$MERGE_RESULT" = "success"/)
+    assert.match(requiredNodeStep.run, /test "\$EXACT_HEAD_RESULT" = "success"/)
+    assert.doesNotMatch(requiredNodeStep.run, /\|\|\s*true|continue-on-error/)
 
-    assert.match(workflow, /^\s*run:\s*pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand\s*$/m)
+    assert.match(workflow, /^ {12}FLOWISE_CI_CANDIDATE_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}\s*$/m)
+    assert.match(workflow, /^ {12}FLOWISE_CI_EVENT_SHA: \$\{\{ github\.sha \}\}\s*$/m)
+    assert.match(buildJob, /^ {12}- uses: actions\/checkout@v6\s*$/m)
+    assert.doesNotMatch(buildJob, /^ {18}ref: \$\{\{ env\.FLOWISE_CI_CANDIDATE_SHA \}\}\s*$/m)
+    assert.match(buildJob, /test "\$actual" = "\$FLOWISE_CI_EVENT_SHA"/)
+    assert.equal(exactHeadJob.if, "github.event_name == 'pull_request'")
+    const exactHeadCheckout = exactHeadSteps.filter((step) => step?.uses === 'actions/checkout@v6')
+    assert.equal(exactHeadCheckout.length, 1)
+    assert.equal(exactHeadCheckout[0].with?.ref, '${{ env.FLOWISE_CI_CANDIDATE_SHA }}')
+    assert.match(
+        requireNamedWorkflowStep(workflowDocument, 'exact-head', 'Verify CI source identity', 'main CI source identity').run,
+        /test "\$actual" = "\$FLOWISE_CI_CANDIDATE_SHA"/
+    )
+    const exactHeadCypress = requireNamedWorkflowStep(workflowDocument, 'exact-head', 'Cypress test', 'main CI exact-head Cypress')
+    assert.equal(exactHeadCypress['working-directory'], 'packages/server')
+    assert.equal(exactHeadCypress.run, 'pnpm cypress:ci')
+    for (const jobId of ['build', 'exact-head']) {
+        const checkoutSteps = workflowDocument.jobs[jobId].steps.filter((step) => step?.uses === 'actions/checkout@v6')
+        assert.equal(checkoutSteps.length, 1, `${jobId} must contain exactly one checkout step`)
+        assert.equal(checkoutSteps[0].with?.['persist-credentials'], false, `${jobId} checkout must not persist credentials`)
+    }
+    assert.equal(workflow.match(/phase=source-identity event=%s candidate=%s checkout=%s/g)?.length, 2)
+    assert.equal(
+        workflow.match(
+            /^\s+run:\s*node --test scripts\/contracts\/monitor-contracts\.test\.mjs scripts\/contracts\/csp-observation\.test\.mjs\s*$/gm
+        )?.length,
+        2
+    )
+    assert.equal(workflow.match(/^\s+run:\s*pnpm ui:copy:check\s*$/gm)?.length, 2)
+    assert.equal(workflow.match(/^\s*run:\s*pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand\s*$/gm)?.length, 2)
     assert.doesNotMatch(workflow, /^\s*run:\s*pnpm test:coverage\s*$/m)
-    const cypressStep = workflow.match(/^ {12}- name: Cypress test\n(?:^ {14,}.*(?:\n|$))+/m)?.[0]
-    assert.ok(cypressStep, 'main CI must retain the Cypress test step')
-    assert.match(cypressStep, /^ {18}ADMIN_ONLY_MODE: 'false'\s*$/m)
-    assert.equal(workflow.match(/^\s+ADMIN_ONLY_MODE: 'false'\s*$/gm)?.length, 1)
-    assert.equal(workflow.match(/^\s+run:\s*pnpm metadata:i18n:validate:built\s*$/gm)?.length, 1)
-    assert.ok(workflow.indexOf('run: pnpm build') < workflow.indexOf('run: pnpm metadata:i18n:validate:built'))
+    assert.equal(workflow.match(/^ {12}- name: Cypress test\s*$/gm)?.length, 2)
+    assert.equal(workflow.match(/^ {14}working-directory: packages\/server\s*$/gm)?.length, 2)
+    assert.equal(workflow.match(/^ {14}run: pnpm cypress:ci\s*$/gm)?.length, 2)
+    assert.equal(workflow.match(/^\s+uses:\s*cypress-io\/github-action@/gm)?.length ?? 0, 0)
+    assert.equal(workflow.match(/^\s+run:\s*pnpm metadata:i18n:validate:built\s*$/gm)?.length, 2)
+    for (const jobId of ['build', 'exact-head']) {
+        const steps = workflowDocument.jobs[jobId].steps
+        const buildIndex = steps.findIndex((step) => step?.run === 'pnpm build')
+        const metadataIndex = steps.findIndex((step) => step?.run === 'pnpm metadata:i18n:validate:built')
+        assert.ok(buildIndex >= 0 && metadataIndex > buildIndex, `${jobId} must validate metadata after the build`)
+    }
+    assert.ok(workflow.indexOf('run: pnpm ui:copy:check') < workflow.indexOf('name: Cypress test'))
 
     for (const workspace of ['agentflow', 'observe', 'components', 'server']) {
         const packageJsonPath = fileURLToPath(new URL(`../packages/${workspace}/package.json`, import.meta.url))
         const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
         assert.equal(packageJson.scripts?.['test:coverage'], 'jest --coverage', `${workspace} must retain full coverage`)
     }
+})
+
+test('RBAC negative matrix uses mounted routes and the role permission text payload contract', () => {
+    const document = readFileSync(RBAC_NEGATIVE_MATRIX_PATH, 'utf8')
+    const routes = readFileSync(SERVER_ROUTES_PATH, 'utf8')
+    const roleEntity = readFileSync(ROLE_ENTITY_PATH, 'utf8')
+    const roleDialog = readFileSync(ROLE_DIALOG_PATH, 'utf8')
+    assert.match(routes, /router\.use\('\/organizationuser', organizationUserRoute\)/)
+    assert.match(routes, /router\.use\('\/workspaceuser', workspaceUserRouter\)/)
+    assert.match(roleEntity, /@Column\(\{ type: 'text' \}\)\s+permissions: string/)
+    assert.match(roleDialog, /saveObj\.permissions = JSON\.stringify\(tempPermissions\)/)
+    assert.doesNotMatch(document, /\/api\/v1\/(?:organization-user|workspace-user)/)
+    assert.match(document, /\/api\/v1\/organizationuser/)
+    assert.match(document, /\/api\/v1\/workspaceuser/)
+    assert.match(document, /permissions: JSON\.stringify\(\[\.\.\.最小只读集\.\.\.\]\)/)
+})
+
+test('production dependency remediation pins the reviewed YAML and ID generator releases across source and static contracts', () => {
+    const rootPackageJson = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'))
+    const componentsPackageJson = JSON.parse(
+        readFileSync(fileURLToPath(new URL('../packages/components/package.json', import.meta.url)), 'utf8')
+    )
+    const serverPackageJson = JSON.parse(readFileSync(fileURLToPath(new URL('../packages/server/package.json', import.meta.url)), 'utf8'))
+    const securityScript = readFileSync(SECURITY_SCRIPT_PATH, 'utf8')
+    const lockfile = readFileSync(fileURLToPath(new URL('../pnpm-lock.yaml', import.meta.url)), 'utf8')
+
+    assert.equal(rootPackageJson.devDependencies?.['js-yaml'], '4.3.1')
+    assert.equal(rootPackageJson.pnpm?.overrides?.['js-yaml'], '4.3.1')
+    assert.equal(rootPackageJson.pnpm?.overrides?.['nanoid@>=3.0.0 <3.3.17'], '3.3.17')
+    assert.equal(rootPackageJson.pnpm?.overrides?.['nanoid@>=5.0.0 <5.1.16'], '5.1.16')
+    assert.equal(componentsPackageJson.dependencies?.['js-yaml'], '4.3.1')
+    assert.equal(serverPackageJson.dependencies?.nanoid, '3.3.17')
+    assert.match(securityScript, /'"js-yaml": "4\.3\.1"' 1 "Components declares the OpenAPI Toolkit runtime YAML dependency"/)
+    assert.doesNotMatch(lockfile, /js-yaml(?:@|:\s)4\.3\.0/)
+    const isVulnerableNanoidVersion = (version) => {
+        const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+        if (!match) return false
+        const [, majorText, minorText, patchText] = match
+        const [major, minor, patch] = [majorText, minorText, patchText].map(Number)
+        return (major === 3 && (minor < 3 || (minor === 3 && patch < 17))) || (major === 5 && (minor < 1 || (minor === 1 && patch < 16)))
+    }
+    for (const vulnerable of ['3.0.0', '3.2.0', '3.3.6', '3.3.8', '3.3.16', '5.0.0', '5.0.7', '5.1.15']) {
+        assert.equal(isVulnerableNanoidVersion(vulnerable), true, `${vulnerable} must remain excluded`)
+    }
+    for (const patched of ['3.3.17', '3.4.0', '5.1.16', '5.2.0']) {
+        assert.equal(isVulnerableNanoidVersion(patched), false, `${patched} must remain allowed`)
+    }
+    const lockDocument = loadYaml(lockfile)
+    const lockedNanoidVersions = [...Object.keys(lockDocument.packages ?? {}), ...Object.keys(lockDocument.snapshots ?? {})].flatMap(
+        (key) => {
+            const match = /^nanoid@(\d+\.\d+\.\d+)(?:\(|$)/.exec(key)
+            return match ? [match[1]] : []
+        }
+    )
+    assert.ok(lockedNanoidVersions.length > 0, 'lockfile must contain Nanoid package entries')
+    for (const version of lockedNanoidVersions) {
+        assert.equal(isVulnerableNanoidVersion(version), false, `lockfile contains vulnerable Nanoid ${version}`)
+    }
+    assert.match(lockfile, /^ {2}js-yaml@4\.3\.1:$/m)
+    assert.match(lockfile, /^ {2}nanoid@3\.3\.17:$/m)
+    assert.match(lockfile, /^ {2}nanoid@5\.1\.16:$/m)
 })
 
 test('root Dockerfile removes dynamic Turbo output and supplies a validated epoch to fontconfig', () => {
@@ -2073,15 +2197,15 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
 
 test('every build and publication workflow enforces the current component metadata receipt', () => {
     const contracts = [
-        ['main CI', MAIN_WORKFLOW_PATH, 'pnpm metadata:i18n:validate:built', 'pnpm build'],
-        ['build-only Docker CI', DOCKER_BUILD_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile'],
-        ['Docker Hub publishing', DOCKERHUB_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile'],
-        ['ECR build-only CI', ECR_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile']
+        ['main CI', MAIN_WORKFLOW_PATH, 'pnpm metadata:i18n:validate:built', 'pnpm build', 2],
+        ['build-only Docker CI', DOCKER_BUILD_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile', 1],
+        ['Docker Hub publishing', DOCKERHUB_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile', 1],
+        ['ECR build-only CI', ECR_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile', 1]
     ]
 
-    for (const [label, workflowPath, metadataGate, prerequisite] of contracts) {
+    for (const [label, workflowPath, metadataGate, prerequisite, expectedCount] of contracts) {
         const workflow = readFileSync(workflowPath, 'utf8')
-        assert.equal(workflow.split(metadataGate).length - 1, 1, `${label} must run exactly one metadata gate`)
+        assert.equal(workflow.split(metadataGate).length - 1, expectedCount, `${label} must run every expected metadata gate`)
         assert.ok(
             workflow.indexOf(prerequisite) < workflow.indexOf(metadataGate),
             `${label} must prepare the build before metadata validation`

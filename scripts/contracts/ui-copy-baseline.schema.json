@@ -1,0 +1,52 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://flowise.local/contracts/ui-copy-baseline.schema.json",
+    "title": "Flowise UI copy debt baseline",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["schemaVersion", "source", "records", "baselineDigest"],
+    "properties": {
+        "schemaVersion": { "const": 1 },
+        "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["root", "extensions", "excludes"],
+            "properties": {
+                "root": { "const": "packages/ui/src" },
+                "extensions": { "const": [".js", ".jsx", ".ts", ".tsx"] },
+                "excludes": { "const": ["**/*.test.*", "**/*.spec.*"] }
+            }
+        },
+        "records": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "module", "path", "kind", "sink", "literalDigest", "occurrences", "reason"],
+                "properties": {
+                    "id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "module": { "type": "string", "minLength": 1 },
+                    "path": { "type": "string", "pattern": "^[a-zA-Z0-9_./-]+\\.(?:js|jsx|ts|tsx)$" },
+                    "kind": {
+                        "enum": ["attribute", "jsx-expression", "jsx-text", "notification", "property"]
+                    },
+                    "sink": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$" },
+                    "literalDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "occurrences": { "type": "integer", "minimum": 1 },
+                    "reason": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["code", "reference"],
+                        "properties": {
+                            "code": {
+                                "enum": ["feature-gap", "legacy-existing", "temporary-migration", "upstream-compatibility"]
+                            },
+                            "reference": { "type": "string", "pattern": "^[A-Z0-9][A-Z0-9._#/-]{2,79}$" }
+                        }
+                    }
+                }
+            }
+        },
+        "baselineDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    }
+}

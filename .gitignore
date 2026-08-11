@@ -54,6 +54,10 @@
 ## turbo
 .turbo
 
+## Python caches
+__pycache__/
+*.py[cod]
+
 ## secrets
 **/*.key
 **/api.json
