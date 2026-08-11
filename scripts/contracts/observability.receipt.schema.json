@@ -7,19 +7,25 @@
     "required": [
         "schemaVersion",
         "status",
+        "evaluatedAt",
+        "maxAgeSeconds",
         "observedAt",
         "candidateRevision",
         "runtimeRevision",
         "scrape",
         "metrics",
         "labels",
-        "alerts",
+        "observations",
+        "alertConfiguration",
+        "alertConfigurationDigest",
         "evidenceGrade",
         "providerCall"
     ],
     "properties": {
         "schemaVersion": { "const": 1 },
         "status": { "const": "ready" },
+        "evaluatedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "maxAgeSeconds": { "const": 300 },
         "observedAt": { "$ref": "#/$defs/utcTimestamp" },
         "candidateRevision": { "$ref": "#/$defs/revision" },
         "runtimeRevision": { "$ref": "#/$defs/revision" },
@@ -49,20 +55,71 @@
             "minItems": 3,
             "uniqueItems": true
         },
-        "alerts": {
-            "type": "array",
-            "items": {
-                "enum": ["http_5xx_ratio", "http_p95_latency", "process_restart", "disk_free", "csp_receiver_health", "release_staleness"]
-            },
-            "minItems": 6,
-            "uniqueItems": true
+        "observations": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["snapshot", "runtime", "scrape", "alerts"],
+            "properties": {
+                "snapshot": { "$ref": "#/$defs/observation" },
+                "runtime": { "$ref": "#/$defs/observation" },
+                "scrape": { "$ref": "#/$defs/observation" },
+                "alerts": {
+                    "type": "array",
+                    "minItems": 6,
+                    "maxItems": 6,
+                    "uniqueItems": true,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["name", "observedAt", "ageSeconds"],
+                        "properties": {
+                            "name": { "$ref": "#/$defs/alertName" },
+                            "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+                            "ageSeconds": { "type": "integer", "minimum": 0 }
+                        }
+                    }
+                }
+            }
         },
+        "alertConfiguration": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "uniqueItems": true,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "query", "window", "threshold", "dataSource", "runbook", "noData"],
+                "properties": {
+                    "name": { "$ref": "#/$defs/alertName" },
+                    "query": { "type": "string", "minLength": 1 },
+                    "window": { "type": "string", "pattern": "^[1-9][0-9]*[smhd]$" },
+                    "threshold": { "type": "number" },
+                    "dataSource": { "enum": ["prometheus", "release_receipt", "csp_receipt"] },
+                    "runbook": { "type": "string", "pattern": "^docs/runbooks/[^\\u0000]+$" },
+                    "noData": { "enum": ["alert", "fail_closed"] }
+                }
+            }
+        },
+        "alertConfigurationDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "evidenceGrade": { "$ref": "#/$defs/evidenceGrade" },
         "providerCall": { "const": false }
     },
     "$defs": {
         "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "utcTimestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
-        "evidenceGrade": { "enum": ["L1", "L2", "L3", "L4"] }
+        "evidenceGrade": { "enum": ["L1", "L2", "L3", "L4"] },
+        "alertName": {
+            "enum": ["http_5xx_ratio", "http_p95_latency", "process_restart", "disk_free", "csp_receiver_health", "release_staleness"]
+        },
+        "observation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["observedAt", "ageSeconds"],
+            "properties": {
+                "observedAt": { "$ref": "#/$defs/utcTimestamp" },
+                "ageSeconds": { "type": "integer", "minimum": 0 }
+            }
+        }
     }
 }

@@ -134,3 +134,17 @@ jobs:
             - name: Cypress test
               working-directory: packages/server
               run: pnpm cypress:ci
+    node-ci:
+        name: Node CI
+        if: always() && github.event_name == 'pull_request'
+        needs: [build, exact-head]
+        runs-on: ubuntu-latest
+        steps:
+            - name: Require both Node CI identities
+              env:
+                  MERGE_RESULT: ${{ needs.build.result }}
+                  EXACT_HEAD_RESULT: ${{ needs.exact-head.result }}
+              run: |
+                  test "$MERGE_RESULT" = "success"
+                  test "$EXACT_HEAD_RESULT" = "success"
+                  printf '[flowise-ci] phase=required-context merge=%s exact_head=%s\n' "$MERGE_RESULT" "$EXACT_HEAD_RESULT"

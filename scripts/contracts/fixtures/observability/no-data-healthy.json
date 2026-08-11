@@ -1,18 +1,22 @@
 {
     "schemaVersion": 1,
+    "evaluatedAt": "2026-08-10T12:00:00.000Z",
+    "maxAgeSeconds": 300,
     "observedAt": "2026-08-10T12:00:00.000Z",
     "candidateRevision": "1111111111111111111111111111111111111111",
     "ociRevision": "1111111111111111111111111111111111111111",
     "runtime": {
         "revision": "1111111111111111111111111111111111111111",
         "buildInfoRevision": "1111111111111111111111111111111111111111",
+        "observedAt": "2026-08-10T11:59:00.000Z",
         "evidenceGrade": "L2"
     },
     "scrape": {
         "mode": "protected_endpoint",
         "endpoint": "/api/v1/metrics",
         "authenticated": true,
-        "publicWhitelist": false
+        "publicWhitelist": false,
+        "observedAt": "2026-08-10T11:59:30.000Z"
     },
     "metrics": {
         "requestCounter": "http_requests_total",
@@ -38,7 +42,8 @@
             "threshold": 0.05,
             "dataSource": "prometheus",
             "runbook": "docs/runbooks/http-5xx.md",
-            "noData": "healthy"
+            "noData": "healthy",
+            "observedAt": "2026-08-10T11:59:45.000Z"
         },
         {
             "name": "http_p95_latency",
@@ -47,16 +52,18 @@
             "threshold": 1000,
             "dataSource": "prometheus",
             "runbook": "docs/runbooks/http-latency.md",
-            "noData": "alert"
+            "noData": "alert",
+            "observedAt": "2026-08-10T11:59:45.000Z"
         },
         {
             "name": "process_restart",
-            "query": "increase(process_start_time_seconds[5m])",
+            "query": "changes(process_start_time_seconds[5m])",
             "window": "5m",
             "threshold": 0,
             "dataSource": "prometheus",
             "runbook": "docs/runbooks/process-restart.md",
-            "noData": "alert"
+            "noData": "alert",
+            "observedAt": "2026-08-10T11:59:45.000Z"
         },
         {
             "name": "disk_free",
@@ -65,7 +72,8 @@
             "threshold": 10737418240,
             "dataSource": "prometheus",
             "runbook": "docs/runbooks/disk-free.md",
-            "noData": "alert"
+            "noData": "alert",
+            "observedAt": "2026-08-10T11:59:45.000Z"
         },
         {
             "name": "csp_receiver_health",
@@ -74,7 +82,8 @@
             "threshold": 1,
             "dataSource": "csp_receipt",
             "runbook": "docs/runbooks/csp-receiver.md",
-            "noData": "fail_closed"
+            "noData": "fail_closed",
+            "observedAt": "2026-08-10T11:59:45.000Z"
         },
         {
             "name": "release_staleness",
@@ -83,7 +92,8 @@
             "threshold": 86400,
             "dataSource": "release_receipt",
             "runbook": "docs/runbooks/release-staleness.md",
-            "noData": "fail_closed"
+            "noData": "fail_closed",
+            "observedAt": "2026-08-10T11:59:45.000Z"
         }
     ]
 }

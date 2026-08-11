@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
@@ -110,6 +111,26 @@ test('release staleness rejects rollback receipts while the candidate is still d
     assertContractError(() => evaluateReleaseStaleness(input), 'ROLLBACK_NOT_EFFECTIVE')
 })
 
+test('release staleness directly covers fail-closed path, activation, runtime, and backup errors', () => {
+    const pathMismatch = fixture('release-staleness/fresh.json')
+    pathMismatch.deployment.receiptPath = '/opt/flowise/deployments/other-run/cutover-receipt.json'
+    assertContractError(() => evaluateReleaseStaleness(pathMismatch), 'RECEIPT_PATH_MISMATCH')
+
+    const prepare = fixture('release-staleness/fresh.json')
+    prepare.deployment.operation = 'prepare'
+    prepare.deployment.state = 'prepared'
+    prepare.deployment.receiptPath = prepare.deployment.receiptPath.replace('cutover-receipt', 'prepare-receipt')
+    assertContractError(() => evaluateReleaseStaleness(prepare), 'CANDIDATE_NOT_ACTIVE')
+
+    const unhealthy = fixture('release-staleness/fresh.json')
+    unhealthy.runtime.health = 'unhealthy'
+    assertContractError(() => evaluateReleaseStaleness(unhealthy), 'RUNTIME_UNHEALTHY')
+
+    const invalidBackup = fixture('release-staleness/fresh.json')
+    invalidBackup.backup.checksumStatus = 'mismatch'
+    assertContractError(() => evaluateReleaseStaleness(invalidBackup), 'BACKUP_CHECKSUM_INVALID')
+})
+
 test('observability positive fixture produces a low-cardinality ready receipt', () => {
     const input = fixture('observability/ready.json')
     assert.deepEqual(validateSchema(schemas.observabilityInput, input), [])
@@ -118,8 +139,85 @@ test('observability positive fixture produces a low-cardinality ready receipt', 
     assert.deepEqual(validateSchema(schemas.observabilityReceipt, receipt), [])
     assert.equal(receipt.status, 'ready')
     assert.deepEqual(receipt.labels, ['method', 'route', 'status'])
-    assert.equal(receipt.alerts.length, 6)
+    assert.equal(receipt.evaluatedAt, input.evaluatedAt)
+    assert.equal(receipt.maxAgeSeconds, input.maxAgeSeconds)
+    assert.equal(receipt.observations.runtime.ageSeconds, 60)
+    assert.equal(receipt.observations.scrape.ageSeconds, 30)
+    assert.equal(receipt.observations.alerts.length, 6)
+    assert.equal(receipt.alertConfiguration.length, 6)
+    assert.match(receipt.alertConfigurationDigest, /^[0-9a-f]{64}$/)
+    assert.equal(receipt.alertConfigurationDigest, createHash('sha256').update(JSON.stringify(receipt.alertConfiguration)).digest('hex'))
     assert.equal(receipt.providerCall, false)
+})
+
+test('observability rejects future and stale evidence relative to an explicit evaluation anchor', () => {
+    const futureSnapshot = fixture('observability/ready.json')
+    futureSnapshot.observedAt = '2999-01-01T00:00:00.000Z'
+    assertContractError(() => evaluateObservability(futureSnapshot), 'CLOCK_INVALID')
+
+    const futureAnchor = fixture('observability/ready.json')
+    futureAnchor.evaluatedAt = '2999-01-01T00:00:00.000Z'
+    futureAnchor.observedAt = futureAnchor.evaluatedAt
+    futureAnchor.runtime.observedAt = futureAnchor.evaluatedAt
+    futureAnchor.scrape.observedAt = futureAnchor.evaluatedAt
+    futureAnchor.alerts.forEach((alert) => (alert.observedAt = futureAnchor.evaluatedAt))
+    assertContractError(() => evaluateObservability(futureAnchor), 'CLOCK_INVALID')
+
+    for (const mutate of [
+        (input) => (input.runtime.observedAt = '2026-08-10T12:00:01.000Z'),
+        (input) => (input.scrape.observedAt = '2026-08-10T12:00:01.000Z'),
+        (input) => (input.alerts[0].observedAt = '2026-08-10T12:00:01.000Z')
+    ]) {
+        const future = fixture('observability/ready.json')
+        mutate(future)
+        assertContractError(() => evaluateObservability(future), 'CLOCK_INVALID')
+    }
+
+    for (const mutate of [
+        (input) => (input.observedAt = '2026-08-10T11:54:59.000Z'),
+        (input) => (input.runtime.observedAt = '2026-08-10T11:54:59.000Z'),
+        (input) => (input.scrape.observedAt = '2026-08-10T11:54:59.000Z'),
+        (input) => (input.alerts[0].observedAt = '2026-08-10T11:54:59.000Z')
+    ]) {
+        const stale = fixture('observability/ready.json')
+        mutate(stale)
+        assertContractError(() => evaluateObservability(stale), 'EVIDENCE_STALE')
+    }
+
+    const subsecondStale = fixture('observability/ready.json')
+    subsecondStale.scrape.observedAt = '2026-08-10T11:54:59.999Z'
+    assertContractError(() => evaluateObservability(subsecondStale), 'EVIDENCE_STALE')
+
+    const widenedWindow = fixture('observability/ready.json')
+    widenedWindow.maxAgeSeconds = 301
+    assertContractError(() => evaluateObservability(widenedWindow), 'SCHEMA_INVALID')
+})
+
+test('observability binds every field of every alert to the canonical managed configuration', () => {
+    const alternateDataSource = {
+        prometheus: 'release_receipt',
+        release_receipt: 'csp_receipt',
+        csp_receipt: 'prometheus'
+    }
+    const alternateNoData = { alert: 'fail_closed', fail_closed: 'alert' }
+    const mutations = {
+        query: (alert) => `${alert.query} + unrelated_metric`,
+        window: () => '10m',
+        threshold: (alert) => alert.threshold + 1,
+        dataSource: (alert) => alternateDataSource[alert.dataSource],
+        runbook: () => 'docs/runbooks/nonexistent.md',
+        noData: (alert) => alternateNoData[alert.noData]
+    }
+
+    for (const name of fixture('observability/ready.json').alerts.map((alert) => alert.name)) {
+        for (const [field, mutate] of Object.entries(mutations)) {
+            const input = fixture('observability/ready.json')
+            const alert = input.alerts.find((candidate) => candidate.name === name)
+            alert[field] = mutate(alert)
+            assert.deepEqual(validateSchema(schemas.observabilityInput, input), [], `${name}.${field} must reach semantic validation`)
+            assertContractError(() => evaluateObservability(input), 'ALERT_CONFIG_INVALID')
+        }
+    }
 })
 
 test('observability rejects the nonexistent histogram series', () => {
@@ -154,6 +252,11 @@ test('observability rejects revision drift and an incomplete SLO alert set', () 
     const incomplete = fixture('observability/ready.json')
     incomplete.alerts = incomplete.alerts.slice(0, -1)
     assertContractError(() => evaluateObservability(incomplete), 'SCHEMA_INVALID')
+
+    const wrongSet = fixture('observability/ready.json')
+    wrongSet.alerts.at(-1).name = wrongSet.alerts[0].name
+    assert.deepEqual(validateSchema(schemas.observabilityInput, wrongSet), [])
+    assertContractError(() => evaluateObservability(wrongSet), 'ALERT_SET_INVALID')
 })
 
 test('observability rejects a contradictory duplicate alert definition', () => {
@@ -168,7 +271,7 @@ test('observability rejects PromQL that bypasses rate-based histogram aggregatio
     const input = fixture('observability/ready.json')
     input.alerts.find(({ name }) => name === 'http_p95_latency').query = 'histogram_quantile(0.95, http_request_duration_ms_bucket)'
     assert.deepEqual(validateSchema(schemas.observabilityInput, input), [])
-    assertContractError(() => evaluateObservability(input), 'PROMQL_INVALID')
+    assertContractError(() => evaluateObservability(input), 'ALERT_CONFIG_INVALID')
 
     for (const [name, query] of [
         ['http_p95_latency', 'rate(unrelated_counter[5m]) + 0 * http_request_duration_ms_bucket'],
@@ -177,7 +280,7 @@ test('observability rejects PromQL that bypasses rate-based histogram aggregatio
         const tokenBypass = fixture('observability/ready.json')
         tokenBypass.alerts.find((alert) => alert.name === name).query = query
         assert.deepEqual(validateSchema(schemas.observabilityInput, tokenBypass), [])
-        assertContractError(() => evaluateObservability(tokenBypass), 'PROMQL_INVALID')
+        assertContractError(() => evaluateObservability(tokenBypass), 'ALERT_CONFIG_INVALID')
     }
 })
 

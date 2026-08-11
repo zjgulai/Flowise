@@ -723,14 +723,20 @@ const parseCli = (args) => {
     const [mode, ...rest] = args
     if (!['check', 'init', 'update'].includes(mode)) throw new ContractError('CLI_USAGE_INVALID')
     const options = { mode, root: process.cwd(), baseline: path.join(contractDirectory, 'ui-copy-baseline.json') }
+    const allowedFlags = new Set(['--root', '--baseline', ...(mode === 'check' ? [] : ['--reason', '--reference'])])
+    const seenFlags = new Set()
     for (let index = 0; index < rest.length; index += 1) {
         const flag = rest[index]
         const value = rest[index + 1]
-        if (!['--root', '--baseline', '--reason', '--reference'].includes(flag) || !value || value.startsWith('--')) {
+        if (!allowedFlags.has(flag) || seenFlags.has(flag) || !value || value.startsWith('--')) {
             throw new ContractError('CLI_USAGE_INVALID')
         }
+        seenFlags.add(flag)
         options[flag.slice(2)] = value
         index += 1
+    }
+    if (mode !== 'check' && (!seenFlags.has('--reason') || !seenFlags.has('--reference'))) {
+        throw new ContractError('CLI_USAGE_INVALID')
     }
     return options
 }

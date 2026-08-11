@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import {
     ContractError,
     assertExactCheckReceipt,
     buildBaseline,
     evaluateBaseline,
+    runCli,
+    scanUiTree,
     schemas,
     scanSourceText,
     updateBaseline,
@@ -15,6 +21,7 @@ import {
 } from './ui-copy-baseline.mjs'
 
 const mutationFixture = JSON.parse(readFileSync(new URL('./fixtures/ui-copy/mutation-cases.json', import.meta.url), 'utf8'))
+const modulePath = fileURLToPath(new URL('./ui-copy-baseline.mjs', import.meta.url))
 const clone = (value) => structuredClone(value)
 const reason = { code: 'legacy-existing', reference: 'WAVE-1D-20260810' }
 
@@ -60,6 +67,42 @@ test('TypeScript angle-bracket assertions are parsed using the source file exten
 
     assert.deepEqual(result.debts, [])
     assert.deepEqual(result.machineViolations, [])
+})
+
+test('source traversal and parser fail closed on symlinks and malformed modules', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'flowise-ui-copy-'))
+    const sourceRoot = path.join(root, 'packages/ui/src')
+    try {
+        mkdirSync(sourceRoot, { recursive: true })
+        const sourcePath = path.join(sourceRoot, 'index.jsx')
+        writeFileSync(sourcePath, '<Button>Save changes</Button>\n')
+        symlinkSync(sourcePath, path.join(sourceRoot, 'alias.jsx'))
+        assertContractError(() => scanUiTree(root), 'SOURCE_SYMLINK_FORBIDDEN')
+    } finally {
+        rmSync(root, { recursive: true, force: true })
+    }
+
+    assertContractError(() => scan('const broken = <Button>'), 'SOURCE_PARSE_FAILED')
+})
+
+test('CLI rejects mode-inapplicable, incomplete, and duplicate options before filesystem access', () => {
+    for (const args of [
+        ['check', '--reason', 'legacy-existing', '--reference', 'WAVE-1D-20260810'],
+        ['init', '--reason', 'legacy-existing'],
+        ['update', '--reference', 'FLOWISE-1234'],
+        ['check', '--root', '/missing-one', '--root', '/missing-two']
+    ]) {
+        assertContractError(() => runCli(args), 'CLI_USAGE_INVALID')
+    }
+
+    const subprocess = spawnSync(
+        process.execPath,
+        [modulePath, 'check', '--reason', 'legacy-existing', '--reference', 'WAVE-1D-20260810'],
+        { encoding: 'utf8' }
+    )
+    assert.equal(subprocess.status, 1)
+    assert.equal(subprocess.stdout, '')
+    assert.match(subprocess.stderr, /status=failed reason=CLI_USAGE_INVALID/)
 })
 
 test('baseline and receipt schemas are strict Draft 2020-12 contracts', () => {

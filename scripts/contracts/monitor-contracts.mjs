@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 
 const loadSchema = (name) => JSON.parse(readFileSync(new URL(`./${name}`, import.meta.url), 'utf8'))
 
@@ -222,15 +223,83 @@ export const evaluateReleaseStaleness = (input) => {
     }
 }
 
-const requiredAlerts = ['http_5xx_ratio', 'http_p95_latency', 'process_restart', 'disk_free', 'csp_receiver_health', 'release_staleness']
-const canonicalPromql = Object.freeze({
-    http_5xx_ratio: 'sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))',
-    http_p95_latency: 'histogram_quantile(0.95, sum by (le) (rate(http_request_duration_ms_bucket[5m])))'
-})
 const normalizePromql = (query) => query.replace(/\s+/g, ' ').trim()
+const canonicalAlertConfiguration = Object.freeze([
+    {
+        name: 'http_5xx_ratio',
+        query: 'sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))',
+        window: '5m',
+        threshold: 0.05,
+        dataSource: 'prometheus',
+        runbook: 'docs/runbooks/http-5xx.md',
+        noData: 'alert'
+    },
+    {
+        name: 'http_p95_latency',
+        query: 'histogram_quantile(0.95, sum by (le) (rate(http_request_duration_ms_bucket[5m])))',
+        window: '5m',
+        threshold: 1000,
+        dataSource: 'prometheus',
+        runbook: 'docs/runbooks/http-latency.md',
+        noData: 'alert'
+    },
+    {
+        name: 'process_restart',
+        query: 'changes(process_start_time_seconds[5m])',
+        window: '5m',
+        threshold: 0,
+        dataSource: 'prometheus',
+        runbook: 'docs/runbooks/process-restart.md',
+        noData: 'alert'
+    },
+    {
+        name: 'disk_free',
+        query: 'node_filesystem_avail_bytes',
+        window: '5m',
+        threshold: 10737418240,
+        dataSource: 'prometheus',
+        runbook: 'docs/runbooks/disk-free.md',
+        noData: 'alert'
+    },
+    {
+        name: 'csp_receiver_health',
+        query: 'csp_receiver_healthy',
+        window: '5m',
+        threshold: 1,
+        dataSource: 'csp_receipt',
+        runbook: 'docs/runbooks/csp-receiver.md',
+        noData: 'fail_closed'
+    },
+    {
+        name: 'release_staleness',
+        query: 'flowise_release_age_seconds',
+        window: '5m',
+        threshold: 86400,
+        dataSource: 'release_receipt',
+        runbook: 'docs/runbooks/release-staleness.md',
+        noData: 'fail_closed'
+    }
+])
+const requiredAlerts = canonicalAlertConfiguration.map(({ name }) => name)
+const canonicalAlertByName = new Map(canonicalAlertConfiguration.map((configuration) => [configuration.name, configuration]))
+const alertConfigurationDigest = createHash('sha256').update(JSON.stringify(canonicalAlertConfiguration)).digest('hex')
+const normalizeAlertConfiguration = ({ name, query, window, threshold, dataSource, runbook, noData }) => ({
+    name,
+    query: normalizePromql(query),
+    window,
+    threshold,
+    dataSource,
+    runbook,
+    noData
+})
+const observation = (evaluatedAt, observedAt) => ({ observedAt, ageSeconds: secondsBetween(evaluatedAt, observedAt) })
 
-export const evaluateObservability = (input) => {
+export const evaluateObservability = (input, { now = new Date().toISOString() } = {}) => {
     requireSchema(schemas.observabilityInput, input)
+
+    if (!isStrictUtcTimestamp(now)) throw new ContractError('CLOCK_INVALID')
+    const evaluatedAt = Date.parse(input.evaluatedAt)
+    if (evaluatedAt > Date.parse(now)) throw new ContractError('CLOCK_INVALID')
 
     const identities = [input.candidateRevision, input.ociRevision, input.runtime.revision, input.runtime.buildInfoRevision]
     if (new Set(identities).size !== 1) throw new ContractError('IDENTITY_MISMATCH')
@@ -242,22 +311,33 @@ export const evaluateObservability = (input) => {
     if (new Set(alertNames).size !== requiredAlerts.length || requiredAlerts.some((name) => !alertNames.includes(name))) {
         throw new ContractError('ALERT_SET_INVALID')
     }
-    const p95 = input.alerts.find(({ name }) => name === 'http_p95_latency')
-    const errorRatio = input.alerts.find(({ name }) => name === 'http_5xx_ratio')
-    if (
-        normalizePromql(p95.query) !== canonicalPromql.http_p95_latency ||
-        normalizePromql(errorRatio.query) !== canonicalPromql.http_5xx_ratio ||
-        p95.window !== '5m' ||
-        errorRatio.window !== '5m' ||
-        p95.dataSource !== 'prometheus' ||
-        errorRatio.dataSource !== 'prometheus'
-    ) {
-        throw new ContractError('PROMQL_INVALID')
+
+    const alertsByName = new Map(input.alerts.map((alert) => [alert.name, alert]))
+    for (const name of requiredAlerts) {
+        if (!sameJsonValue(normalizeAlertConfiguration(alertsByName.get(name)), canonicalAlertByName.get(name))) {
+            throw new ContractError('ALERT_CONFIG_INVALID')
+        }
+    }
+    if (canonicalAlertConfiguration.some(({ runbook }) => !existsSync(new URL(`../../${runbook}`, import.meta.url)))) {
+        throw new ContractError('RUNBOOK_MISSING')
+    }
+
+    const evidenceTimes = [
+        input.observedAt,
+        input.runtime.observedAt,
+        input.scrape.observedAt,
+        ...requiredAlerts.map((name) => alertsByName.get(name).observedAt)
+    ]
+    if (evidenceTimes.some((timestamp) => Date.parse(timestamp) > evaluatedAt)) throw new ContractError('CLOCK_INVALID')
+    if (evidenceTimes.some((timestamp) => evaluatedAt - Date.parse(timestamp) > input.maxAgeSeconds * 1000)) {
+        throw new ContractError('EVIDENCE_STALE')
     }
 
     return {
         schemaVersion: 1,
         status: 'ready',
+        evaluatedAt: input.evaluatedAt,
+        maxAgeSeconds: input.maxAgeSeconds,
         observedAt: input.observedAt,
         candidateRevision: input.candidateRevision,
         runtimeRevision: input.runtime.revision,
@@ -272,7 +352,14 @@ export const evaluateObservability = (input) => {
             buildInfo: input.metrics.buildInfo
         },
         labels: [...input.privacy.labels],
-        alerts: [...requiredAlerts],
+        observations: {
+            snapshot: observation(input.evaluatedAt, input.observedAt),
+            runtime: observation(input.evaluatedAt, input.runtime.observedAt),
+            scrape: observation(input.evaluatedAt, input.scrape.observedAt),
+            alerts: requiredAlerts.map((name) => ({ name, ...observation(input.evaluatedAt, alertsByName.get(name).observedAt) }))
+        },
+        alertConfiguration: canonicalAlertConfiguration.map((configuration) => ({ ...configuration })),
+        alertConfigurationDigest,
         evidenceGrade: input.runtime.evidenceGrade,
         providerCall: false
     }

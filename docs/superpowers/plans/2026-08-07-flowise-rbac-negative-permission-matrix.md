@@ -27,7 +27,7 @@ isOrganizationAdmin=true
   └─ 绕过所有 checkPermission，assertWorkspaceBelongsToActiveOrganization 仍生效
 GeneralRole.OWNER   (workspace + organization 双重 owner)
   └─ 拥有全量 open-source 权限集
-GeneralRole.MEMBER  (自定义权限集，由 Role.permissions JSON 数组定义)
+GeneralRole.MEMBER  (自定义权限集由 Role.permissions JSON-serialized text 定义，读取后解析为数组)
   └─ 仅拥有 role.permissions 中声明的权限
 ```
 
@@ -131,20 +131,20 @@ loginActivity: view   (仅 Enterprise)
 
 ## 3.2 管理操作否定测试
 
-| 路由                               | 方法   | 所需权限              | member 期望 | 备注           |
-| ---------------------------------- | ------ | --------------------- | ----------- | -------------- |
-| `POST /api/v1/organization-user`   | POST   | users:manage          | 403         | 添加组织成员   |
-| `PUT /api/v1/organization-user`    | PUT    | users:manage          | 403         | 修改成员角色   |
-| `DELETE /api/v1/organization-user` | DELETE | users:manage          | 403         | 移除成员       |
-| `POST /api/v1/workspace-user`      | POST   | workspace:add-user    | 403         | 添加工作区成员 |
-| `DELETE /api/v1/workspace-user`    | DELETE | workspace:unlink-user | 403         | 移除工作区成员 |
-| `POST /api/v1/workspace`           | POST   | workspace:create      | 403         | 创建工作区     |
-| `PUT /api/v1/workspace`            | PUT    | workspace:update      | 403         | 更新工作区     |
-| `DELETE /api/v1/workspace/:id`     | DELETE | workspace:delete      | 403         | 删除工作区     |
-| `POST /api/v1/role`                | POST   | roles:manage          | 403         | 创建角色       |
-| `PUT /api/v1/role`                 | PUT    | roles:manage          | 403         | 更新角色       |
-| `DELETE /api/v1/role`              | DELETE | roles:manage          | 403         | 删除角色       |
-| `POST /api/v1/user`                | POST   | users:manage          | 403         | 创建用户       |
+| 路由                              | 方法   | 所需权限              | member 期望 | 备注           |
+| --------------------------------- | ------ | --------------------- | ----------- | -------------- |
+| `POST /api/v1/organizationuser`   | POST   | users:manage          | 403         | 添加组织成员   |
+| `PUT /api/v1/organizationuser`    | PUT    | users:manage          | 403         | 修改成员角色   |
+| `DELETE /api/v1/organizationuser` | DELETE | users:manage          | 403         | 移除成员       |
+| `POST /api/v1/workspaceuser`      | POST   | workspace:add-user    | 403         | 添加工作区成员 |
+| `DELETE /api/v1/workspaceuser`    | DELETE | workspace:unlink-user | 403         | 移除工作区成员 |
+| `POST /api/v1/workspace`          | POST   | workspace:create      | 403         | 创建工作区     |
+| `PUT /api/v1/workspace`           | PUT    | workspace:update      | 403         | 更新工作区     |
+| `DELETE /api/v1/workspace/:id`    | DELETE | workspace:delete      | 403         | 删除工作区     |
+| `POST /api/v1/role`               | POST   | roles:manage          | 403         | 创建角色       |
+| `PUT /api/v1/role`                | PUT    | roles:manage          | 403         | 更新角色       |
+| `DELETE /api/v1/role`             | DELETE | roles:manage          | 403         | 删除角色       |
+| `POST /api/v1/user`               | POST   | users:manage          | 403         | 创建用户       |
 
 ## 3.3 跨工作区访问否定测试
 
@@ -226,17 +226,17 @@ postcheck:
 
 ```
 1. POST /api/v1/role
-   body: { name: "rbac-test-member-{run_id}", permissions: [...最小只读集...] }
+   body: { name: "rbac-test-member-{run_id}", permissions: JSON.stringify([...最小只读集...]) }
    → 记录 $member_role_id
 
 2. POST /api/v1/user
    body: { email: "rbac-test-{run_id}@invalid", password: "{random}", ... }
    → 记录 $member_user_id
 
-3. POST /api/v1/organization-user
+3. POST /api/v1/organizationuser
    body: { organizationId, userId: $member_user_id, roleId: $member_role_id, status: "active" }
 
-4. POST /api/v1/workspace-user
+4. POST /api/v1/workspaceuser
    body: { workspaceId, userId: $member_user_id, roleId: $member_role_id, status: "active" }
 
 5. member 登录，获取 member session token

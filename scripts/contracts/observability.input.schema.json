@@ -4,31 +4,47 @@
     "title": "Flowise observability readiness input",
     "type": "object",
     "additionalProperties": false,
-    "required": ["schemaVersion", "observedAt", "candidateRevision", "ociRevision", "runtime", "scrape", "metrics", "privacy", "alerts"],
+    "required": [
+        "schemaVersion",
+        "evaluatedAt",
+        "maxAgeSeconds",
+        "observedAt",
+        "candidateRevision",
+        "ociRevision",
+        "runtime",
+        "scrape",
+        "metrics",
+        "privacy",
+        "alerts"
+    ],
     "properties": {
         "schemaVersion": { "const": 1 },
+        "evaluatedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "maxAgeSeconds": { "const": 300 },
         "observedAt": { "$ref": "#/$defs/utcTimestamp" },
         "candidateRevision": { "$ref": "#/$defs/revision" },
         "ociRevision": { "$ref": "#/$defs/revision" },
         "runtime": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["revision", "buildInfoRevision", "evidenceGrade"],
+            "required": ["revision", "buildInfoRevision", "observedAt", "evidenceGrade"],
             "properties": {
                 "revision": { "$ref": "#/$defs/revision" },
                 "buildInfoRevision": { "$ref": "#/$defs/revision" },
+                "observedAt": { "$ref": "#/$defs/utcTimestamp" },
                 "evidenceGrade": { "$ref": "#/$defs/evidenceGrade" }
             }
         },
         "scrape": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["mode", "endpoint", "authenticated", "publicWhitelist"],
+            "required": ["mode", "endpoint", "authenticated", "publicWhitelist", "observedAt"],
             "properties": {
                 "mode": { "enum": ["protected_endpoint", "private_listener_sidecar"] },
                 "endpoint": { "const": "/api/v1/metrics" },
                 "authenticated": { "type": "boolean" },
-                "publicWhitelist": { "const": false }
+                "publicWhitelist": { "const": false },
+                "observedAt": { "$ref": "#/$defs/utcTimestamp" }
             }
         },
         "metrics": {
@@ -70,7 +86,7 @@
             "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["name", "query", "window", "threshold", "dataSource", "runbook", "noData"],
+                "required": ["name", "query", "window", "threshold", "dataSource", "runbook", "noData", "observedAt"],
                 "properties": {
                     "name": {
                         "enum": [
@@ -87,7 +103,8 @@
                     "threshold": { "type": "number" },
                     "dataSource": { "enum": ["prometheus", "release_receipt", "csp_receipt"] },
                     "runbook": { "type": "string", "pattern": "^docs/[^\\u0000]+$" },
-                    "noData": { "enum": ["alert", "fail_closed"] }
+                    "noData": { "enum": ["alert", "fail_closed"] },
+                    "observedAt": { "$ref": "#/$defs/utcTimestamp" }
                 }
             }
         }

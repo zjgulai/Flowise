@@ -32,6 +32,12 @@ const RELEASE_CANDIDATE_SCRIPT_PATH = fileURLToPath(new URL('./verify-release-ca
 const CHROMIUM_SANDBOX_SCRIPT_PATH = fileURLToPath(new URL('./verify-chromium-sandbox.sh', import.meta.url))
 const PUBLISH_VERIFIED_IMAGE_SCRIPT_PATH = fileURLToPath(new URL('./publish-verified-image.sh', import.meta.url))
 const MAIN_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/main.yml', import.meta.url))
+const RBAC_NEGATIVE_MATRIX_PATH = fileURLToPath(
+    new URL('../docs/superpowers/plans/2026-08-07-flowise-rbac-negative-permission-matrix.md', import.meta.url)
+)
+const SERVER_ROUTES_PATH = fileURLToPath(new URL('../packages/server/src/routes/index.ts', import.meta.url))
+const ROLE_ENTITY_PATH = fileURLToPath(new URL('../packages/server/src/enterprise/database/entities/role.entity.ts', import.meta.url))
+const ROLE_DIALOG_PATH = fileURLToPath(new URL('../packages/ui/src/views/roles/CreateEditRoleDialog.jsx', import.meta.url))
 const DOCKER_BUILD_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/test_docker_build.yml', import.meta.url))
 const DOCKERHUB_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-dockerhub.yml', import.meta.url))
 const ECR_WORKFLOW_PATH = fileURLToPath(new URL('../.github/workflows/docker-image-ecr.yml', import.meta.url))
@@ -1795,6 +1801,19 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
     assert.ok(exactHeadJob && typeof exactHeadJob === 'object' && !Array.isArray(exactHeadJob), 'main CI exact-head job is missing')
     const exactHeadSteps = exactHeadJob.steps
     assert.ok(Array.isArray(exactHeadSteps), 'main CI exact-head steps are missing')
+    const requiredNodeCheck = workflowDocument.jobs?.['node-ci']
+    assert.ok(requiredNodeCheck && typeof requiredNodeCheck === 'object' && !Array.isArray(requiredNodeCheck))
+    assert.equal(requiredNodeCheck.name, 'Node CI')
+    assert.equal(requiredNodeCheck.if, "always() && github.event_name == 'pull_request'")
+    assert.deepEqual(requiredNodeCheck.needs, ['build', 'exact-head'])
+    assert.equal(requiredNodeCheck['runs-on'], 'ubuntu-latest')
+    assert.equal(requiredNodeCheck.steps.filter((step) => step?.uses).length, 0)
+    const requiredNodeStep = requireNamedWorkflowStep(workflowDocument, 'node-ci', 'Require both Node CI identities', 'required Node CI')
+    assert.equal(requiredNodeStep.env?.MERGE_RESULT, '${{ needs.build.result }}')
+    assert.equal(requiredNodeStep.env?.EXACT_HEAD_RESULT, '${{ needs.exact-head.result }}')
+    assert.match(requiredNodeStep.run, /test "\$MERGE_RESULT" = "success"/)
+    assert.match(requiredNodeStep.run, /test "\$EXACT_HEAD_RESULT" = "success"/)
+    assert.doesNotMatch(requiredNodeStep.run, /\|\|\s*true|continue-on-error/)
 
     assert.match(workflow, /^ {12}FLOWISE_CI_CANDIDATE_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}\s*$/m)
     assert.match(workflow, /^ {12}FLOWISE_CI_EVENT_SHA: \$\{\{ github\.sha \}\}\s*$/m)
@@ -1845,6 +1864,21 @@ test('main CI retains full coverage while bounding workspace and Jest concurrenc
         const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
         assert.equal(packageJson.scripts?.['test:coverage'], 'jest --coverage', `${workspace} must retain full coverage`)
     }
+})
+
+test('RBAC negative matrix uses mounted routes and the role permission text payload contract', () => {
+    const document = readFileSync(RBAC_NEGATIVE_MATRIX_PATH, 'utf8')
+    const routes = readFileSync(SERVER_ROUTES_PATH, 'utf8')
+    const roleEntity = readFileSync(ROLE_ENTITY_PATH, 'utf8')
+    const roleDialog = readFileSync(ROLE_DIALOG_PATH, 'utf8')
+    assert.match(routes, /router\.use\('\/organizationuser', organizationUserRoute\)/)
+    assert.match(routes, /router\.use\('\/workspaceuser', workspaceUserRouter\)/)
+    assert.match(roleEntity, /@Column\(\{ type: 'text' \}\)\s+permissions: string/)
+    assert.match(roleDialog, /saveObj\.permissions = JSON\.stringify\(tempPermissions\)/)
+    assert.doesNotMatch(document, /\/api\/v1\/(?:organization-user|workspace-user)/)
+    assert.match(document, /\/api\/v1\/organizationuser/)
+    assert.match(document, /\/api\/v1\/workspaceuser/)
+    assert.match(document, /permissions: JSON\.stringify\(\[\.\.\.最小只读集\.\.\.\]\)/)
 })
 
 test('production dependency remediation pins the reviewed YAML and ID generator releases across source and static contracts', () => {
