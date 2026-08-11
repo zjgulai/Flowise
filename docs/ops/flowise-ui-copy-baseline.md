@@ -61,4 +61,4 @@ pnpm --filter flowise-ui test --runInBand \
 pnpm metadata:i18n:validate
 ```
 
-The mutation fixture must remain non-vacuous for JSX text, accessibility labels, placeholders, notifications/dialogs, split/template strings, machine fields, digest drift, missing/empty input, equal-count replacement, and unknown classifications.
+The mutation fixture must remain non-vacuous for JSX text, accessibility labels, placeholders, notifications/dialogs, split/template strings, machine fields, and the non-display case. The test suite must keep the digest-drift, missing/empty input, equal-count replacement, and unknown-classification cases.

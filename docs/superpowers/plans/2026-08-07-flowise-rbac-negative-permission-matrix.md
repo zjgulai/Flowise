@@ -169,37 +169,42 @@ loginActivity: view   (仅 Enterprise)
 
 ## 4.1 清理对象（精确 run-scoped）
 
+```text
+1. workspace membership → Owner DELETE /api/v1/workspaceuser?workspaceId=$workspace_id&userId=$member_user_id
+2. organization member  → Owner DELETE /api/v1/organizationuser?organizationId=$organization_id&userId=$member_user_id
+3. member role          → Owner DELETE /api/v1/role?organizationId=$organization_id&id=$member_role_id
+4. login sessions       → 上述 membership delete 服务必须调用 destroyAllSessionsForUser($member_user_id)
+5. member user record   → 当前没有 Owner 可删除任意 member user 的受支持 API；禁止用 SQL 补洞
 ```
-1. member user 记录        → DELETE FROM user WHERE id = $member_user_id
-2. organization_user 记录  → DELETE FROM organization_user WHERE userId = $member_user_id
-3. workspace_user 记录     → DELETE FROM workspace_user WHERE userId = $member_user_id
-4. member role 记录        → DELETE FROM role WHERE id = $member_role_id AND name = 'rbac-test-member-{run_id}'
-5. 登录 session（如有）    → 撤销 session token
-```
+
+前 4 项有受支持 API/服务生命周期；第 5 项当前无法满足“恢复到创建前无 member user”的清理目标。因此 L4
+执行保持 blocked，直到实现并审阅 Owner member-delete API，或证明本次平台的受支持 organization-member
+删除流程会安全删除/软删除该 run-scoped user。不得以直接 SQL 解除该阻断。
 
 ## 4.2 双重 reaper 流程
 
-```
+```text
 reaper_1:
-  - 删除上述 5 类对象
-  - 记录每类 affected 行数
-  - 期望：每类 affected = 1（或 0 若未创建）
+  - 按 1 → 2 → 3 顺序调用 Owner API；每个首次存在的对象期望 HTTP 200
+  - 核验 workspace/organization 删除路径已使 member session 失效
+  - 记录每个 API 的 status 与固定 message，不保存 session token
 
 reaper_2（幂等验证）:
-  - 重复执行同一 DELETE
-  - 期望：每类 affected = 0（已被第一次清理）
+  - 以相同 ID 重复 1 → 2 → 3
+  - 期望稳定 HTTP 404/not-found；不得影响其它用户、membership 或 role
 
 postcheck:
-  - 确认 $member_user_id 不存在于 user 表
-  - 确认 $member_role_id 不存在于 role 表（name 匹配）
-  - DB fingerprint（total counts）恢复到创建前基线
+  - Owner GET API 确认 workspace/organization membership 与 $member_role_id 不再可见
+  - 原 member session 请求受保护 API 必须返回 401/403
+  - 只有受支持 API 能确认 member user 已删除/软删除时，才允许声明恢复到创建前基线
+  - 否则保持 L4 blocked，不读取数据库或使用 SQL 伪造 postcheck
 ```
 
 ## 4.3 失败停止规则
 
 -   任何负向测试未返回 403 → 立即停止，记录漏洞，不继续执行后续写操作
--   reaper_1 任意对象 affected > 1 → 立即停止，调查意外数据
--   postcheck DB fingerprint 未恢复 → 不声明验收通过
+-   任一首次 Owner DELETE 不是预期 200，或幂等复跑不是稳定 404 → 立即停止，调查意外数据
+-   任一关联仍可见、旧 session 仍有效，或 member user 缺少受支持删除路径 → L4 保持 blocked
 
 ---
 

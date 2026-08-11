@@ -422,7 +422,7 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 
 目标：以已合并 PR #14 的 exact `origin/main=96f6ae464f7f4757883a5ba6bec26ca951b4da4d` 为唯一代码基线，对旧发布基础分支的 8 个独有提交和 OpenCode dirty assets 做逐项收敛；仅形成 local main convergence commits，不继承旧 SHA 的 release/production 结论。
 
-授权边界：允许本地文档、源码、测试、格式/构建前置检查和原子 commit；禁止 push/merge/PR、Docker、生产、Provider/SMTP、restore、GitHub/Docker Hub 写入。
+授权边界：允许本地文档、源码、测试、格式/构建前置检查和原子 commit；禁止 push/merge/PR、Docker、生产、Provider/SMTP、restore、GitHub/Docker Hub 写入；`production_write=false`、`provider_call=false`、`secrets_read=false`。
 
 -   [x] D0-A/B：冻结原 dirty worktree，创建本 worktree/branch；HEAD exact、初始 status clean，原工作树未 stash/reset/clean/stage。
 -   [x] D0-C：完成 active-only commits 与 dirty/untracked assets 的 forward-port ledger，纠正已合并但计划未同步的 G1 状态。
@@ -444,7 +444,7 @@ July 12 L3 确认生产仍运行 July 10 image `sha256:3c66e08b50562ab856328d669
 
 目标：在 D0 exact HEAD `52f9328af18fd9c434de65b70dda342813d01c1a` 上，修复 publisher SHA-256 工具的 macOS/Linux 可移植性，并为 release staleness 与 observability 冻结可执行 schema、正负 fixtures 和非 vacuous RED tests；只形成 local commits。
 
-授权边界：允许本地脚本、schema、fixtures、Node tests、文档、CodeGraph 和原子 commit；禁止 Docker/Compose、远端 CI、生产 monitor、GitHub/Docker Hub 写入、Provider/SMTP、restore、push/merge/PR。
+授权边界：允许本地脚本、schema、fixtures、Node tests、文档、CodeGraph 和原子 commit；禁止 Docker/Compose、远端 CI、生产 monitor、GitHub/Docker Hub 写入、Provider/SMTP、restore、push/merge/PR；`production_write=false`、`provider_call=false`、`secrets_read=false`。
 
 -   [x] W1A-A：复核 publisher 当前 hash 调用、现有 contract/test 结构及 monitoring schema 约定，冻结文件边界和 RED 失败语义。
 -   [x] W1A-B：先建立 deterministic SHA tool selection 负例，再实现 Linux `sha256sum` / macOS `shasum -a 256` fail-closed helper；publisher 不接触 registry/Docker 实例。
@@ -461,7 +461,7 @@ Wave 1A 交付结论：local-only 门禁完成；未接生产 monitor/Prometheus
 
 目标：在 Wave 1A exact HEAD `cddd47357ff75acef76efc7fad8f16b985c6dc7d` 上，为 CSP report-only 观察冻结纯本地 input/receipt schema、receiver health/coverage 正负 fixtures、低基数 analyzer 与非 vacuous RED/GREEN tests；保持 enforcement 不变。
 
-授权边界：允许本地 schema、fixtures、纯内存 Node analyzer/tests、现有 CSP focused tests、文档、CodeGraph 和原子 commit；禁止启动 AUT/浏览器、读取真实日志、修改 CSP middleware/mode/env、Docker/Compose、远端 CI、生产、Provider/SMTP、restore、push/merge/PR。
+授权边界：允许本地 schema、fixtures、纯内存 Node analyzer/tests、现有 CSP focused tests、文档、CodeGraph 和原子 commit；禁止启动 AUT/浏览器、读取真实日志、修改 CSP middleware/mode/env、Docker/Compose、远端 CI、生产、Provider/SMTP、restore、push/merge/PR；`production_write=false`、`provider_call=false`、`secrets_read=false`。
 
 -   [x] W1B-A：复核 current CSP mode/receiver 合同，冻结持久 source、UTC window、receiver health、coverage、低基数 summary 与 evidence-grade 字段边界。
 -   [x] W1B-B：先提交 input/receipt schema、clean/violation 正例和空 source、receiver、coverage、mode、identity、clock/count 负例，取得实现缺失 RED。
@@ -477,7 +477,7 @@ Wave 1B 交付结论：CSP observation local contract 完成，证据等级严�
 
 目标：在 Wave 1B exact HEAD `10c8d7aa4bc8bf44ce61fb014f0fd00f8b49ecd7` 上，对照 RED-BROWSER 合同盘点现有 isolated Cypress runner；若确认公开路由缺口，优先扩展同一 runner，覆盖公开页面/API 的强断言、移动端 overflow、console/error、网络隔离和 cleanup receipt。
 
-授权边界：允许修改本地 Cypress spec/runner/tests、启动 runner 自有的 loopback AUT 与隔离临时 SQLite、使用已安装本地浏览器、生成并清理 run-scoped artifacts、文档、CodeGraph 和 local commits；禁止远程 URL/账号、Provider/SMTP、Docker/Compose、生产、持久 DB、远端 CI、push/merge/PR。任何 `.env` 存在或外部网络请求均 fail-closed。
+授权边界：允许修改本地 Cypress spec/runner/tests、启动 runner 自有的 loopback AUT 与隔离临时 SQLite、使用已安装本地浏览器、生成并清理 run-scoped artifacts、文档、CodeGraph 和 local commits；禁止远程 URL/账号、Provider/SMTP、Docker/Compose、生产、持久 DB、远端 CI、push/merge/PR；`production_write=false`、`provider_call=false`、`secrets_read=false`。任何 `.env` 存在或外部网络请求均 fail-closed。
 
 -   [x] W1C-A：建立 gap matrix，核对 `/signin`、`/register`、`/forgot-password`、`/api/v1/ping`、auth resolve GET/POST、移动端、console/network、candidate/browser/Node/artifact/cleanup receipt。
 -   [x] W1C-B：以 runner unit RED 固定 public spec allowlist、exact candidate SHA/Node/base URL/run ID 与 cleanup/receipt 绑定；不新建 Playwright 配置。
@@ -491,9 +491,9 @@ Wave 1C 交付结论：现有 isolated Cypress runner 已补齐 public UI/API �
 
 ## Wave 1D UI 文案 Baseline Ratchet（2026-08-10，Owner 已批准）
 
-目标：在 Wave 1C docs HEAD `b97479e8ab7514b6348947899ad2e293bbabbb85` 上，为 `packages/ui/src` 的静态用户可见文案建立 path+line-independent、可审查、不可空输入假绿的本地 baseline/receipt ratchet；保持既有 built component metadata validator 为 canonical contract，不复制 OpenCode 固定总量 regex 草案。
+目标：在 Wave 1C docs HEAD `b97479e8ab7514b6348947899ad2e293bbabbb85` 上，为 `packages/ui/src` 的静态用户可见文案建立 path-dependent、line-independent、可审查、不可空输入假绿的本地 baseline/receipt ratchet；保持既有 built component metadata validator 为 canonical contract，不复制 OpenCode 固定总量 regex 草案。
 
-证据等级固定为 `L2-fixture-or-local-static`。允许本地 inventory、AST scanner、checked-in baseline/schema/fixtures/tests、UI focused regression、文档、CodeGraph 和 local commits；禁止自动翻译/批量改写产品文案、修改 metadata canonical validator、访问外部翻译服务、Docker/Compose、远端 CI、生产、Provider/SMTP、push/merge/PR。
+证据等级固定为 `L2-fixture-or-local-static`。允许本地 inventory、AST scanner、checked-in baseline/schema/fixtures/tests、UI focused regression、文档、CodeGraph 和 local commits；禁止自动翻译/批量改写产品文案、修改 metadata canonical validator、访问外部翻译服务、Docker/Compose、远端 CI、生产、Provider/SMTP、push/merge/PR；`production_write=false`、`provider_call=false`、`secrets_read=false`。
 
 -   [x] W1D-A：盘点 UI 文案入口、现有 i18n/metadata validator 与 OpenCode 草案，冻结 source root、扩展名、排除目录、语义 key、分类与证据边界。
 -   [x] W1D-B：先提交 mutation fixtures/tests，覆盖新增债务、等量替换、拆字符串/template、aria/placeholder/toast/dialog、危险机器字段、baseline digest 漂移、缺失/空 baseline 与未知分类 fail-closed；取得实现缺失 RED。

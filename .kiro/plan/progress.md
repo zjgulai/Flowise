@@ -306,7 +306,7 @@ last_updated: 2026-08-10
 # 2026-08-10 Wave 1A 本地合同与可移植性
 
 -   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`52f9328...`、target status/index clean；范围固定为 SHA-256 portability、release staleness schema/fixtures、observability schema/fixtures 和 local commits。
--   边界继续为 `docker=false`、`remote_ci=false`、`production_monitor=false`、`registry_write=false`、`provider_call=false`、`smtp_send=false`、`restore=false`、`push=false`、`merge=false`、`pr=false`。
+-   边界继续为 `docker=false`、`remote_ci=false`、`production_monitor=false`、`registry_write=false`、`production_write=false`、`provider_call=false`、`secrets_read=false`、`smtp_send=false`、`restore=false`、`push=false`、`merge=false`、`pr=false`。
 -   W1A-B RED 基线成立：publisher contract 共 19 tests，`11 pass / 8 fail`。4 个新 helper tests 因 helper 缺失失败，4 个既有 publisher 成功路径因 macOS 无 GNU `sha256sum` 失败；fake Docker/registry 证明本轮没有真实外部副作用。
 -   W1A-B GREEN：repo-owned helper 优先使用 GNU `sha256sum`，仅在其不可用时回退 macOS `shasum -a 256`，并校验严格的小写 64-hex stdin digest。focused publisher=`19/19`，Bash syntax、Prettier、ESLint、diff-check 与强秘密模式扫描均通过；真实 Docker daemon/registry 未接触。
 -   W1A-B 已形成独立 local commit `12be39b8`（`fix(release): support portable SHA-256 hashing`）；pre-commit hooks 通过，计划文档未混入。
@@ -319,7 +319,7 @@ last_updated: 2026-08-10
 # 2026-08-10 Wave 1B CSP 观察合同
 
 -   Owner 已批准下一推荐门禁。恢复 exact branch=`codex/flowise-main-convergence-20260810`、HEAD=`cddd4735...`、target status/index clean；范围固定为 CSP analyzer receipt、receiver health/coverage schema/fixtures/tests 与 local commits。
--   证据门禁固定为最高 `L2-fixture-or-dry-run`：允许声明“本地合同通过”，禁止声明 report-only 已部署、生产 receiver healthy、真实页面 coverage 完成或 enforcement 可晋级。边界为 `aut=false`、`browser=false`、`real_log_read=false`、`csp_mode_change=false`、`docker=false`、`remote_ci=false`、`production=false`、`push=false`、`merge=false`、`pr=false`。
+-   证据门禁固定为最高 `L2-fixture-or-dry-run`：允许声明“本地合同通过”，禁止声明 report-only 已部署、生产 receiver healthy、真实页面 coverage 完成或 enforcement 可晋级。边界为 `aut=false`、`browser=false`、`real_log_read=false`、`csp_mode_change=false`、`docker=false`、`remote_ci=false`、`production_write=false`、`provider_call=false`、`secrets_read=false`、`push=false`、`merge=false`、`pr=false`。
 -   W1B-A inventory 完成：current mode ladder=`compat < no-eval < strict-script < strict`，report-only 必须严格更强；receiver 是 16 KiB/120 rpm、legacy + Reporting API、最多 10 envelopes/单行脱敏日志。Wave 1B 不改这些 runtime 文件，只在 `scripts/contracts/` 增加纯合同层。
 -   W1B-B RED 成立：2 个 Draft 2020-12 schema、clean/violations 正例和 12 个负例先存在，Node 24 执行因 `csp-observation.mjs` 缺失得到 `ERR_MODULE_NOT_FOUND`；没有无输入/SKIPPED 假绿，也没有读取真实日志或启动服务。
 -   W1B-C attempt1=`14/15`：唯一失败来自隐私断言 `/sample/i` 误命中合法回执字段 `healthSamples`，实际 receipt 不含 URL/token/raw field。修复方向是收紧到 URL/token 字面量和被禁止的键名，不删除隐私负例或改弱 schema。
@@ -340,7 +340,7 @@ last_updated: 2026-08-10
 -   Chrome 首次功能 run `36a5a449-37e2-4777-8d19-f0f05ea1b1ce` 为 4/4 且 cleanup complete，但结构化 browser 字段因错误读取 nested object 而为 unavailable，未作为最终回执。按 Cypress 13 本地类型改用 `browserName/browserVersion`，新增单测并形成 follow-up commit `3833edff`。
 -   最终 exact browser receipt：candidate=`3833edff813c2a845b1d6be5a2914487e4353e2f`、run=`f999bc59-4c6c-467c-9222-ce5ba43fb99f`、Node=`24.18.0`、Chrome=`151.0.7922.77`、specs=`1`、tests=`4`、failures=`0`、artifacts=`0`、cleanup=`complete`。0 artifact 表示成功运行未产出失败截图且 video=false，不表示缺少 cleanup。
 -   回归 GREEN：runner unit=`30/30`、production UI route contract=`39/39`、纯 Node release/monitor/CSP=`111/111`；target Prettier、ESLint、diff-check 与 pre-commit hooks 通过。实现 commits=`7ea9bbf6`、`3833edff`。
--   CodeGraph 增量 sync 识别 5 个 changed code files，added 2 / modified 3，新增/更新 89 nodes；只证明本地代码索引刷新。全程 `remote_url=false`、`account_create=false`、`form_submit=false`、`provider_call=false`、`smtp_send=false`、`docker=false`、`production=false`、`push=false`、`merge=false`、`pr=false`。
+-   CodeGraph 增量 sync 识别 5 个 changed code files，added 2 / modified 3，新增/更新 89 nodes；只证明本地代码索引刷新。全程 `remote_url=false`、`account_create=false`、`form_submit=false`、`production_write=false`、`provider_call=false`、`secrets_read=false`、`smtp_send=false`、`docker=false`、`push=false`、`merge=false`、`pr=false`。
 -   原 dirty worktree preservation 复核：`/Users/pray/project/FlowAgentic/flowise` HEAD 仍为 `4d56ffd3f9cd1e7aa9eebf63045758069b04c608`、index empty，既有 `.github`/计划/OpenCode untracked 集合未被 stash/reset/clean/stage。目标 worktree 除本回执 4 份文档外无源码或 index 漂移。
 
 # 2026-08-10 Wave 1D UI 文案 Baseline Ratchet

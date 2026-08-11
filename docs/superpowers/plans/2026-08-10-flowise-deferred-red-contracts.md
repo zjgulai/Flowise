@@ -8,9 +8,10 @@
 
 ## 1. 目的与边界
 
-本文件冻结 OpenCode 草案中仍有价值、但当前实现不应直接前移的验收合同。它不接入 CI，
-不复制来源工作树中的 CSP analyzer、release staleness、Playwright、observability 或 regex i18n
-实现，也不授权 push、Docker、registry、Provider、SMTP、生产写入或恢复操作。
+本文件最初以 local-only 方式冻结 OpenCode 草案中仍有价值、但当时不应直接前移的验收合同。
+当前 `.github/workflows/main.yml` 已执行 monitor、CSP 与 UI-copy 门禁；这一后续 CI 接入不改变本文的
+历史边界，也不复制来源工作树中的 Playwright 或 regex i18n 实现，不授权 push、Docker、registry、
+Provider、SMTP、生产写入或恢复操作。
 
 每个后续实现必须先提交失败测试或失败 fixture，证明合同不是 vacuous pass；然后才允许最小实现。
 “命令成功”“没有输入”“步骤 SKIPPED”均不能自动转成绿色结论。
@@ -59,7 +60,7 @@ receiver 计数、页面/流程覆盖率、按 directive/disposition 的低基�
 
 ### 4.2 状态机与失败语义
 
-```
+```text
 source_main -> candidate_manifest -> prepare_receipt -> cutover_receipt -> observed_runtime
 ```
 
@@ -114,7 +115,7 @@ release staleness。每条告警记录 query、窗口、阈值、数据源、run
 ## 7. RED-I18N：UI 静态文案债务合同
 
 -   保留现有 built metadata validator 作为节点/凭据 metadata 的 canonical 门禁，不另加重复 regex 总量。
--   若要治理 UI JSX/TSX 硬编码文案，先生成 checked-in、path+line-independent 的归一化 baseline：
+-   若要治理 UI JSX/TSX 硬编码文案，先生成 checked-in、path-dependent 且 line-independent 的归一化 baseline：
     key 使用语义摘要和模块，不使用容易漂移的行号。
 -   新增债务、未知分类、危险机器字段被翻译或 baseline digest 漂移必须失败；删除债务允许通过并更新 receipt。
 -   等量替换、拆字符串、模板字面量、aria/placeholder/toast/dialog 等入口必须有 mutation fixture，证明不能绕过。

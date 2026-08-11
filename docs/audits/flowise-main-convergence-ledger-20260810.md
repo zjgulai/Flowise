@@ -95,16 +95,16 @@
 
 ## 7. D0 执行回执
 
-| 维度              | 终态                                                                                                                                                                          |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| local commits     | AboutDialog `c512ec5f`；CSV `71b3d047`；Python ignore `5553d66f`；RBAC `74dea80b6f`；本 ledger/计划/deferred contracts 由 `docs(plan): close main convergence wave zero` 收口 |
-| focused tests     | UI `5/5`；marketplace `3/3`；RBAC `22/22`                                                                                                                                     |
-| metadata          | fingerprint `2/2`；311 nodes；91 dynamic methods；unknown 0                                                                                                                   |
-| release contracts | Node `77/77`，使用一次性 macOS SHA-256 compatibility wrapper；wrapper/临时目录已清理，正式 portability 修复未前移                                                             |
-| security          | static `340` PASS；Docker Compose render 依 Owner no-touch 边界未执行，故 full gate 非 GREEN                                                                                  |
-| CodeGraph         | current-worktree `init` + `sync`：2,205 files、30,459 nodes、67,156 edges；status up to date                                                                                  |
-| source checkout   | HEAD `4d56ffd3...` 不变，index empty，ambient dirty/untracked path set 保留                                                                                                   |
-| side effects      | `push=false`、`merge=false`、`pr=false`、`docker=false`、`registry=false`、`provider_call=false`、`smtp_send=false`、`production_write=false`、`restore=false`                |
+| 维度              | 终态                                                                                                                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| local commits     | AboutDialog `c512ec5f`；CSV `71b3d047`；Python ignore `5553d66f`；RBAC `74dea80b6f`；本 ledger/计划/deferred contracts 由 `docs(plan): close main convergence wave zero` 收口        |
+| focused tests     | UI `5/5`；marketplace `3/3`；RBAC `22/22`                                                                                                                                            |
+| metadata          | fingerprint `2/2`；311 nodes；91 dynamic methods；unknown 0                                                                                                                          |
+| release contracts | Node `77/77`，使用一次性 macOS SHA-256 compatibility wrapper；wrapper/临时目录已清理，正式 portability 修复未前移                                                                    |
+| security          | static `340` PASS；Docker Compose render 依 Owner no-touch 边界未执行，故 full gate 非 GREEN                                                                                         |
+| CodeGraph         | current-worktree `init` + `sync`：2,205 files、30,459 nodes、67,156 edges；status up to date                                                                                         |
+| source checkout   | HEAD `4d56ffd3...` 不变，index empty，ambient dirty/untracked path set 保留                                                                                                          |
+| side effects      | `push=false`、`merge=false`、`pr=false`、`docker=false`、`registry=false`、`provider_call=false`、`smtp_send=false`、`production_write=false`、`secrets_read=false`、`restore=false` |
 
 下一推荐门禁是 Wave 1A local-only：release staleness/observability schema fixtures 与 `sha256sum`
 portability 最小修复；CSP enforcement、remote CI、production monitor、RBAC L4 和所有生产动作继续分离授权。
