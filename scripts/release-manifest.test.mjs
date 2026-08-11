@@ -1786,33 +1786,38 @@ test('dirty manifest is rejected by require-clean verification', () => {
 
 test('main CI retains full coverage while bounding workspace and Jest concurrency for hosted-runner memory safety', () => {
     const workflow = readFileSync(MAIN_WORKFLOW_PATH, 'utf8')
+    const buildJobStart = workflow.indexOf('    build:\n')
+    const exactHeadJobStart = workflow.indexOf('    exact-head:\n')
+    assert.ok(buildJobStart >= 0 && exactHeadJobStart > buildJobStart, 'main CI must keep separate merge-result and exact-head jobs')
+    const buildJob = workflow.slice(buildJobStart, exactHeadJobStart)
+    const exactHeadJob = workflow.slice(exactHeadJobStart)
 
     assert.match(workflow, /^ {12}FLOWISE_CI_CANDIDATE_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}\s*$/m)
     assert.match(workflow, /^ {12}FLOWISE_CI_EVENT_SHA: \$\{\{ github\.sha \}\}\s*$/m)
-    const checkoutStep = workflow.match(/^ {12}- uses: actions\/checkout@v6\n(?:^ {14,}.*(?:\n|$))+/m)?.[0]
-    assert.ok(checkoutStep, 'main CI must retain the checkout step')
-    assert.match(checkoutStep, /^ {18}ref: \$\{\{ env\.FLOWISE_CI_CANDIDATE_SHA \}\}\s*$/m)
-    const identityStep = workflow.match(/^ {12}- name: Verify CI source identity\n(?:^ {14,}.*(?:\n|$))+/m)?.[0]
-    assert.ok(identityStep, 'main CI must verify source identity')
-    assert.match(identityStep, /test "\$actual" = "\$FLOWISE_CI_CANDIDATE_SHA"/)
-    assert.match(identityStep, /phase=source-identity event=%s candidate=%s checkout=%s/)
+    assert.match(buildJob, /^ {12}- uses: actions\/checkout@v6\s*$/m)
+    assert.doesNotMatch(buildJob, /^ {18}ref: \$\{\{ env\.FLOWISE_CI_CANDIDATE_SHA \}\}\s*$/m)
+    assert.match(buildJob, /test "\$actual" = "\$FLOWISE_CI_EVENT_SHA"/)
+    assert.match(exactHeadJob, /^ {8}if: github\.event_name == 'pull_request'\s*$/m)
+    assert.match(exactHeadJob, /^ {18}ref: \$\{\{ env\.FLOWISE_CI_CANDIDATE_SHA \}\}\s*$/m)
+    assert.match(exactHeadJob, /test "\$actual" = "\$FLOWISE_CI_CANDIDATE_SHA"/)
+    assert.equal(workflow.match(/phase=source-identity event=%s candidate=%s checkout=%s/g)?.length, 2)
     assert.equal(
         workflow.match(
             /^\s+run:\s*node --test scripts\/contracts\/monitor-contracts\.test\.mjs scripts\/contracts\/csp-observation\.test\.mjs\s*$/gm
         )?.length,
-        1
+        2
     )
-    assert.equal(workflow.match(/^\s+run:\s*pnpm ui:copy:check\s*$/gm)?.length, 1)
-    assert.match(workflow, /^\s*run:\s*pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand\s*$/m)
+    assert.equal(workflow.match(/^\s+run:\s*pnpm ui:copy:check\s*$/gm)?.length, 2)
+    assert.equal(workflow.match(/^\s*run:\s*pnpm exec turbo run test:coverage --concurrency=1 -- --runInBand\s*$/gm)?.length, 2)
     assert.doesNotMatch(workflow, /^\s*run:\s*pnpm test:coverage\s*$/m)
-    const cypressStep = workflow.match(/^ {12}- name: Cypress test\n(?:^ {14,}.*(?:\n|$))+/m)?.[0]
-    assert.ok(cypressStep, 'main CI must retain the Cypress test step')
-    assert.match(cypressStep, /^ {14}working-directory: packages\/server\s*$/m)
-    assert.match(cypressStep, /^ {14}run: pnpm cypress:ci\s*$/m)
-    assert.doesNotMatch(cypressStep, /^\s+uses:\s*cypress-io\/github-action@/m)
+    assert.equal(workflow.match(/^ {12}- name: Cypress test\s*$/gm)?.length, 2)
+    assert.equal(workflow.match(/^ {14}working-directory: packages\/server\s*$/gm)?.length, 2)
+    assert.equal(workflow.match(/^ {14}run: pnpm cypress:ci\s*$/gm)?.length, 2)
     assert.equal(workflow.match(/^\s+uses:\s*cypress-io\/github-action@/gm)?.length ?? 0, 0)
-    assert.equal(workflow.match(/^\s+run:\s*pnpm metadata:i18n:validate:built\s*$/gm)?.length, 1)
-    assert.ok(workflow.indexOf('run: pnpm build') < workflow.indexOf('run: pnpm metadata:i18n:validate:built'))
+    assert.equal(workflow.match(/^\s+run:\s*pnpm metadata:i18n:validate:built\s*$/gm)?.length, 2)
+    for (const job of [buildJob, exactHeadJob]) {
+        assert.ok(job.indexOf('run: pnpm build') < job.indexOf('run: pnpm metadata:i18n:validate:built'))
+    }
     assert.ok(workflow.indexOf('run: pnpm ui:copy:check') < workflow.indexOf('name: Cypress test'))
 
     for (const workspace of ['agentflow', 'observe', 'components', 'server']) {
@@ -2114,15 +2119,15 @@ test('Docker Hub publishing validates a reviewed alias before credentials and bu
 
 test('every build and publication workflow enforces the current component metadata receipt', () => {
     const contracts = [
-        ['main CI', MAIN_WORKFLOW_PATH, 'pnpm metadata:i18n:validate:built', 'pnpm build'],
-        ['build-only Docker CI', DOCKER_BUILD_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile'],
-        ['Docker Hub publishing', DOCKERHUB_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile'],
-        ['ECR build-only CI', ECR_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile']
+        ['main CI', MAIN_WORKFLOW_PATH, 'pnpm metadata:i18n:validate:built', 'pnpm build', 2],
+        ['build-only Docker CI', DOCKER_BUILD_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile', 1],
+        ['Docker Hub publishing', DOCKERHUB_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile', 1],
+        ['ECR build-only CI', ECR_WORKFLOW_PATH, 'pnpm metadata:i18n:validate', 'pnpm install --frozen-lockfile', 1]
     ]
 
-    for (const [label, workflowPath, metadataGate, prerequisite] of contracts) {
+    for (const [label, workflowPath, metadataGate, prerequisite, expectedCount] of contracts) {
         const workflow = readFileSync(workflowPath, 'utf8')
-        assert.equal(workflow.split(metadataGate).length - 1, 1, `${label} must run exactly one metadata gate`)
+        assert.equal(workflow.split(metadataGate).length - 1, expectedCount, `${label} must run every expected metadata gate`)
         assert.ok(
             workflow.indexOf(prerequisite) < workflow.indexOf(metadataGate),
             `${label} must prepare the build before metadata validation`
