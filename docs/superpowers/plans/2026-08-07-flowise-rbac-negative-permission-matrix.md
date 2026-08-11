@@ -187,9 +187,13 @@ loginActivity: view   (仅 Enterprise)
 reaper_1:
   - 按 1 → 2 → 3 顺序调用 Owner API；每个首次存在的对象期望 HTTP 200
   - 核验 workspace/organization 删除路径已使 member session 失效
-  - 仅记录每个 API 的 HTTP status、中性固定操作码（delete_workspace_membership、delete_organization_membership、
-    delete_member_role）与 sha256(run_id + "\\0" + target_kind + "\\0" + target_id) 目标摘要；不得序列化响应 body、原始对象 ID、响应时间戳或 session token
-  - outcome 只由 status 派生：reaper_1 的 200 为 succeeded，reaper_2 的 404 为 expected_absent，其余均为 failed 并停止
+  - 每次 API 调用记录 exact fields：phase、operation、http_status、target_digest、outcome；phase 必须是 reaper_1 或 reaper_2
+  - operation 使用中性固定值；target_digest = sha256(UTF-8(["rbac-reaper:v1", run_id, operation, ...ordered_ids].join(NUL)))
+    - delete_workspace_membership 的 ordered_ids = [workspace_id, member_user_id]
+    - delete_organization_membership 的 ordered_ids = [organization_id, member_user_id]
+    - delete_member_role 的 ordered_ids = [organization_id, member_role_id]
+  - outcome 由 phase + http_status 唯一派生：reaper_1 + 200 为 succeeded，reaper_2 + 404 为 expected_absent，其余均为 failed 并停止
+  - 不得序列化响应 body、原始对象 ID、响应时间戳或 session token
 
 reaper_2（幂等验证）:
   - 以相同 ID 重复 1 → 2 → 3
